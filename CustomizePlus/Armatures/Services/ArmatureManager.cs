@@ -9,6 +9,7 @@ using CustomizePlus.Profiles;
 using CustomizePlus.Profiles.Data;
 using CustomizePlus.Profiles.Events;
 using CustomizePlus.Templates.Events;
+using CustomizePlus.Configuration.Data;
 using Dalamud.Plugin.Services;
 using OtterGui.Classes;
 using OtterGui.Log;
@@ -30,6 +31,7 @@ public unsafe sealed class ArmatureManager : IDisposable
     private readonly TemplateChanged _templateChangedEvent;
     private readonly ProfileChanged _profileChangedEvent;
     private readonly Logger _logger;
+    private readonly PluginConfiguration _configuration;
     private readonly FrameworkManager _framework;
     private readonly ActorObjectManager _objectManager;
     private readonly ActorManager _actorManager;
@@ -39,9 +41,10 @@ public unsafe sealed class ArmatureManager : IDisposable
 
     /// <summary>
     /// This is a movement flag for every object. Used to prevent calls to ApplyRootTranslation from both movement and render hooks.
-    /// I know there are less than 1000 objects in object table but I want to be semi-protected from object table getting bigger in the future.
+    /// Sized dynamically because object table indices are not a stable contract.
     /// </summary>
-    private readonly bool[] _objectMovementFlagsArr = new bool[1000];
+    private bool[] _objectMovementFlagsArr = new bool[1024];
+    private DateTime _lastRenderAtUtc;
 
     public Dictionary<ActorIdentifier, Armature> Armatures { get; private set; } = new();
 
@@ -52,6 +55,7 @@ public unsafe sealed class ArmatureManager : IDisposable
         TemplateChanged templateChangedEvent,
         ProfileChanged profileChangedEvent,
         Logger logger,
+        PluginConfiguration configuration,
         FrameworkManager framework,
         ActorObjectManager objectManager,
         ActorManager actorManager,
@@ -65,6 +69,7 @@ public unsafe sealed class ArmatureManager : IDisposable
         _templateChangedEvent = templateChangedEvent;
         _profileChangedEvent = profileChangedEvent;
         _logger = logger;
+        _configuration = configuration;
         _framework = framework;
         _objectManager = objectManager;
         _actorManager = actorManager;
@@ -89,8 +94,14 @@ public unsafe sealed class ArmatureManager : IDisposable
     {
         try
         {
+            var now = DateTime.UtcNow;
+            var deltaSeconds = _lastRenderAtUtc == default
+                ? Constants.MaxTransitionDeltaSeconds
+                : (float)Math.Min((now - _lastRenderAtUtc).TotalSeconds, Constants.MaxTransitionDeltaSeconds);
+            _lastRenderAtUtc = now;
+
             RefreshArmatures();
-            ApplyArmatureTransforms();
+            ApplyArmatureTransforms(deltaSeconds);
         }
         catch (Exception ex)
         {
@@ -108,6 +119,7 @@ public unsafe sealed class ArmatureManager : IDisposable
 
         if (Armatures.TryGetValue(identifier, out var armature) && armature.IsBuilt && armature.IsVisible)
         {
+            EnsureObjectMovementFlagCapacity(actor.AsObject->ObjectIndex);
             _objectMovementFlagsArr[actor.AsObject->ObjectIndex] = true;
             ApplyRootTranslation(armature, actor);
         }
@@ -208,7 +220,9 @@ public unsafe sealed class ArmatureManager : IDisposable
                     activeProfile.Armatures.Add(armature);
                 }
 
-                armature.RebuildBoneTemplateBinding();
+                armature.RebuildBoneTemplateBinding(
+                    _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
+                    _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled);
 
                 //warn: might be a bit of a performance hit on profiles with a lot of templates/bones
                 //warn: this must be done after RebuildBoneTemplateBinding or it will not work
@@ -242,16 +256,18 @@ public unsafe sealed class ArmatureManager : IDisposable
         }
     }
 
-    private unsafe void ApplyArmatureTransforms()
+    private unsafe void ApplyArmatureTransforms(float deltaSeconds)
     {
         foreach (var kvPair in Armatures)
         {
             var armature = kvPair.Value;
+            armature.UpdateRuntimeTransforms(deltaSeconds);
 
             if (armature.IsBuilt && armature.IsVisible && _objectManager.TryGetValue(armature.ActorIdentifier, out var actorData))
             {
                 foreach (var actor in actorData.Objects)
                 {
+                    EnsureObjectMovementFlagCapacity(actor.AsObject->ObjectIndex);
                     ApplyPiecewiseTransformation(armature, actor, armature.ActorIdentifier);
 
                     if (!_objectMovementFlagsArr[actor.AsObject->ObjectIndex])
@@ -270,6 +286,18 @@ public unsafe sealed class ArmatureManager : IDisposable
         }
     }
 
+    private void EnsureObjectMovementFlagCapacity(ushort objectIndex)
+    {
+        if (objectIndex < _objectMovementFlagsArr.Length)
+            return;
+
+        var newSize = _objectMovementFlagsArr.Length;
+        while (newSize <= objectIndex)
+            newSize *= 2;
+
+        Array.Resize(ref _objectMovementFlagsArr, newSize);
+    }
+
     /// <summary>
     /// Returns whether or not a link can be established between the armature and an in-game object.
     /// If unbuilt, the armature will be rebuilded.
@@ -285,7 +313,10 @@ public unsafe sealed class ArmatureManager : IDisposable
         if (!armature.IsBuilt || armature.IsSkeletonUpdated(actor.Model.AsCharacterBase))
         {
             _logger.Debug($"Skeleton for actor #{actor.AsObject->ObjectIndex} tied to \"{armature}\" has changed");
-            armature.RebuildSkeleton(actor.Model.AsCharacterBase);
+            armature.RebuildSkeleton(
+                actor.Model.AsCharacterBase,
+                _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
+                _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled);
         }
 
         return true;
@@ -313,52 +344,41 @@ public unsafe sealed class ArmatureManager : IDisposable
 
         if (cBase != null)
         {
-            for (var pSkeleIndex = 0; pSkeleIndex < cBase->Skeleton->PartialSkeletonCount; ++pSkeleIndex)
+            foreach (var mb in armature.ActiveBones)
             {
-                var currentPose = cBase->Skeleton->PartialSkeletons[pSkeleIndex].GetHavokPose(Constants.TruePoseIndex);
-
-                if (currentPose != null)
+                if (mb == armature.MainRootBone)
                 {
-                    for (var boneIndex = 0; boneIndex < currentPose->Skeleton->Bones.Length; ++boneIndex)
+                    var appliedTransform = mb.AppliedTransform;
+                    if (_gameObjectService.IsActorHasScalableRoot(actor) && appliedTransform != null && mb.IsModifiedScale())
                     {
-                        if (armature.GetBoneAt(pSkeleIndex, boneIndex) is ModelBone mb
-                            && mb != null
-                            && mb.BoneName == currentPose->Skeleton->Bones[boneIndex].Name.String)
+                        cBase->DrawObject.Object.Scale = appliedTransform.Scaling;
+
+                        //Fix mount owner's scale if needed
+                        //todo: always keep owner's scale proper instead of scaling with mount if no armature found
+                        if (isMount && mountOwner != null && mountOwnerArmature != null)
                         {
-                            if (mb == armature.MainRootBone)
+                            var ownerDrawObject = cBase->DrawObject.Object.ChildObject;
+
+                            //limit to only modified scales because that is just easier to handle
+                            //because we don't need to hook into dismount code to reset character scale
+                            //todo: hook into dismount
+                            //https://github.com/Cytraen/SeatedSidekickSpectator/blob/main/SetModeHook.cs?
+                            if (cBase->DrawObject.Object.ChildObject == mountOwner.Value.Model &&
+                                mountOwnerArmature.MainRootBone.IsModifiedScale() &&
+                                mountOwnerArmature.MainRootBone.AppliedTransform != null)
                             {
-                                if (_gameObjectService.IsActorHasScalableRoot(actor) && mb.IsModifiedScale())
-                                {
-                                    cBase->DrawObject.Object.Scale = mb.CustomizedTransform!.Scaling;
+                                var baseScale = mountOwnerArmature.MainRootBone.AppliedTransform!.Scaling;
 
-                                    //Fix mount owner's scale if needed
-                                    //todo: always keep owner's scale proper instead of scaling with mount if no armature found
-                                    if (isMount && mountOwner != null && mountOwnerArmature != null)
-                                    {
-                                        var ownerDrawObject = cBase->DrawObject.Object.ChildObject;
-
-                                        //limit to only modified scales because that is just easier to handle
-                                        //because we don't need to hook into dismount code to reset character scale
-                                        //todo: hook into dismount
-                                        //https://github.com/Cytraen/SeatedSidekickSpectator/blob/main/SetModeHook.cs?
-                                        if (cBase->DrawObject.Object.ChildObject == mountOwner.Value.Model &&
-                                            mountOwnerArmature.MainRootBone.IsModifiedScale())
-                                        {
-                                            var baseScale = mountOwnerArmature.MainRootBone.CustomizedTransform!.Scaling;
-
-                                            ownerDrawObject->Scale = new Vector3(Math.Abs(baseScale.X / cBase->DrawObject.Object.Scale.X),
-                                                    Math.Abs(baseScale.Y / cBase->DrawObject.Object.Scale.Y),
-                                                    Math.Abs(baseScale.Z / cBase->DrawObject.Object.Scale.Z));
-                                        }
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                mb.ApplyModelTransform(cBase);
+                                ownerDrawObject->Scale = new Vector3(Math.Abs(baseScale.X / cBase->DrawObject.Object.Scale.X),
+                                        Math.Abs(baseScale.Y / cBase->DrawObject.Object.Scale.Y),
+                                        Math.Abs(baseScale.Z / cBase->DrawObject.Object.Scale.Z));
                             }
                         }
                     }
+                }
+                else
+                {
+                    mb.ApplyModelTransform(cBase);
                 }
             }
         }
@@ -420,6 +440,7 @@ public unsafe sealed class ArmatureManager : IDisposable
     private void OnTemplateChange(TemplateChanged.Type type, Templates.Data.Template? template, object? arg3)
     {
         if (type is not TemplateChanged.Type.NewBone &&
+            type is not TemplateChanged.Type.UpdatedBone &&
             type is not TemplateChanged.Type.DeletedBone &&
             type is not TemplateChanged.Type.EditorCharacterChanged &&
             type is not TemplateChanged.Type.EditorEnabled &&
@@ -427,6 +448,7 @@ public unsafe sealed class ArmatureManager : IDisposable
             return;
 
         if (type == TemplateChanged.Type.NewBone ||
+            type == TemplateChanged.Type.UpdatedBone ||
             type == TemplateChanged.Type.DeletedBone) //type == TemplateChanged.Type.EditorCharacterChanged?
         {
             //In case a lot of events are triggered at the same time for the same template this should limit the amount of times bindings are unneccessary rebuilt
@@ -496,6 +518,7 @@ public unsafe sealed class ArmatureManager : IDisposable
             type is not ProfileChanged.Type.DisabledTemplate &&
             type is not ProfileChanged.Type.MovedTemplate &&
             type is not ProfileChanged.Type.ChangedTemplate &&
+            type is not ProfileChanged.Type.TemplateWeightChanged &&
             type is not ProfileChanged.Type.Toggled &&
             type is not ProfileChanged.Type.Deleted &&
             type is not ProfileChanged.Type.TemporaryProfileAdded &&

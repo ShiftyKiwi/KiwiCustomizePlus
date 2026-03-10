@@ -886,9 +886,10 @@ public class BoneEditorPanel
         ImGui.TableNextRow();
 
         if (_editingAttribute == BoneAttribute.Scale && propagationEnabled)
-        {
             RenderChildScalingRow(bone, transform);
-        }
+
+        if (propagationEnabled)
+            RenderPropagationFalloffRow(bone, transform);
     }
 
     private void RenderChildScalingRow(EditRowParams bone, BoneTransform transform)
@@ -1075,6 +1076,66 @@ public class BoneEditorPanel
         if (childScaleChanged)
         {
             transform.ChildScaling = childScale;
+            _editorManager.ModifyBoneTransform(codename, transform);
+
+            if (_isMirrorModeEnabled && bone.Basis?.TwinBone != null)
+            {
+                _editorManager.ModifyBoneTransform(
+                    bone.Basis.TwinBone.BoneName,
+                    BoneData.IsIVCSCompatibleBone(codename)
+                        ? transform.GetSpecialReflection()
+                        : transform.GetStandardReflection()
+                );
+            }
+        }
+
+        ImGui.TableNextRow();
+    }
+
+    private void RenderPropagationFalloffRow(EditRowParams bone, BoneTransform transform)
+    {
+        var codename = bone.BoneCodeName;
+        var displayName = bone.BoneDisplayName;
+        var propagationFalloff = transform.PropagationFalloff;
+        bool falloffChanged = false;
+
+        using var id = ImRaii.PushId($"{codename}_falloff");
+
+        ImGui.TableNextColumn();
+        ImGui.SetCursorPosX(_propagateButtonXPos);
+        ImGui.Dummy(new Vector2(CtrlHelper.IconButtonWidth * 0.75f, 0));
+
+        using (var disabled = ImRaii.Disabled(!_isUnlocked))
+        {
+            ImGui.TableNextColumn();
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.DragFloat("##PropagationFalloff", ref propagationFalloff, 0.01f, 0f, 1f, "%.2f"))
+            {
+                propagationFalloff = Math.Clamp(propagationFalloff, 0f, 1f);
+                falloffChanged = true;
+            }
+
+            if (ImGui.IsItemActivated() && _pendingUndoSnapshot == null)
+                _pendingUndoSnapshot = CaptureCurrentState();
+
+            if (ImGui.IsItemDeactivatedAfterEdit() && _pendingUndoSnapshot != null)
+            {
+                SaveStateForUndo(_pendingUndoSnapshot);
+                _pendingUndoSnapshot = null;
+            }
+
+            ImGui.TableNextColumn();
+            ImGui.TableNextColumn();
+            ImGui.TableNextColumn();
+        }
+
+        ImGui.TableNextColumn();
+        CtrlHelper.StaticLabel($"{displayName} - Propagation Falloff", CtrlHelper.TextAlignment.Left,
+            "Each descendant keeps this fraction of the propagated change for each step away from the edited bone.");
+
+        if (falloffChanged)
+        {
+            transform.PropagationFalloff = propagationFalloff;
             _editorManager.ModifyBoneTransform(codename, transform);
 
             if (_isMirrorModeEnabled && bone.Basis?.TwinBone != null)

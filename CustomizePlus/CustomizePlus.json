@@ -5,7 +5,7 @@
 	"Description": "A plugin that allows you to customize your character beyond FFXIV limitations by directly editing bone parameters.",
 	"InternalName": "CustomizePlus",
 	"ApplicableVersion": "any",
-	"AssemblyVersion": "2.0.0.0",
+	"AssemblyVersion": "2.1.2.0",
 	"DalamudApiLevel": 14,
 	"TestingDalamudApiLevel": 14,
 	"Tags": [
@@ -15,5 +15,5 @@
 		"Character"
 	],
 	"ImageUrls": null,
-	"IconUrl": "https://raw.githubusercontent.com/Aether-Tools/CustomizePlus/main/Data/icon.png"
+	"IconUrl": "https://raw.githubusercontent.com/ShiftyKiwi/KiwiCustomizePlus/main/Data/icon.png"
 }

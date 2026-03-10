@@ -59,6 +59,14 @@ public unsafe class Armature
     public Dictionary<string, Template> BoneTemplateBinding { get; init; }
 
     /// <summary>
+    /// Resolved target transforms for this armature after weighted profile evaluation.
+    /// </summary>
+    public Dictionary<string, BoneTransform> ResolvedBoneTransforms { get; init; }
+
+    private List<ModelBone> _activeBones;
+    public IReadOnlyList<ModelBone> ActiveBones => _activeBones;
+
+    /// <summary>
     /// Each skeleton is made up of several smaller "partial" skeletons.
     /// Each partial skeleton has its own list of bones, with a root bone at index zero.
     /// The root bone of a partial skeleton may also be a regular bone in a different partial skeleton.
@@ -142,6 +150,8 @@ public unsafe class Armature
         _partialSkeletons = Array.Empty<ModelBone[]>();
 
         BoneTemplateBinding = new Dictionary<string, Template>();
+        ResolvedBoneTransforms = new Dictionary<string, BoneTransform>(StringComparer.Ordinal);
+        _activeBones = new List<ModelBone>();
 
         ActorIdentifier = actorIdentifier;
         Profile = profile;
@@ -207,7 +217,7 @@ public unsafe class Armature
     /// <summary>
     /// Rebuild the armature using the provided character base as a reference.
     /// </summary>
-    public void RebuildSkeleton(CharacterBase* cBase)
+    public void RebuildSkeleton(CharacterBase* cBase, bool enableSoftScaleLimits = true, bool enableAutomaticChildCompensation = true)
     {
         if (cBase == null)
             return;
@@ -216,21 +226,19 @@ public unsafe class Armature
 
         _partialSkeletons = newPartials.Select(x => x.ToArray()).ToArray();
 
-        RebuildBoneTemplateBinding(); //todo: intentionally not calling ArmatureChanged.Type.Updated because this is pending rewrite
+        RebuildBoneTemplateBinding(enableSoftScaleLimits, enableAutomaticChildCompensation); //todo: intentionally not calling ArmatureChanged.Type.Updated because this is pending rewrite
 
         Plugin.Logger.Debug($"Rebuilt {this}");
     }
 
     public BoneTransform? GetAppliedBoneTransform(string boneName)
     {
-        if (BoneTemplateBinding.TryGetValue(boneName, out var template)
-            && template != null)
-        {
-            if (template.Bones.TryGetValue(boneName, out var boneTransform))
-                return boneTransform;
-            else
-                Plugin.Logger.Error($"Bone {boneName} is null in template {template.UniqueId}");
-        }
+        var liveBone = GetAllBones().FirstOrDefault(b => b.BoneName == boneName && b.AppliedTransform != null);
+        if (liveBone?.AppliedTransform != null)
+            return liveBone.AppliedTransform;
+
+        if (ResolvedBoneTransforms.TryGetValue(boneName, out var boneTransform))
+            return boneTransform;
 
         return null;
     }
@@ -310,25 +318,49 @@ public unsafe class Armature
         return newPartials;
     }
 
-    public void RebuildBoneTemplateBinding()
+    public void RebuildBoneTemplateBinding(bool enableSoftScaleLimits = true, bool enableAutomaticChildCompensation = true)
     {
+        var resolution = ProfileTransformResolver.Resolve(Profile);
+
         BoneTemplateBinding.Clear();
+        ResolvedBoneTransforms.Clear();
+        _activeBones.Clear();
 
-        foreach (var template in Profile.Templates)
-        {
-            if (Profile.DisabledTemplates.Contains(template.UniqueId))
-                continue;
+        foreach (var kvPair in resolution.BoneOwners)
+            BoneTemplateBinding[kvPair.Key] = kvPair.Value;
 
-            foreach (var kvPair in template.Bones)
-            {
-                BoneTemplateBinding[kvPair.Key] = template;
-            }
-        }
+        foreach (var kvPair in resolution.EffectiveTransforms)
+            ResolvedBoneTransforms[kvPair.Key] = BoneRuntimeSafeguards.Apply(
+                kvPair.Key,
+                kvPair.Value,
+                enableSoftScaleLimits,
+                enableAutomaticChildCompensation);
 
         foreach (var bone in GetAllBones())
-            bone.LinkToTemplate(BoneTemplateBinding.ContainsKey(bone.BoneName) ? BoneTemplateBinding[bone.BoneName] : null);
+        {
+            BoneTemplateBinding.TryGetValue(bone.BoneName, out var template);
+            ResolvedBoneTransforms.TryGetValue(bone.BoneName, out var transform);
+            bone.LinkToTemplate(template, transform);
+
+            if (bone.IsActive)
+                _activeBones.Add(bone);
+        }
+
+        _activeBones = _activeBones
+            .OrderBy(b => b.PartialSkeletonIndex)
+            .ThenBy(b => b.BoneIndex)
+            .ToList();
 
         Plugin.Logger.Debug($"Rebuilt template binding for armature {_localId}");
+    }
+
+    public void UpdateRuntimeTransforms(float deltaSeconds)
+    {
+        for (var i = _activeBones.Count - 1; i >= 0; --i)
+        {
+            if (!_activeBones[i].UpdateRuntimeTransform(deltaSeconds))
+                _activeBones.RemoveAt(i);
+        }
     }
 
     private static bool AreTwinnedNames(string name1, string name2)

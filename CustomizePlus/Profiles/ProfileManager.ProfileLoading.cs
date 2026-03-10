@@ -1,6 +1,7 @@
 ﻿using CustomizePlus.Profiles.Data;
 using CustomizePlus.Profiles.Events;
 using CustomizePlus.Templates.Data;
+using CustomizePlus.Core.Extensions;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Newtonsoft.Json.Linq;
 using OtterGui.Classes;
@@ -144,7 +145,7 @@ public partial class ProfileManager : IDisposable
         {
             if (characterObj is not JObject characterObjCast)
             {
-                //todo: warning
+                _logger.Warning($"Profile \"{profile.Name.Text.Incognify()}\" [{profile.UniqueId}] contains an invalid character entry that was skipped during load.");
                 continue;
             }
 
@@ -152,7 +153,7 @@ public partial class ProfileManager : IDisposable
 
             if(!character.IsValid)
             {
-                //todo: warning
+                _logger.Warning($"Profile \"{profile.Name.Text.Incognify()}\" [{profile.UniqueId}] contains an unresolved character entry that was skipped during load.");
                 continue;
             }
 
@@ -187,19 +188,26 @@ public partial class ProfileManager : IDisposable
         {
             if (templateObj is not JObject templateObjCast)
             {
-                //todo: warning
+                _logger.Warning($"Profile \"{profile.Name.Text.Incognify()}\" [{profile.UniqueId}] contains an invalid template entry that was skipped during load.");
                 continue;
             }
 
             var templateId = templateObjCast["TemplateId"]?.ToObject<Guid>();
             if (templateId == null)
-                continue; //todo: error
+            {
+                _logger.Warning($"Profile \"{profile.Name.Text.Incognify()}\" [{profile.UniqueId}] contains a template reference without an id that was skipped during load.");
+                continue;
+            }
 
             var template = _templateManager.GetTemplate((Guid)templateId);
             if (template == null)
+            {
+                _logger.Warning($"Profile \"{profile.Name.Text.Incognify()}\" [{profile.UniqueId}] references missing template {templateId}, which was skipped during load.");
                 continue;
+            }
 
             profile.Templates.Add(template);
+            profile.SetTemplateWeight(template.UniqueId, templateObjCast["Weight"]?.ToObject<float>() ?? 1f);
 
             var templateEnabled = templateObjCast["Enabled"]?.ToObject<bool>() ?? true;
             if (!templateEnabled)

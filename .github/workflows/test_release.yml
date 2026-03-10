@@ -64,24 +64,25 @@ jobs:
           asset_name: CustomizePlus.zip
           asset_content_type: application/zip
 
-      - name: Write out repo.json
+      - name: Write out manifests
         run: |
           $verT = '${{ github.ref_name }}'
           $ver = $verT -replace 'testing_'
-          $path = './repo.json'
-          $json = Get-Content -Raw $path | ConvertFrom-Json
-          $json[0].TestingAssemblyVersion = $ver          
-          $json[0].DownloadLinkTesting = $json.DownloadLinkTesting -replace '[^/]+/CustomizePlus.zip',"$verT/CustomizePlus.zip"
-          $content = $json | ConvertTo-Json -AsArray
-          set-content -Path $path -Value $content
+          foreach ($path in @('./repo.json', './pluginmaster.json')) {
+            $json = Get-Content -Raw $path | ConvertFrom-Json
+            $json[0].TestingAssemblyVersion = $ver
+            $json[0].DownloadLinkTesting = $json[0].DownloadLinkTesting -replace '[^/]+/CustomizePlus.zip',"$verT/CustomizePlus.zip"
+            $content = $json | ConvertTo-Json -AsArray
+            set-content -Path $path -Value $content
+          }
 
-      - name: Commit repo.json
+      - name: Commit manifests
         run: |
           git config --global user.name "Actions User"
           git config --global user.email "actions@github.com"
           git fetch origin main
           git branch -f main ${{ github.sha }}
           git checkout main
-          git add repo.json
-          git commit -m "[CI] Updating repo.json for ${{ github.ref_name }}" || true
+          git add repo.json pluginmaster.json
+          git commit -m "[CI] Updating manifests for ${{ github.ref_name }}" || true
           git push origin main

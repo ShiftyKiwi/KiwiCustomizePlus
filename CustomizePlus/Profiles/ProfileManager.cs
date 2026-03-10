@@ -286,6 +286,7 @@ public partial class ProfileManager : IDisposable
 
         var template = profile.Templates[templateIndex];
         profile.Templates.RemoveAt(templateIndex);
+        profile.TemplateWeights.Remove(template.UniqueId);
 
         SaveProfile(profile);
 
@@ -298,6 +299,7 @@ public partial class ProfileManager : IDisposable
             return;
 
         profile.Templates.Add(template);
+        profile.SetTemplateWeight(template.UniqueId, 1f);
 
         SaveProfile(profile);
 
@@ -316,6 +318,9 @@ public partial class ProfileManager : IDisposable
 
         var oldTemplate = profile.Templates[index];
         profile.Templates[index] = newTemplate;
+        var weight = profile.GetTemplateWeight(oldTemplate.UniqueId);
+        profile.TemplateWeights.Remove(oldTemplate.UniqueId);
+        profile.SetTemplateWeight(newTemplate.UniqueId, weight);
 
         SaveProfile(profile);
 
@@ -352,6 +357,24 @@ public partial class ProfileManager : IDisposable
 
         _logger.Debug($"Toggled template {template.UniqueId} on profile {profile.UniqueId}");
         _event.Invoke(eventType, profile, template);
+    }
+
+    public void SetTemplateWeight(Profile profile, int index, float weight)
+    {
+        if (index >= profile.Templates.Count || index < 0)
+            return;
+
+        var template = profile.Templates[index];
+        var clampedWeight = Math.Clamp(weight, 0f, 1f);
+        if (MathF.Abs(profile.GetTemplateWeight(template.UniqueId) - clampedWeight) < 0.0001f)
+            return;
+
+        profile.SetTemplateWeight(template.UniqueId, clampedWeight);
+
+        SaveProfile(profile);
+
+        _logger.Debug($"Changed template weight for {template.UniqueId} on profile {profile.UniqueId} to {clampedWeight:0.###}");
+        _event.Invoke(ProfileChanged.Type.TemplateWeightChanged, profile, (template, clampedWeight));
     }
 
     public bool EnableTemplate(Profile profile, Guid templateId)
@@ -499,32 +522,32 @@ public partial class ProfileManager : IDisposable
     }
 
     /// <summary>
-    /// Return profile by actor identifier, does not return temporary profiles.
+    /// Return the highest-priority applied profile for an actor.
+    /// Prefers non-editor, non-temporary profiles, but falls back to temporary profiles when they are the only active match.
     /// </summary>
-    /// todo: use GetEnabledProfilesByActor
     public Profile? GetActiveProfileByActor(Actor actor)
     {
-        var actorIdentifier = actor.GetIdentifier(_actorManager);
-
-        if (!actorIdentifier.IsValid)
+        if (!actor.Identifier(_actorManager, out var actorIdentifier))
             return null;
 
-        if (actorIdentifier.Type == IdentifierType.Owned && !actorIdentifier.IsOwnedByLocalPlayer())
-            return null;
+        return GetResolvedProfile(actorIdentifier, includeTemporary: false)
+            ?? GetResolvedProfile(actorIdentifier, includeTemporary: true);
+    }
 
-        var query = Profiles.Where(p => p.Characters.Any(x => x.MatchesIgnoringOwnership(actorIdentifier)) && !p.IsTemporary && p.Enabled);
-
-        var profile = query.OrderByDescending(x => x.Priority).FirstOrDefault();
-
-        if(profile == null)
+    private Profile? GetResolvedProfile(ActorIdentifier actorIdentifier, bool includeTemporary)
+    {
+        foreach (var profile in GetEnabledProfilesByActor(actorIdentifier))
         {
-            if (DefaultLocalPlayerProfile?.Enabled == true)
-                return DefaultLocalPlayerProfile;
+            if (profile.ProfileType == ProfileType.Editor)
+                continue;
 
-            return null;
+            if (!includeTemporary && profile.IsTemporary)
+                continue;
+
+            return profile;
         }
 
-        return profile;
+        return null;
     }
 
     //todo: replace with dictionary
@@ -622,6 +645,7 @@ public partial class ProfileManager : IDisposable
                     continue;
 
                 profile.Templates.RemoveAt(i--);
+                profile.TemplateWeights.Remove(template.UniqueId);
 
                 _event.Invoke(ProfileChanged.Type.RemovedTemplate, profile, template);
 

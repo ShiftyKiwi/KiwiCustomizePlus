@@ -452,7 +452,7 @@ public class ProfilePanel
 
     private void DrawTemplateArea()
     {
-        using var table = ImRaii.Table("TemplateTable", 5, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX | ImGuiTableFlags.ScrollY);
+        using var table = ImRaii.Table("TemplateTable", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX | ImGuiTableFlags.ScrollY);
         if (!table)
             return;
 
@@ -461,6 +461,7 @@ public class ProfilePanel
         ImGui.TableSetupColumn("##Enabled", ImGuiTableColumnFlags.WidthFixed, 30 * ImGuiHelpers.GlobalScale);
 
         ImGui.TableSetupColumn("Template", ImGuiTableColumnFlags.WidthFixed, 220 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Weight", ImGuiTableColumnFlags.WidthFixed, 120 * ImGuiHelpers.GlobalScale);
 
         ImGui.TableSetupColumn("##editbtn", ImGuiTableColumnFlags.WidthFixed, 120 * ImGuiHelpers.GlobalScale);
 
@@ -496,6 +497,13 @@ public class ProfilePanel
             DrawDragDrop(_selector.Selected!, idx);
 
             ImGui.TableNextColumn();
+            var weightPercent = _selector.Selected!.GetTemplateWeight(template.UniqueId) * 100f;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat("##Weight", ref weightPercent, 0f, 100f, "%.0f%%"))
+                _endAction = () => _manager.SetTemplateWeight(_selector.Selected!, idx, weightPercent / 100f);
+            ImGuiUtil.HoverTooltip("Blend weight for this template when multiple templates affect the same bone.");
+
+            ImGui.TableNextColumn();
 
             var disabledCondition = _templateEditorManager.IsEditorActive || template.IsWriteProtected;
 
@@ -516,8 +524,10 @@ public class ProfilePanel
         ImGui.TableNextColumn();
         ImGui.TableNextColumn();
         ImGui.TableNextColumn();
+        ImGui.TableNextColumn();
         ImGui.AlignTextToFramePadding();
         ImGui.TextUnformatted("New");
+        ImGui.TableNextColumn();
         ImGui.TableNextColumn();
         _templateCombo.Draw(_selector.Selected!, null, -1);
         ImGui.TableNextRow();

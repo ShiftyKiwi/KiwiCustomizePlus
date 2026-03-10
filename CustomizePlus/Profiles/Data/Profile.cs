@@ -40,6 +40,7 @@ public sealed class Profile : ISavable
 
     public List<Template> Templates { get; init; } = new();
     public HashSet<Guid> DisabledTemplates { get; init; } = new();
+    public Dictionary<Guid, float> TemplateWeights { get; init; } = new();
 
     public bool IsWriteProtected { get; internal set; }
 
@@ -81,6 +82,11 @@ public sealed class Profile : ISavable
         {
             DisabledTemplates.Add(disabledTemplate);
         }
+
+        foreach (var (templateId, weight) in original.TemplateWeights)
+        {
+            TemplateWeights[templateId] = weight;
+        }
     }
 
     public override string ToString()
@@ -117,10 +123,24 @@ public sealed class Profile : ISavable
             ret.Add(new JObject()
             {
                 ["TemplateId"] = template.UniqueId,
-                ["Enabled"] = !DisabledTemplates.Contains(template.UniqueId)
+                ["Enabled"] = !DisabledTemplates.Contains(template.UniqueId),
+                ["Weight"] = GetTemplateWeight(template.UniqueId),
             });
         }
         return ret;
+    }
+
+    public float GetTemplateWeight(Guid templateId)
+    {
+        if (!TemplateWeights.TryGetValue(templateId, out var weight))
+            return 1f;
+
+        return Math.Clamp(weight, 0f, 1f);
+    }
+
+    public void SetTemplateWeight(Guid templateId, float weight)
+    {
+        TemplateWeights[templateId] = Math.Clamp(weight, 0f, 1f);
     }
 
     private JArray SerializeCharacters()

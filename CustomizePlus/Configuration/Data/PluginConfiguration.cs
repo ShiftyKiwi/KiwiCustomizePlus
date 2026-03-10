@@ -133,6 +133,15 @@ public class PluginConfiguration : IPluginConfiguration, ISavable
 
     public IntegrationSettingsEntries IntegrationSettings { get; set; } = new();
 
+    [Serializable]
+    public class RuntimeSafetySettingsEntries
+    {
+        public bool SoftScaleLimitsEnabled { get; set; } = true;
+        public bool AutomaticChildScaleCompensationEnabled { get; set; } = true;
+    }
+
+    public RuntimeSafetySettingsEntries RuntimeSafetySettings { get; set; } = new();
+
     [JsonIgnore]
     private readonly SaveService _saveService;
 

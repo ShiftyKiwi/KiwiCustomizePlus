@@ -265,13 +265,16 @@ public class TemplateManager : IDisposable
 
     private void PruneUneditedBones(Template template)
     {
-        foreach (var kvp in template.Bones)
-        {
-            if (!kvp.Value.IsEdited())
-            {
-                template.Bones.Remove(kvp.Key);
-            }
-        }
+        if (template.Bones.Count == 0)
+            return;
+
+        var uneditedBones = template.Bones
+            .Where(kvp => !kvp.Value.IsEdited())
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var boneName in uneditedBones)
+            template.Bones.Remove(boneName);
     }
 
     private void SaveTemplate(Template template)

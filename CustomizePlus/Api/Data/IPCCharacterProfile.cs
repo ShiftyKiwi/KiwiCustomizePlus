@@ -17,27 +17,21 @@ public class IPCCharacterProfile
     public static IPCCharacterProfile FromFullProfile(Profile profile)
     {
         var ipcProfile = new IPCCharacterProfile();
+        var resolution = ProfileTransformResolver.Resolve(profile);
 
-        foreach (var template in profile.Templates)
-        {
-            if (profile.DisabledTemplates.Contains(template.UniqueId))
-                continue;
-
-            foreach (var kvPair in template.Bones) //not super optimal but whatever
+        foreach (var kvPair in resolution.EffectiveTransforms)
+            ipcProfile.Bones[kvPair.Key] = new IPCBoneTransform
             {
-                ipcProfile.Bones[kvPair.Key] = new IPCBoneTransform
-                {
-                    Translation = kvPair.Value.Translation,
-                    Rotation = kvPair.Value.Rotation,
-                    Scaling = kvPair.Value.Scaling,
-                    ChildScaling = kvPair.Value.ChildScaling,
-                    ChildScaleIndependent = kvPair.Value.ChildScalingIndependent,
-                    PropagateTranslation = kvPair.Value.PropagateTranslation,
-                    PropagateRotation = kvPair.Value.PropagateRotation,
-                    PropagateScale = kvPair.Value.PropagateScale
-                };
-            }
-        }
+                Translation = kvPair.Value.Translation,
+                Rotation = kvPair.Value.Rotation,
+                Scaling = kvPair.Value.Scaling,
+                ChildScaling = kvPair.Value.ChildScaling,
+                ChildScaleIndependent = kvPair.Value.ChildScalingIndependent,
+                PropagateTranslation = kvPair.Value.PropagateTranslation,
+                PropagateRotation = kvPair.Value.PropagateRotation,
+                PropagateScale = kvPair.Value.PropagateScale,
+                PropagationFalloff = kvPair.Value.PropagationFalloff,
+            };
 
         return ipcProfile;
     }
@@ -77,7 +71,8 @@ public class IPCCharacterProfile
                     ChildScalingIndependent = kvPair.Value.ChildScaleIndependent,
                     PropagateTranslation = kvPair.Value.PropagateTranslation,
                     PropagateRotation = kvPair.Value.PropagateRotation,
-                    PropagateScale = kvPair.Value.PropagateScale
+                    PropagateScale = kvPair.Value.PropagateScale,
+                    PropagationFalloff = kvPair.Value.PropagationFalloff,
                 });
 
         fullProfile.Templates.Add(template);
@@ -132,6 +127,7 @@ public class IPCBoneTransform
     public bool PropagateScale { get; set; }
 
     public bool ChildScaleIndependent { get; set; } = false;
+    public float PropagationFalloff { get; set; } = Constants.DefaultPropagationFalloff;
 
     /// <summary>
     /// Clamp all vector values to be within allowed limits.

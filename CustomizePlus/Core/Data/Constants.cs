@@ -17,6 +17,10 @@ internal static class Constants
     /// </summary>
     public const string RootBoneName = "n_root";
 
+    public const float DefaultPropagationFalloff = 0.95f;
+    public const float TransformTransitionSharpness = 16f;
+    public const float MaxTransitionDeltaSeconds = 0.1f;
+
     /// <summary>
     /// Minimum allowed value for any of the vector values.
     /// </summary>

@@ -68,15 +68,20 @@ public unsafe class ModelBone
     public string BoneName;
 
     /// <summary>
-    /// The transform that this model bone will impart upon its in-game sibling when the master armature
-    /// is applied to the in-game skeleton. Reference to transform contained in top most template in profile applied to character.
+    /// The resolved target transform for this model bone after profile/template resolution.
     /// </summary>
     public BoneTransform? CustomizedTransform { get; private set; }
 
     /// <summary>
-    /// True if bone is linked to any template
+    /// The smoothed transform currently applied to the live skeleton.
     /// </summary>
-    public bool IsActive => CustomizedTransform != null;
+    public BoneTransform? AppliedTransform => _appliedTransform;
+    private BoneTransform? _appliedTransform;
+
+    /// <summary>
+    /// True if bone is linked to any template or is still transitioning back to identity.
+    /// </summary>
+    public bool IsActive => CustomizedTransform != null || (_appliedTransform != null && _appliedTransform.IsEdited(true));
 
     public ModelBone(Armature arm, string codeName, int partialIdx, int boneIdx)
     {
@@ -88,30 +93,56 @@ public unsafe class ModelBone
     }
 
     /// <summary>
-    /// Link bone to specific template, unlinks if null is passed
+    /// Link bone to a template owner and update its resolved transform target.
     /// </summary>
-    /// <param name="template"></param>
-    /// <returns></returns>
-    public bool LinkToTemplate(Template? template)
+    public bool LinkToTemplate(Template? template, BoneTransform? resolvedTransform = null)
     {
         if (template == null)
         {
-            if (CustomizedTransform == null)
-                return false;
-
+            var hadState = CustomizedTransform != null || _appliedTransform != null;
             CustomizedTransform = null;
 
-            Plugin.Logger.Verbose($"Unlinked {BoneName} from all templates");
+            if (hadState)
+                Plugin.Logger.Verbose($"Unlinked {BoneName} from all templates");
 
-            return true;
+            return hadState;
         }
 
         if (!template.Bones.ContainsKey(BoneName))
             return false;
 
         Plugin.Logger.Verbose($"Linking {BoneName} to {template.Name}");
-        CustomizedTransform = template.Bones[BoneName];
+        if (resolvedTransform == null)
+        {
+            CustomizedTransform = null;
+            return _appliedTransform != null;
+        }
 
+        CustomizedTransform ??= new BoneTransform();
+        CustomizedTransform.UpdateToMatch(resolvedTransform);
+        _appliedTransform ??= new BoneTransform();
+
+        return true;
+    }
+
+    public bool UpdateRuntimeTransform(float deltaSeconds)
+    {
+        if (CustomizedTransform == null)
+        {
+            if (_appliedTransform == null)
+                return false;
+
+            if (_appliedTransform.SmoothTowards(new BoneTransform(), deltaSeconds) && !_appliedTransform.IsEdited(true))
+            {
+                _appliedTransform = null;
+                return false;
+            }
+
+            return true;
+        }
+
+        _appliedTransform ??= new BoneTransform();
+        _appliedTransform.SmoothTowards(CustomizedTransform, deltaSeconds);
         return true;
     }
 
@@ -195,6 +226,28 @@ public unsafe class ModelBone
                 output.AddRange(iter.Current.ChildBones);
                 yield return iter.Current;
             }
+        }
+    }
+
+    public IEnumerable<(ModelBone Bone, int Depth)> GetDescendantsWithDepth(bool includeSelf = false)
+    {
+        Queue<(ModelBone Bone, int Depth)> queue = new();
+
+        if (includeSelf)
+            queue.Enqueue((this, 0));
+        else
+        {
+            foreach (var child in ChildBones)
+                queue.Enqueue((child, 1));
+        }
+
+        while (queue.Count > 0)
+        {
+            var next = queue.Dequeue();
+            yield return next;
+
+            foreach (var child in next.Bone.ChildBones)
+                queue.Enqueue((child, next.Depth + 1));
         }
     }
 
@@ -283,22 +336,23 @@ public unsafe class ModelBone
     /// </summary>
     public void ApplyModelTransform(CharacterBase* cBase)
     {
-        if (!IsActive)
+        var appliedTransform = AppliedTransform;
+        if (!IsActive || appliedTransform == null)
             return;
 
-        if (cBase == null || CustomizedTransform == null || !CustomizedTransform.IsEdited())
+        if (cBase == null || !appliedTransform.IsEdited())
             return;
 
-        var doPropagate = CustomizedTransform.PropagateTranslation ||
-                          CustomizedTransform.PropagateRotation ||
-                          CustomizedTransform.PropagateScale;
+        var doPropagate = appliedTransform.PropagateTranslation ||
+                          appliedTransform.PropagateRotation ||
+                          appliedTransform.PropagateScale;
 
         if (!doPropagate)
         {
             var gameTransform = GetGameTransform(cBase, PoseType.Model);
             if (!gameTransform.Equals(Constants.NullTransform))
             {
-                var modify_Transform = CustomizedTransform.ModifyExistingTransform(gameTransform);
+                var modify_Transform = appliedTransform.ModifyExistingTransform(gameTransform);
                 if (!modify_Transform.Equals(Constants.NullTransform))
                 {
                     SetGameTransform(cBase, modify_Transform, PoseType.Model);
@@ -316,7 +370,7 @@ public unsafe class ModelBone
         var initialRot = gameTransformAccess->Rotation.ToQuaternion();
         var initialScale = gameTransformAccess->Scale.ToVector3();
 
-        var modTransform = CustomizedTransform.ModifyExistingTransform(*gameTransformAccess);
+        var modTransform = appliedTransform.ModifyExistingTransform(*gameTransformAccess);
         SetGameTransform(cBase, modTransform, PoseType.Model);
 
         var pose = cBase->Skeleton->PartialSkeletons[PartialSkeletonIndex].GetHavokPose(Constants.TruePoseIndex);
@@ -329,28 +383,28 @@ public unsafe class ModelBone
 
         var childScaleToUse = access2->Scale.ToVector3();
 
-        if (CustomizedTransform.ChildScalingIndependent)
+        if (appliedTransform.ChildScalingIndependent)
         {
             childScaleToUse = new Vector3(
-                initialScale.X * CustomizedTransform.ChildScaling.X,
-                initialScale.Y * CustomizedTransform.ChildScaling.Y,
-                initialScale.Z * CustomizedTransform.ChildScaling.Z
+                initialScale.X * appliedTransform.ChildScaling.X,
+                initialScale.Y * appliedTransform.ChildScaling.Y,
+                initialScale.Z * appliedTransform.ChildScaling.Z
             );
         }
 
-        var shouldPropagateScale = CustomizedTransform.PropagateScale &&
-            (!CustomizedTransform.Scaling.Equals(Vector3.One) ||
-             (CustomizedTransform.ChildScalingIndependent && !CustomizedTransform.ChildScaling.Equals(Vector3.One)));
+        var shouldPropagateScale = appliedTransform.PropagateScale &&
+            (!appliedTransform.Scaling.Equals(Vector3.One) ||
+             (appliedTransform.ChildScalingIndependent && !appliedTransform.ChildScaling.Equals(Vector3.One)));
 
-        PropagateChildren(cBase, access2, initialPos, initialRot, initialScale,
-            CustomizedTransform.PropagateTranslation && !CustomizedTransform.Translation.Equals(Vector3.Zero),
-            CustomizedTransform.PropagateRotation && !CustomizedTransform.Rotation.Equals(Vector3.Zero),
+        PropagateChildren(cBase, access2, appliedTransform, initialPos, initialRot, initialScale,
+            appliedTransform.PropagateTranslation && !appliedTransform.Translation.Equals(Vector3.Zero),
+            appliedTransform.PropagateRotation && !appliedTransform.Rotation.Equals(Vector3.Zero),
             shouldPropagateScale,
             childScaleToUse);
     }
 
 
-    public unsafe void PropagateChildren(CharacterBase* cBase, hkQsTransformf* transform, Vector3 initialPos, Quaternion initialRot, Vector3 initialScale, bool propagateTranslation, bool propagateRotation, bool propagateScale, Vector3 childScale, bool includePartials = true)
+    public unsafe void PropagateChildren(CharacterBase* cBase, hkQsTransformf* transform, BoneTransform appliedTransform, Vector3 initialPos, Quaternion initialRot, Vector3 initialScale, bool propagateTranslation, bool propagateRotation, bool propagateScale, Vector3 childScale, bool includePartials = true)
     {
         // Bone parenting
         // Adapted from Anamnesis Studio code shared by Yuki - thank you!
@@ -362,45 +416,72 @@ public unsafe class ModelBone
         var deltaPos = sourcePos - initialPos;
         var deltaScale = childScale / initialScale;
 
-        foreach (var child in GetDescendants())
+        foreach (var (child, depth) in GetDescendantsWithDepth())
         {
+            var attenuation = Math.Clamp(MathF.Pow(appliedTransform.PropagationFalloff, depth), 0f, 1f);
+            if (attenuation <= 0f)
+                continue;
+
             // Plugin.Logger.Debug($"Propagating to {child.BoneName}...");
             var access = child.GetGameTransformAccess(cBase, PoseType.Model);
             if (access != null)
             {
-
                 var offset = access->Translation.ToVector3() - sourcePos;
 
                 var matrix = InteropAlloc.GetMatrix(access);
                 if (propagateScale)
                 {
-                    var scaleMatrix = Matrix4x4.CreateScale(deltaScale, Vector3.Zero);
+                    var scaleMatrix = Matrix4x4.CreateScale(Vector3.Lerp(Vector3.One, deltaScale, attenuation), Vector3.Zero);
                     matrix *= scaleMatrix;
                     offset = Vector3.Transform(offset, scaleMatrix);
                 }
                 if (propagateRotation)
                 {
-                    matrix *= Matrix4x4.CreateFromQuaternion(deltaRot);
-                    offset = Vector3.Transform(offset, deltaRot);
+                    var weightedRotation = Quaternion.Slerp(Quaternion.Identity, deltaRot, attenuation);
+                    matrix *= Matrix4x4.CreateFromQuaternion(weightedRotation);
+                    offset = Vector3.Transform(offset, weightedRotation);
                 }
-                matrix.Translation = deltaPos + sourcePos + offset;
+
+                matrix.Translation = sourcePos + offset;
+                if (propagateTranslation)
+                    matrix.Translation += deltaPos * attenuation;
+
                 InteropAlloc.SetMatrix(access, matrix);
             }
         }
     }
 
-    public void ApplyModelScale(CharacterBase* cBase) => ApplyTransFunc(cBase, CustomizedTransform.ModifyExistingScale);
-    public void ApplyModelRotation(CharacterBase* cBase) => ApplyTransFunc(cBase, CustomizedTransform.ModifyExistingRotation);
-    public void ApplyModelFullTranslation(CharacterBase* cBase) => ApplyTransFunc(cBase, CustomizedTransform.ModifyExistingTranslationWithRotation);
-    public void ApplyStraightModelTranslation(CharacterBase* cBase) => ApplyTransFunc(cBase, CustomizedTransform.ModifyExistingTranslation);
+    public void ApplyModelScale(CharacterBase* cBase)
+    {
+        if (AppliedTransform != null)
+            ApplyTransFunc(cBase, AppliedTransform, AppliedTransform.ModifyExistingScale);
+    }
 
-    private void ApplyTransFunc(CharacterBase* cBase, Func<hkQsTransformf, hkQsTransformf> modTrans)
+    public void ApplyModelRotation(CharacterBase* cBase)
+    {
+        if (AppliedTransform != null)
+            ApplyTransFunc(cBase, AppliedTransform, AppliedTransform.ModifyExistingRotation);
+    }
+
+    public void ApplyModelFullTranslation(CharacterBase* cBase)
+    {
+        if (AppliedTransform != null)
+            ApplyTransFunc(cBase, AppliedTransform, AppliedTransform.ModifyExistingTranslationWithRotation);
+    }
+
+    public void ApplyStraightModelTranslation(CharacterBase* cBase)
+    {
+        if (AppliedTransform != null)
+            ApplyTransFunc(cBase, AppliedTransform, AppliedTransform.ModifyExistingTranslation);
+    }
+
+    private void ApplyTransFunc(CharacterBase* cBase, BoneTransform appliedTransform, Func<hkQsTransformf, hkQsTransformf> modTrans)
     {
         if (!IsActive)
             return;
 
         if (cBase != null
-            && CustomizedTransform.IsEdited()
+            && appliedTransform.IsEdited()
             && GetGameTransform(cBase, PoseType.Model) is hkQsTransformf gameTransform
             && !gameTransform.Equals(Constants.NullTransform))
         {
@@ -421,10 +502,11 @@ public unsafe class ModelBone
     /// <returns>If the scale should be applied.</returns>
     public bool IsModifiedScale()
     {
-        if (!IsActive)
+        var appliedTransform = AppliedTransform;
+        if (!IsActive || appliedTransform == null)
             return false;
-        return CustomizedTransform.Scaling.X != 0 && CustomizedTransform.Scaling.X != 1 ||
-               CustomizedTransform.Scaling.Y != 0 && CustomizedTransform.Scaling.Y != 1 ||
-               CustomizedTransform.Scaling.Z != 0 && CustomizedTransform.Scaling.Z != 1;
+        return appliedTransform.Scaling.X != 0 && appliedTransform.Scaling.X != 1 ||
+               appliedTransform.Scaling.Y != 0 && appliedTransform.Scaling.Y != 1 ||
+               appliedTransform.Scaling.Z != 0 && appliedTransform.Scaling.Z != 1;
     }
 }

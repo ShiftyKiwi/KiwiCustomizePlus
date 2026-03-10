@@ -361,6 +361,8 @@ public class SettingsTab
         ImGui.NewLine();
 
         DrawEnableRootPositionCheckbox();
+        DrawSoftScaleLimitsCheckbox();
+        DrawAutomaticChildScaleCompensationCheckbox();
         DrawDebugModeCheckbox();
     }
 
@@ -383,6 +385,30 @@ public class SettingsTab
         {
             _configuration.DebuggingModeEnabled = isChecked;
             _configuration.Save();
+        }
+    }
+
+    private void DrawSoftScaleLimitsCheckbox()
+    {
+        var isChecked = _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled;
+        if (CtrlHelper.CheckboxWithTextAndHelp("##softscalelimits", "Runtime soft scale limits",
+                "Applies conservative runtime-only scale guardrails to sensitive bone families to reduce inversion and severe collapse. Saved templates are not modified.", ref isChecked))
+        {
+            _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled = isChecked;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+    }
+
+    private void DrawAutomaticChildScaleCompensationCheckbox()
+    {
+        var isChecked = _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled;
+        if (CtrlHelper.CheckboxWithTextAndHelp("##childscalecomp", "Automatic child scale compensation",
+                "For sensitive propagated scale chains, dampens descendant scaling and lightly balances volume to reduce harsh collapses. Saved templates are not modified.", ref isChecked))
+        {
+            _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled = isChecked;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
         }
     }
 

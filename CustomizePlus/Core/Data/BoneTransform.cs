@@ -31,6 +31,7 @@ public class BoneTransform
         Rotation = Vector3.Zero;
         Scaling = Vector3.One;
         ChildScaling = Vector3.One;
+        PropagationFalloff = Constants.DefaultPropagationFalloff;
     }
 
     public BoneTransform(BoneTransform original)
@@ -70,8 +71,16 @@ public class BoneTransform
     public bool PropagateRotation = false;
     public bool PropagateScale = false;
     public bool ChildScalingIndependent = false;
+    private float _propagationFalloff = Constants.DefaultPropagationFalloff;
+
+    public float PropagationFalloff
+    {
+        get => _propagationFalloff;
+        set => _propagationFalloff = Math.Clamp(value, 0f, 1f);
+    }
 
     public bool ShouldSerializeChildScaling() => ChildScalingIndependent;
+    public bool ShouldSerializePropagationFalloff() => MathF.Abs(PropagationFalloff - Constants.DefaultPropagationFalloff) > 0.0001f;
 
     [OnDeserialized]
     internal void OnDeserialized(StreamingContext context)
@@ -80,6 +89,7 @@ public class BoneTransform
         _translation = ClampToDefaultLimits(_translation);
         _rotation = ClampAngles(_rotation);
         _scaling = ClampToDefaultLimits(_scaling);
+        _propagationFalloff = Math.Clamp(_propagationFalloff, 0f, 1f);
 
         if (_childScaling == Vector3.Zero && !ChildScalingIndependent)
             _childScaling = Vector3.One;
@@ -93,7 +103,9 @@ public class BoneTransform
     {
         bool propagation = false;
         if (considerPropagationAsEdit)
-            propagation = PropagateTranslation || PropagateRotation || PropagateScale;
+            propagation = PropagateTranslation || PropagateRotation || PropagateScale
+                || (MathF.Abs(PropagationFalloff - Constants.DefaultPropagationFalloff) > 0.0001f
+                    && (PropagateTranslation || PropagateRotation || PropagateScale));
 
         return !Translation.IsApproximately(Vector3.Zero, 0.00001f)
                || !Rotation.IsApproximately(Vector3.Zero, 0.1f)
@@ -113,7 +125,8 @@ public class BoneTransform
             PropagateRotation = PropagateRotation,
             PropagateScale = PropagateScale,
             ChildScaling = ChildScaling,
-            ChildScalingIndependent = ChildScalingIndependent
+            ChildScalingIndependent = ChildScalingIndependent,
+            PropagationFalloff = PropagationFalloff,
         };
     }
 
@@ -141,6 +154,7 @@ public class BoneTransform
             {
                 ChildScaling = Vector3.One;
                 ChildScalingIndependent = false;
+                PropagationFalloff = Constants.DefaultPropagationFalloff;
             }
         }
     }
@@ -155,6 +169,7 @@ public class BoneTransform
         PropagateRotation = newValues.PropagateRotation;
         PropagateScale = newValues.PropagateScale;
         ChildScalingIndependent = newValues.ChildScalingIndependent;
+        PropagationFalloff = newValues.PropagationFalloff;
     }
 
     /// <summary>
@@ -172,7 +187,8 @@ public class BoneTransform
             PropagateTranslation = PropagateTranslation,
             PropagateRotation = PropagateRotation,
             PropagateScale = PropagateScale,
-            ChildScalingIndependent = ChildScalingIndependent
+            ChildScalingIndependent = ChildScalingIndependent,
+            PropagationFalloff = PropagationFalloff,
         };
     }
 
@@ -191,7 +207,8 @@ public class BoneTransform
             PropagateTranslation = PropagateTranslation,
             PropagateRotation = PropagateRotation,
             PropagateScale = PropagateScale,
-            ChildScalingIndependent = ChildScalingIndependent
+            ChildScalingIndependent = ChildScalingIndependent,
+            PropagationFalloff = PropagationFalloff,
         };
     }
 
@@ -204,6 +221,7 @@ public class BoneTransform
         _rotation = ClampAngles(_rotation);
         _scaling = ClampVector(_scaling);
         _childScaling = _childScaling == Vector3.Zero ? Vector3.One : ClampVector(_childScaling);
+        _propagationFalloff = Math.Clamp(_propagationFalloff, 0f, 1f);
     }
 
     /// <summary>
@@ -301,5 +319,63 @@ public class BoneTransform
         vector.Z = Math.Clamp(vector.Z, Constants.MinVectorValueLimit, Constants.MaxVectorValueLimit);
 
         return vector;
+    }
+
+    public static Vector3 FromQuaternionDegrees(Quaternion quaternion)
+    {
+        quaternion = Quaternion.Normalize(quaternion);
+
+        var sinrCosp = 2f * ((quaternion.W * quaternion.X) + (quaternion.Y * quaternion.Z));
+        var cosrCosp = 1f - (2f * ((quaternion.X * quaternion.X) + (quaternion.Y * quaternion.Y)));
+        var pitch = MathF.Atan2(sinrCosp, cosrCosp);
+
+        var sinp = 2f * ((quaternion.W * quaternion.Y) - (quaternion.Z * quaternion.X));
+        float yaw;
+        if (MathF.Abs(sinp) >= 1f)
+            yaw = MathF.CopySign(MathF.PI / 2f, sinp);
+        else
+            yaw = MathF.Asin(sinp);
+
+        var sinyCosp = 2f * ((quaternion.W * quaternion.Z) + (quaternion.X * quaternion.Y));
+        var cosyCosp = 1f - (2f * ((quaternion.Y * quaternion.Y) + (quaternion.Z * quaternion.Z)));
+        var roll = MathF.Atan2(sinyCosp, cosyCosp);
+
+        return new Vector3(
+            pitch * 180f / MathF.PI,
+            yaw * 180f / MathF.PI,
+            roll * 180f / MathF.PI);
+    }
+
+    public bool SmoothTowards(BoneTransform target, float deltaSeconds, float sharpness = Constants.TransformTransitionSharpness)
+    {
+        if (deltaSeconds <= 0f)
+        {
+            UpdateToMatch(target);
+            return true;
+        }
+
+        var alpha = 1f - MathF.Exp(-sharpness * deltaSeconds);
+        Translation = Vector3.Lerp(Translation, target.Translation, alpha);
+        Scaling = Vector3.Lerp(Scaling, target.Scaling, alpha);
+        ChildScaling = Vector3.Lerp(ChildScaling, target.ChildScaling, alpha);
+        PropagationFalloff += (target.PropagationFalloff - PropagationFalloff) * alpha;
+        ChildScalingIndependent = target.ChildScalingIndependent;
+        PropagateTranslation = target.PropagateTranslation;
+        PropagateRotation = target.PropagateRotation;
+        PropagateScale = target.PropagateScale;
+
+        var currentRotation = Rotation.ToQuaternion();
+        var targetRotation = target.Rotation.ToQuaternion();
+        if (Quaternion.Dot(currentRotation, targetRotation) < 0f)
+            targetRotation = Quaternion.Negate(targetRotation);
+
+        Rotation = FromQuaternionDegrees(Quaternion.Slerp(currentRotation, targetRotation, alpha));
+
+        return Translation.IsApproximately(target.Translation, 0.0001f)
+            && Rotation.IsApproximately(target.Rotation, 0.05f)
+            && Scaling.IsApproximately(target.Scaling, 0.0001f)
+            && ChildScaling.IsApproximately(target.ChildScaling, 0.0001f)
+            && MathF.Abs(PropagationFalloff - target.PropagationFalloff) < 0.0001f
+            && ChildScalingIndependent == target.ChildScalingIndependent;
     }
 }
