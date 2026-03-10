@@ -55,6 +55,8 @@ internal static class ProfileTransformResolver
 
     private sealed class WeightedBoneAccumulator
     {
+        private int _contributionCount;
+        private BoneTransform? _singleTransform;
         private float _totalWeight;
         private Vector3 _translationSum;
         private Vector3 _scaleOffsetSum;
@@ -73,6 +75,8 @@ internal static class ProfileTransformResolver
             if (weight <= 0f)
                 return;
 
+            _contributionCount++;
+            _singleTransform ??= transform.DeepCopy();
             _totalWeight += weight;
             _translationSum += transform.Translation * weight;
             _scaleOffsetSum += (transform.Scaling - Vector3.One) * weight;
@@ -112,6 +116,9 @@ internal static class ProfileTransformResolver
         {
             if (_totalWeight <= 0f)
                 return new BoneTransform();
+
+            if (_contributionCount == 1 && _singleTransform != null)
+                return _singleTransform.DeepCopy();
 
             var inverseWeight = 1f / _totalWeight;
             var rotation = Quaternion.Identity;

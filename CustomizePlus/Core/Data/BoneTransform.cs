@@ -50,7 +50,11 @@ public class BoneTransform
     public Vector3 Rotation
     {
         get => _rotation;
-        set => _rotation = ClampAngles(value);
+        set
+        {
+            _rotation = ClampAngles(value);
+            _runtimeRotationQuaternion = null;
+        }
     }
 
     private Vector3 _scaling;
@@ -72,6 +76,8 @@ public class BoneTransform
     public bool PropagateScale = false;
     public bool ChildScalingIndependent = false;
     private float _propagationFalloff = Constants.DefaultPropagationFalloff;
+    [NonSerialized]
+    private Quaternion? _runtimeRotationQuaternion;
 
     public float PropagationFalloff
     {
@@ -108,10 +114,16 @@ public class BoneTransform
                     && (PropagateTranslation || PropagateRotation || PropagateScale));
 
         return !Translation.IsApproximately(Vector3.Zero, 0.00001f)
-               || !Rotation.IsApproximately(Vector3.Zero, 0.1f)
+               || HasEffectiveRotation()
                || !Scaling.IsApproximately(Vector3.One, 0.00001f)
                || (ChildScalingIndependent && !ChildScaling.IsApproximately(Vector3.One, 0.00001f))
                || propagation;
+    }
+
+    public bool HasEffectiveRotation()
+    {
+        var rotation = Quaternion.Normalize(GetEffectiveRotationQuaternion());
+        return 1f - MathF.Abs(Quaternion.Dot(rotation, Quaternion.Identity)) > 0.000001f;
     }
 
     public BoneTransform DeepCopy()
@@ -170,6 +182,7 @@ public class BoneTransform
         PropagateScale = newValues.PropagateScale;
         ChildScalingIndependent = newValues.ChildScalingIndependent;
         PropagationFalloff = newValues.PropagationFalloff;
+        _runtimeRotationQuaternion = newValues._runtimeRotationQuaternion;
     }
 
     /// <summary>
@@ -276,7 +289,7 @@ public class BoneTransform
     {
         if (PosingModeDetectService.IsAnamnesisRotationFrozen) return tr;
 
-        var newRotation = Quaternion.Multiply(tr.Rotation.ToQuaternion(), Rotation.ToQuaternion());
+        var newRotation = Quaternion.Multiply(tr.Rotation.ToQuaternion(), GetEffectiveRotationQuaternion());
         tr.Rotation.X = newRotation.X;
         tr.Rotation.Y = newRotation.Y;
         tr.Rotation.Z = newRotation.Z;
@@ -325,15 +338,25 @@ public class BoneTransform
     {
         quaternion = Quaternion.Normalize(quaternion);
 
-        // Vector3 rotation values in Customize+ are stored in the same component order
-        // consumed by Quaternion.CreateFromYawPitchRoll: X = yaw, Y = pitch, Z = roll.
-        // The smoothing path must round-trip using that exact convention or the live pose
-        // will drift/jitter while the interpolated quaternion is converted back every frame.
-        var euler = quaternion.ToEulerAngles();
-        return ClampAngles(new Vector3(
-            euler.Z * 180f / MathF.PI,
-            euler.Y * 180f / MathF.PI,
-            euler.X * 180f / MathF.PI));
+        var sinrCosp = 2f * ((quaternion.W * quaternion.X) + (quaternion.Y * quaternion.Z));
+        var cosrCosp = 1f - (2f * ((quaternion.X * quaternion.X) + (quaternion.Y * quaternion.Y)));
+        var pitch = MathF.Atan2(sinrCosp, cosrCosp);
+
+        var sinp = 2f * ((quaternion.W * quaternion.Y) - (quaternion.Z * quaternion.X));
+        float yaw;
+        if (MathF.Abs(sinp) >= 1f)
+            yaw = MathF.CopySign(MathF.PI / 2f, sinp);
+        else
+            yaw = MathF.Asin(sinp);
+
+        var sinyCosp = 2f * ((quaternion.W * quaternion.Z) + (quaternion.X * quaternion.Y));
+        var cosyCosp = 1f - (2f * ((quaternion.Y * quaternion.Y) + (quaternion.Z * quaternion.Z)));
+        var roll = MathF.Atan2(sinyCosp, cosyCosp);
+
+        return new Vector3(
+            pitch * 180f / MathF.PI,
+            yaw * 180f / MathF.PI,
+            roll * 180f / MathF.PI);
     }
 
     public bool SmoothTowards(BoneTransform target, float deltaSeconds, float sharpness = Constants.TransformTransitionSharpness)
@@ -341,6 +364,7 @@ public class BoneTransform
         if (deltaSeconds <= 0f)
         {
             UpdateToMatch(target);
+            _runtimeRotationQuaternion = target.GetEffectiveRotationQuaternion();
             return true;
         }
 
@@ -354,18 +378,22 @@ public class BoneTransform
         PropagateRotation = target.PropagateRotation;
         PropagateScale = target.PropagateScale;
 
-        var currentRotation = Rotation.ToQuaternion();
-        var targetRotation = target.Rotation.ToQuaternion();
+        var currentRotation = GetEffectiveRotationQuaternion();
+        var targetRotation = target.GetEffectiveRotationQuaternion();
         if (Quaternion.Dot(currentRotation, targetRotation) < 0f)
             targetRotation = Quaternion.Negate(targetRotation);
 
-        Rotation = FromQuaternionDegrees(Quaternion.Slerp(currentRotation, targetRotation, alpha));
+        _rotation = target.Rotation;
+        _runtimeRotationQuaternion = Quaternion.Normalize(Quaternion.Slerp(currentRotation, targetRotation, alpha));
 
         return Translation.IsApproximately(target.Translation, 0.0001f)
-            && Rotation.IsApproximately(target.Rotation, 0.05f)
+            && (1f - MathF.Abs(Quaternion.Dot(_runtimeRotationQuaternion.Value, targetRotation))) < 0.0001f
             && Scaling.IsApproximately(target.Scaling, 0.0001f)
             && ChildScaling.IsApproximately(target.ChildScaling, 0.0001f)
             && MathF.Abs(PropagationFalloff - target.PropagationFalloff) < 0.0001f
             && ChildScalingIndependent == target.ChildScalingIndependent;
     }
+
+    private Quaternion GetEffectiveRotationQuaternion()
+        => _runtimeRotationQuaternion ?? Rotation.ToQuaternion();
 }

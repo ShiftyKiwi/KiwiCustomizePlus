@@ -398,7 +398,7 @@ public unsafe class ModelBone
 
         PropagateChildren(cBase, access2, appliedTransform, initialPos, initialRot, initialScale,
             appliedTransform.PropagateTranslation && !appliedTransform.Translation.Equals(Vector3.Zero),
-            appliedTransform.PropagateRotation && !appliedTransform.Rotation.Equals(Vector3.Zero),
+            appliedTransform.PropagateRotation && appliedTransform.HasEffectiveRotation(),
             shouldPropagateScale,
             childScaleToUse);
     }
