@@ -325,25 +325,15 @@ public class BoneTransform
     {
         quaternion = Quaternion.Normalize(quaternion);
 
-        var sinrCosp = 2f * ((quaternion.W * quaternion.X) + (quaternion.Y * quaternion.Z));
-        var cosrCosp = 1f - (2f * ((quaternion.X * quaternion.X) + (quaternion.Y * quaternion.Y)));
-        var pitch = MathF.Atan2(sinrCosp, cosrCosp);
-
-        var sinp = 2f * ((quaternion.W * quaternion.Y) - (quaternion.Z * quaternion.X));
-        float yaw;
-        if (MathF.Abs(sinp) >= 1f)
-            yaw = MathF.CopySign(MathF.PI / 2f, sinp);
-        else
-            yaw = MathF.Asin(sinp);
-
-        var sinyCosp = 2f * ((quaternion.W * quaternion.Z) + (quaternion.X * quaternion.Y));
-        var cosyCosp = 1f - (2f * ((quaternion.Y * quaternion.Y) + (quaternion.Z * quaternion.Z)));
-        var roll = MathF.Atan2(sinyCosp, cosyCosp);
-
-        return new Vector3(
-            pitch * 180f / MathF.PI,
-            yaw * 180f / MathF.PI,
-            roll * 180f / MathF.PI);
+        // Vector3 rotation values in Customize+ are stored in the same component order
+        // consumed by Quaternion.CreateFromYawPitchRoll: X = yaw, Y = pitch, Z = roll.
+        // The smoothing path must round-trip using that exact convention or the live pose
+        // will drift/jitter while the interpolated quaternion is converted back every frame.
+        var euler = quaternion.ToEulerAngles();
+        return ClampAngles(new Vector3(
+            euler.Z * 180f / MathF.PI,
+            euler.Y * 180f / MathF.PI,
+            euler.X * 180f / MathF.PI));
     }
 
     public bool SmoothTowards(BoneTransform target, float deltaSeconds, float sharpness = Constants.TransformTransitionSharpness)
