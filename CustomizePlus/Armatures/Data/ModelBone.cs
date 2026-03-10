@@ -125,14 +125,14 @@ public unsafe class ModelBone
         return true;
     }
 
-    public bool UpdateRuntimeTransform(float deltaSeconds)
+    public bool UpdateRuntimeTransform(float deltaSeconds, float transitionSharpness)
     {
         if (CustomizedTransform == null)
         {
             if (_appliedTransform == null)
                 return false;
 
-            if (_appliedTransform.SmoothTowards(new BoneTransform(), deltaSeconds) && !_appliedTransform.IsEdited(true))
+            if (_appliedTransform.SmoothTowards(new BoneTransform(), deltaSeconds, transitionSharpness) && !_appliedTransform.IsEdited(true))
             {
                 _appliedTransform = null;
                 return false;
@@ -142,7 +142,7 @@ public unsafe class ModelBone
         }
 
         _appliedTransform ??= new BoneTransform();
-        _appliedTransform.SmoothTowards(CustomizedTransform, deltaSeconds);
+        _appliedTransform.SmoothTowards(CustomizedTransform, deltaSeconds, transitionSharpness);
         return true;
     }
 

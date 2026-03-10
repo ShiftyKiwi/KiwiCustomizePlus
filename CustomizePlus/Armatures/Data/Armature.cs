@@ -354,11 +354,11 @@ public unsafe class Armature
         Plugin.Logger.Debug($"Rebuilt template binding for armature {_localId}");
     }
 
-    public void UpdateRuntimeTransforms(float deltaSeconds)
+    public void UpdateRuntimeTransforms(float deltaSeconds, float transitionSharpness)
     {
         for (var i = _activeBones.Count - 1; i >= 0; --i)
         {
-            if (!_activeBones[i].UpdateRuntimeTransform(deltaSeconds))
+            if (!_activeBones[i].UpdateRuntimeTransform(deltaSeconds, transitionSharpness))
                 _activeBones.RemoveAt(i);
         }
     }

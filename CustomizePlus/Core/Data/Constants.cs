@@ -19,6 +19,8 @@ internal static class Constants
 
     public const float DefaultPropagationFalloff = 0.95f;
     public const float TransformTransitionSharpness = 16f;
+    public const float MinTransformTransitionSharpness = 1f;
+    public const float MaxTransformTransitionSharpness = 48f;
     public const float MaxTransitionDeltaSeconds = 0.1f;
 
     /// <summary>

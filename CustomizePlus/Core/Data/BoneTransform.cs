@@ -368,6 +368,11 @@ public class BoneTransform
             return true;
         }
 
+        sharpness = Math.Clamp(
+            sharpness,
+            Constants.MinTransformTransitionSharpness,
+            Constants.MaxTransformTransitionSharpness);
+
         var alpha = 1f - MathF.Exp(-sharpness * deltaSeconds);
         Translation = Vector3.Lerp(Translation, target.Translation, alpha);
         Scaling = Vector3.Lerp(Scaling, target.Scaling, alpha);

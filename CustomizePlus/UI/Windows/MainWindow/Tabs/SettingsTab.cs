@@ -361,6 +361,7 @@ public class SettingsTab
         ImGui.NewLine();
 
         DrawEnableRootPositionCheckbox();
+        DrawTransitionSpeedSlider();
         DrawSoftScaleLimitsCheckbox();
         DrawAutomaticChildScaleCompensationCheckbox();
         DrawDebugModeCheckbox();
@@ -386,6 +387,23 @@ public class SettingsTab
             _configuration.DebuggingModeEnabled = isChecked;
             _configuration.Save();
         }
+    }
+
+    private void DrawTransitionSpeedSlider()
+    {
+        var value = _configuration.RuntimeBehaviorSettings.TransformTransitionSharpness;
+        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        if (ImGui.SliderFloat("Transition speed", ref value,
+                CustomizePlus.Core.Data.Constants.MinTransformTransitionSharpness,
+                CustomizePlus.Core.Data.Constants.MaxTransformTransitionSharpness,
+                "%.1f"))
+        {
+            _configuration.RuntimeBehaviorSettings.TransformTransitionSharpness = value;
+            _configuration.Save();
+        }
+
+        CtrlHelper.AddHoverText(
+            "Controls how quickly runtime bone edits settle into their target pose. Lower values are softer and slower; higher values are snappier.");
     }
 
     private void DrawSoftScaleLimitsCheckbox()

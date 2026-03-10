@@ -142,6 +142,23 @@ public class PluginConfiguration : IPluginConfiguration, ISavable
 
     public RuntimeSafetySettingsEntries RuntimeSafetySettings { get; set; } = new();
 
+    [Serializable]
+    public class RuntimeBehaviorSettingsEntries
+    {
+        private float _transformTransitionSharpness = Constants.TransformTransitionSharpness;
+
+        public float TransformTransitionSharpness
+        {
+            get => _transformTransitionSharpness;
+            set => _transformTransitionSharpness = Math.Clamp(
+                value,
+                Constants.MinTransformTransitionSharpness,
+                Constants.MaxTransformTransitionSharpness);
+        }
+    }
+
+    public RuntimeBehaviorSettingsEntries RuntimeBehaviorSettings { get; set; } = new();
+
     [JsonIgnore]
     private readonly SaveService _saveService;
 

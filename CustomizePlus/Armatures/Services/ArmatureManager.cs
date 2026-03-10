@@ -258,10 +258,12 @@ public unsafe sealed class ArmatureManager : IDisposable
 
     private unsafe void ApplyArmatureTransforms(float deltaSeconds)
     {
+        var transitionSharpness = _configuration.RuntimeBehaviorSettings.TransformTransitionSharpness;
+
         foreach (var kvPair in Armatures)
         {
             var armature = kvPair.Value;
-            armature.UpdateRuntimeTransforms(deltaSeconds);
+            armature.UpdateRuntimeTransforms(deltaSeconds, transitionSharpness);
 
             if (armature.IsBuilt && armature.IsVisible && _objectManager.TryGetValue(armature.ActorIdentifier, out var actorData))
             {
