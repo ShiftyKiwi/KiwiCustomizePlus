@@ -521,16 +521,12 @@ public class ProfilePanel
             }
         }
 
-        ImGui.TableNextColumn();
-        ImGui.TableNextColumn();
-        ImGui.TableNextColumn();
-        ImGui.TableNextColumn();
+        ImGui.TableNextRow();
+        ImGui.TableSetColumnIndex(2);
         ImGui.AlignTextToFramePadding();
         ImGui.TextUnformatted("New");
-        ImGui.TableNextColumn();
-        ImGui.TableNextColumn();
+        ImGui.TableSetColumnIndex(3);
         _templateCombo.Draw(_selector.Selected!, null, -1);
-        ImGui.TableNextRow();
 
         _endAction?.Invoke();
         _endAction = null;
