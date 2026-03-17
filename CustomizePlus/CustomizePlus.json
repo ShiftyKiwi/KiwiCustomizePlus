@@ -1,19 +1,19 @@
 {
-	"Author": "Risa and Contributors",
-	"Name": "Customize+",
-	"Punchline": "Customize your character beyond FFXIV's limitations.",
-	"Description": "A plugin that allows you to customize your character beyond FFXIV limitations by directly editing bone parameters.",
-	"InternalName": "CustomizePlus",
-	"ApplicableVersion": "any",
-	"AssemblyVersion": "2.1.2.5",
-	"DalamudApiLevel": 14,
-	"TestingDalamudApiLevel": 14,
-	"Tags": [
-		"Anamnesis",
-		"Customization",
-		"Appearance",
-		"Character"
-	],
-	"ImageUrls": null,
-	"IconUrl": "https://raw.githubusercontent.com/ShiftyKiwi/KiwiCustomizePlus/main/Data/icon.png"
+  "Author": "Risa and Contributors",
+  "Name": "Customize+",
+  "Punchline": "Customize your character beyond FFXIV's limitations.",
+  "Description": "A plugin that allows you to customize your character beyond FFXIV limitations by directly editing bone parameters.",
+  "InternalName": "CustomizePlus",
+  "ApplicableVersion": "any",
+  "AssemblyVersion": "2.1.2.7",
+  "DalamudApiLevel": 14,
+  "TestingDalamudApiLevel": 14,
+  "Tags": [
+    "Anamnesis",
+    "Customization",
+    "Appearance",
+    "Character"
+  ],
+  "ImageUrls": null,
+  "IconUrl": "https://raw.githubusercontent.com/ShiftyKiwi/KiwiCustomizePlus/main/Data/icon.png"
 }
