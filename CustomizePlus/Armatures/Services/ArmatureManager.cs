@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Armatures.Data;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Armatures.Data;
 using CustomizePlus.Armatures.Events;
 using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Extensions;
@@ -310,11 +313,13 @@ public unsafe sealed class ArmatureManager : IDisposable
     /// </summary>
     private bool TryLinkSkeleton(Armature armature)
     {
-        if (!_objectManager.ContainsKey(armature.ActorIdentifier))
+        if (!_objectManager.TryGetValue(armature.ActorIdentifier, out var actorData) ||
+            actorData.Objects == null ||
+            actorData.Objects.Count == 0)
             return false;
 
         //we assume that all other objects are a copy of object #0
-        var actor = _objectManager[armature.ActorIdentifier].Objects[0];
+        var actor = actorData.Objects[0];
 
         if (!armature.IsBuilt || armature.IsSkeletonUpdated(actor.Model.AsCharacterBase))
         {
@@ -458,6 +463,9 @@ public unsafe sealed class ArmatureManager : IDisposable
             type == TemplateChanged.Type.UpdatedBone ||
             type == TemplateChanged.Type.DeletedBone) //type == TemplateChanged.Type.EditorCharacterChanged?
         {
+            if (template == null)
+                return;
+
             //In case a lot of events are triggered at the same time for the same template this should limit the amount of times bindings are unneccessary rebuilt
             _framework.RegisterImportant($"TemplateRebuild @ {template.UniqueId}", () =>
             {
@@ -476,7 +484,10 @@ public unsafe sealed class ArmatureManager : IDisposable
 
         if (type == TemplateChanged.Type.EditorCharacterChanged)
         {
-            (var character, var profile) = ((ActorIdentifier, Profile))arg3;
+            if (arg3 is not ValueTuple<ActorIdentifier, Profile> payload)
+                return;
+
+            var (character, profile) = payload;
 
             foreach (var armature in GetArmaturesForCharacter(character))
             {
@@ -502,10 +513,20 @@ public unsafe sealed class ArmatureManager : IDisposable
             ActorIdentifier actor;
             bool hasChanges;
 
-            if(type == TemplateChanged.Type.EditorEnabled)
-                actor = (ActorIdentifier)arg3;
+            if (type == TemplateChanged.Type.EditorEnabled)
+            {
+                if (arg3 is not ActorIdentifier enabledActor)
+                    return;
+
+                actor = enabledActor;
+            }
             else
-                (actor, hasChanges) = ((ActorIdentifier, bool))arg3;
+            {
+                if (arg3 is not ValueTuple<ActorIdentifier, bool> editorPayload)
+                    return;
+
+                (actor, hasChanges) = editorPayload;
+            }
 
             foreach (var armature in GetArmaturesForCharacter(actor))
             {

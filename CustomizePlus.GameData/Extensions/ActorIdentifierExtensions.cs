@@ -1,4 +1,4 @@
-﻿using Dalamud.Game.ClientState.Objects.Enums;
+using Dalamud.Game.ClientState.Objects.Enums;
 using Penumbra.GameData.Actors;
 using Penumbra.GameData.Enums;
 using PenumbraExtensions = Penumbra.GameData.Actors.ActorIdentifierExtensions;
@@ -79,7 +79,7 @@ public static class ActorIdentifierExtensions
             return identifier.Incognito(null);
 #endif
         }
-        catch (Exception e)
+        catch (Exception)
         {
 #if DEBUG
             throw;

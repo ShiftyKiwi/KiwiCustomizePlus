@@ -1,4 +1,4 @@
-﻿using CustomizePlus.GameData.Hooks.Objects;
+using CustomizePlus.GameData.Hooks.Objects;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;

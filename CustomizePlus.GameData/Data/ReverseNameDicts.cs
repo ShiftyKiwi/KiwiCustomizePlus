@@ -1,4 +1,4 @@
-﻿using CustomizePlus.GameData.ReverseSearchDictionaries;
+using CustomizePlus.GameData.ReverseSearchDictionaries;
 using Dalamud.Game.ClientState.Objects.Enums;
 using OtterGui.Services;
 using System.Diagnostics.CodeAnalysis;

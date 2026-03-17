@@ -1,4 +1,7 @@
-﻿using Dalamud.Interface.Utility;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Interface.Utility;
 using Dalamud.Bindings.ImGui;
 using OtterGui;
 using OtterGui.Log;
@@ -118,9 +121,9 @@ public partial class PopupSystem
 
     private class PopupData
     {
-        public string Name { get; set; }
+        public string Name { get; set; } = string.Empty;
 
-        public string Text { get; set; }
+        public string Text { get; set; } = string.Empty;
 
         public bool DisplayRequested { get; set; }
 

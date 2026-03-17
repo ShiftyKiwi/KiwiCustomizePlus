@@ -1,4 +1,7 @@
-﻿using System;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using System;
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;

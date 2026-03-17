@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Armatures.Data;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Armatures.Data;
 using CustomizePlus.Configuration.Data;
 using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Helpers;
@@ -73,6 +76,7 @@ public class BoneEditorPanel
         PluginConfiguration configuration,
         GameObjectService gameObjectService,
         ActorAssignmentUi actorAssignmentUi,
+        PopupSystem popupSystem,
         Logger logger)
     {
         _templateFileSystemSelector = templateFileSystemSelector;
@@ -80,6 +84,7 @@ public class BoneEditorPanel
         _configuration = configuration;
         _gameObjectService = gameObjectService;
         _actorAssignmentUi = actorAssignmentUi;
+        _popupSystem = popupSystem;
         _logger = logger;
 
         _isShowLiveBones = configuration.EditorConfiguration.ShowLiveBones;
@@ -468,7 +473,7 @@ public class BoneEditorPanel
                                         _pendingClipboardText = Base64Helper.ExportEditedBonesToBase64(editedBones);
                                     }
                                 }
-                                catch (Exception ex)
+                                catch (Exception)
                                 {
                                     _popupSystem.ShowPopup(PopupSystem.Messages.ActionError);
                                 }
@@ -506,7 +511,7 @@ public class BoneEditorPanel
                 ImUtf8.SetClipboardText(_pendingClipboardText);
                 _logger.Debug("copied to clipboard: " + _pendingClipboardText);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 _logger.Debug("clipboard blew up :(");
             }

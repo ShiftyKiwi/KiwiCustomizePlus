@@ -1,8 +1,12 @@
-﻿using System;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Bindings.ImGui;
+using ImSharp;
 using OtterGui.Custom;
 using Penumbra.GameData.Actors;
 using Penumbra.GameData.DataContainers;
@@ -107,12 +111,12 @@ public class ActorAssignmentUi
 
     private void SetupCombos()
     {
-        _worldCombo = new WorldCombo(_actorManager.Data.Worlds, Plugin.Logger);
-        _mountCombo = new Penumbra.GameData.Gui.NpcCombo("##mountCombo", _actorManager.Data.Mounts, Plugin.Logger);
-        _companionCombo = new Penumbra.GameData.Gui.NpcCombo("##companionCombo", _actorManager.Data.Companions, Plugin.Logger);
-        _bnpcCombo = new Penumbra.GameData.Gui.NpcCombo("##bnpcCombo", _actorManager.Data.BNpcs, Plugin.Logger);
-        _enpcCombo = new Penumbra.GameData.Gui.NpcCombo("##enpcCombo", _actorManager.Data.ENpcs, Plugin.Logger);
-        _ornamentCombo = new Penumbra.GameData.Gui.NpcCombo("##ornamentCombo", _actorManager.Data.Ornaments, Plugin.Logger);
+        _worldCombo = new WorldCombo(_actorManager.Data.Worlds);
+        _mountCombo = new NpcCombo(new StringU8("##mountCombo"), _actorManager.Data.Mounts);
+        _companionCombo = new NpcCombo(new StringU8("##companionCombo"), _actorManager.Data.Companions);
+        _bnpcCombo = new NpcCombo(new StringU8("##bnpcCombo"), _actorManager.Data.BNpcs);
+        _enpcCombo = new NpcCombo(new StringU8("##enpcCombo"), _actorManager.Data.ENpcs);
+        _ornamentCombo = new NpcCombo(new StringU8("##ornamentCombo"), _actorManager.Data.Ornaments);
         _ready = true;
     }
 
@@ -120,14 +124,14 @@ public class ActorAssignmentUi
     {
         if (ByteString.FromString(_newCharacterName, out var byteName))
         {
-            PlayerIdentifier = _actorManager.CreatePlayer(byteName, _worldCombo.CurrentSelection.Key);
+            PlayerIdentifier = _actorManager.CreatePlayer(byteName, _worldCombo.Selected.Key);
             RetainerIdentifier = _actorManager.CreateRetainer(byteName, ActorIdentifier.RetainerType.Bell);
             MannequinIdentifier = _actorManager.CreateRetainer(byteName, ActorIdentifier.RetainerType.Mannequin);
         }
 
         var npcCombo = GetNpcCombo(_newKind);
 
-        if (npcCombo.CurrentSelection.Ids == null || npcCombo.CurrentSelection.Ids.Length == 0)
+        if (npcCombo.Selected.Ids == null || npcCombo.Selected.Ids.Length == 0)
             NpcIdentifier = ActorIdentifier.Invalid;
         else
         {
@@ -135,13 +139,13 @@ public class ActorAssignmentUi
             {
                 case ObjectKind.BattleNpc:
                 case ObjectKind.EventNpc:
-                    NpcIdentifier = _actorManager.CreateNpc(_newKind, npcCombo.CurrentSelection.Ids[0]);
+                    NpcIdentifier = _actorManager.CreateNpc(_newKind, npcCombo.Selected.Ids[0]);
                     break;
                 case ObjectKind.MountType:
                 case ObjectKind.Companion:
                 case ObjectKind.Ornament:
                     var currentPlayer = _actorManager.GetCurrentPlayer();
-                    NpcIdentifier = _actorManager.CreateOwned(currentPlayer.PlayerName, currentPlayer.HomeWorld, _newKind, npcCombo.CurrentSelection.Ids[0]);
+                    NpcIdentifier = _actorManager.CreateOwned(currentPlayer.PlayerName, currentPlayer.HomeWorld, _newKind, npcCombo.Selected.Ids[0]);
                     break;
                 default:
                     throw new NotImplementedException();

@@ -1,4 +1,7 @@
-﻿namespace CustomizePlus.Core.Helpers;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+namespace CustomizePlus.Core.Helpers;
 
 //todo: better name
 internal static class NameParsingHelper

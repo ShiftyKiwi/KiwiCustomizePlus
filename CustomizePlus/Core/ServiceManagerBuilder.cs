@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Anamnesis;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Anamnesis;
 using CustomizePlus.Api;
 using CustomizePlus.Armatures.Events;
 using CustomizePlus.Armatures.Services;
@@ -35,6 +38,7 @@ using Penumbra.GameData.Actors;
 using Penumbra.GameData.Interop;
 using Penumbra.GameData.Structs;
 using System.Collections.Generic;
+using LunaLogger = Luna.Logger;
 
 namespace CustomizePlus.Core;
 
@@ -46,6 +50,7 @@ public static class ServiceManagerBuilder
 
         var services = new ServiceManager(logger)
             .AddExistingService(logger)
+            .AddExistingService(new LunaLogger())
             .AddCore()
             .AddEvents()
             .AddGPoseServices()

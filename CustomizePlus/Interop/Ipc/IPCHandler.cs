@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Interop.Ipc;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Interop.Ipc;
 using System.Linq;
 using System.Collections.Generic;
 

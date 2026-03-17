@@ -1,4 +1,7 @@
-﻿global using IPCCharacterDataTuple = (string Name, ushort WorldId, byte CharacterType, ushort CharacterSubType);
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+global using IPCCharacterDataTuple = (string Name, ushort WorldId, byte CharacterType, ushort CharacterSubType);
 
 //Virtual path is full path to the profile in the virtual folders created by user in the profile list UI
 

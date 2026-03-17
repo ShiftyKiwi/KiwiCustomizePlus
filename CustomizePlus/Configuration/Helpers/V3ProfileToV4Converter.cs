@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Configuration.Data.Version3;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Configuration.Data.Version3;
 using CustomizePlus.Core.Data;
 using CustomizePlus.Profiles.Data;
 using CustomizePlus.Templates.Data;

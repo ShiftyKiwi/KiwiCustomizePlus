@@ -1,4 +1,7 @@
-﻿using Dalamud.Interface;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Interface;
 using Dalamud.Bindings.ImGui;
 using OtterGui;
 using OtterGui.Classes;
@@ -198,28 +201,29 @@ public class TemplatePanel : IDisposable
             _showFixPreview = false;
         }
 
-        if (_analysisResult == null)
+        var analysisResult = _analysisResult;
+        if (analysisResult == null)
             return;
 
         ImGui.Spacing();
-        ImGui.Text($"Surface Smoothness: {_analysisResult.SurfaceSmoothness}%");
-        ImGui.Text($"Proportion Balance: {_analysisResult.ProportionBalance}%");
-        ImGui.Text($"Symmetry: {_analysisResult.Symmetry}%");
+        ImGui.Text($"Surface Smoothness: {analysisResult.SurfaceSmoothness}%");
+        ImGui.Text($"Proportion Balance: {analysisResult.ProportionBalance}%");
+        ImGui.Text($"Symmetry: {analysisResult.Symmetry}%");
 
         ImGui.Spacing();
-        if (_analysisResult.Issues.Count == 0)
+        if (analysisResult.Issues.Count == 0)
         {
             ImGui.Text("Issues detected: none");
         }
         else
         {
             ImGui.Text("Issues detected:");
-            foreach (var issue in _analysisResult.Issues)
+            foreach (var issue in analysisResult.Issues)
                 ImGui.Text($"- {issue}");
         }
 
         ImGui.Spacing();
-        var hasFixes = _analysisResult.SuggestedFixes.Count > 0;
+        var hasFixes = analysisResult.SuggestedFixes.Count > 0;
         using (var disabled = ImRaii.Disabled(!hasFixes))
         {
             if (ImGui.Button(_showFixPreview ? "Hide Fix Preview" : "Preview Fix"))
@@ -232,7 +236,7 @@ public class TemplatePanel : IDisposable
         {
             if (ImGui.Button("Apply Fix"))
             {
-                ApplyAnalyzerFixes(_selector.Selected!, _analysisResult.SuggestedFixes);
+                ApplyAnalyzerFixes(_selector.Selected!, analysisResult.SuggestedFixes);
                 _analysisResult = null;
                 _showFixPreview = false;
             }
@@ -252,11 +256,11 @@ public class TemplatePanel : IDisposable
 
             var count = 0;
             var maxRows = 40;
-            foreach (var kvp in _analysisResult.SuggestedFixes.OrderBy(x => BoneData.GetBoneRanking(x.Key)))
+            foreach (var kvp in analysisResult.SuggestedFixes.OrderBy(x => BoneData.GetBoneRanking(x.Key)))
             {
                 if (count >= maxRows)
                 {
-                    ImGui.Text($"...and {_analysisResult.SuggestedFixes.Count - maxRows} more");
+                    ImGui.Text($"...and {analysisResult.SuggestedFixes.Count - maxRows} more");
                     break;
                 }
 

@@ -1,4 +1,7 @@
-﻿namespace CustomizePlus.Api.Enums;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+namespace CustomizePlus.Api.Enums;
 
 /// <summary>
 /// Error codes returned by some API methods

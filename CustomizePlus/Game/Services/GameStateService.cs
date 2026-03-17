@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Game.Services.GPose;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Game.Services.GPose;
 using CustomizePlus.Game.Services.GPose.ExternalTools;
 
 namespace CustomizePlus.Game.Services;

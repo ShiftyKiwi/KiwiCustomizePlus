@@ -1,4 +1,7 @@
-﻿using Dalamud.Bindings.ImGui;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Bindings.ImGui;
 
 namespace CustomizePlus.UI.Windows.MainWindow.Tabs.Templates;
 

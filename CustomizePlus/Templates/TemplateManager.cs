@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Core.Data;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Events;
 using CustomizePlus.Core.Helpers;
 using CustomizePlus.Core.Services;

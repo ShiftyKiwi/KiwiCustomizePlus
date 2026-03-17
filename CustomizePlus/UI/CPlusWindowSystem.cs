@@ -1,4 +1,7 @@
-﻿using Dalamud.Interface;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
 using System;
 using CustomizePlus.Configuration.Data;

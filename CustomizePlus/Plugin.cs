@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Api;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Api;
 using CustomizePlus.Armatures.Data;
 using CustomizePlus.Core;
 using CustomizePlus.Core.Helpers;

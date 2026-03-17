@@ -1,3 +1,6 @@
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
 using Penumbra.GameData.Interop;
 using OtterGui.Log;
 using System.Linq;

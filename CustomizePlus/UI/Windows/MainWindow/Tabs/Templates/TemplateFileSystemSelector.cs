@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Anamnesis;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Anamnesis;
 using CustomizePlus.Configuration.Data;
 using CustomizePlus.Configuration.Data.Version2;
 using CustomizePlus.Configuration.Data.Version3;
@@ -127,7 +130,7 @@ public class TemplateFileSystemSelector : FileSystemSelector<Template, TemplateS
         SetFilterTooltip();
     }
 
-    public void Dispose()
+    public override void Dispose()
     {
         base.Dispose();
         _templateChangedEvent.Unsubscribe(OnTemplateChange);
@@ -341,7 +344,11 @@ public class TemplateFileSystemSelector : FileSystemSelector<Template, TemplateS
             if (isSuccess)
             {
                 var selectedFilePath = path.FirstOrDefault();
-                //todo: check for selectedFilePath == null?
+                if (string.IsNullOrEmpty(selectedFilePath))
+                {
+                    _messageService.NotificationMessage("No file selected.", NotificationType.Error, false);
+                    return;
+                }
 
                 var bones = _poseFileBoneLoader.LoadBoneTransformsFromFile(selectedFilePath);
 

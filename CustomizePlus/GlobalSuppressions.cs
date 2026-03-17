@@ -1,4 +1,7 @@
-﻿using System.Diagnostics.CodeAnalysis;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using System.Diagnostics.CodeAnalysis;
 
 [assembly:
     SuppressMessage("StyleCop.CSharp.NamingRules", "SA1309:Field names should not begin with underscore",

@@ -1,4 +1,7 @@
-﻿#if !DEBUG
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+#if !DEBUG
 using System.Reflection;
 #endif
 

@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Api.Data;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Api.Data;
 using CustomizePlus.Api.Enums;
 using CustomizePlus.Armatures.Data;
 using CustomizePlus.Armatures.Events;
@@ -35,7 +38,7 @@ public partial class CustomizePlusIpc
     /// /!\ If no profile is set on specified character profile id will be equal to Guid.Empty
     /// </summary>
     [EzIPCEvent("Profile.OnUpdate")]
-    private Action<ushort, Guid> OnProfileUpdate;
+    private Action<ushort, Guid>? OnProfileUpdate = null;
 
     /// <summary>
     /// Retrieve list of all user profiles
@@ -180,7 +183,7 @@ public partial class CustomizePlusIpc
             _profileManager.SetEnabled(uniqueId, state);
             return ErrorCode.Success;
         }
-        catch (ProfileNotFoundException ex)
+        catch (ProfileNotFoundException)
         {
             return ErrorCode.ProfileNotFound;
         }
@@ -205,7 +208,7 @@ public partial class CustomizePlusIpc
             _profileManager.SetPriority(uniqueId, priority);
             return (int)ErrorCode.Success;
         }
-        catch (ProfileNotFoundException ex)
+        catch (ProfileNotFoundException)
         {
             return (int)ErrorCode.ProfileNotFound;
         }
@@ -425,7 +428,10 @@ public partial class CustomizePlusIpc
         if (type != TemplateChanged.Type.EditorDisabled)
             return;
 
-        (ActorIdentifier actorIdentifier, bool hasChanges) = ((ActorIdentifier, bool))arg3;
+        if (arg3 is not ValueTuple<ActorIdentifier, bool> payload)
+            return;
+
+        var (actorIdentifier, hasChanges) = payload;
 
         if (!hasChanges || actorIdentifier.Type != IdentifierType.Player)
             return;
@@ -438,7 +444,7 @@ public partial class CustomizePlusIpc
         if (profile == null) //safety check
             return;
 
-        if (!profile.Templates.Contains(template!))
+        if (template == null || !profile.Templates.Contains(template))
             return;
 
         ICharacter? localPlayerCharacter = (ICharacter?)_gameObjectService.GetDalamudGameObjectFromActor(actor);
@@ -467,11 +473,20 @@ public partial class CustomizePlusIpc
             if (armature.Profile == null)
                 _logger.Fatal("INTEGRITY ERROR: Armature created/updated and profile is null");
 
-            (Profile? activeProfile, Profile? oldProfile) = (null, null);
+            Profile? activeProfile = null;
+            Profile? oldProfile = null;
             if (type == ArmatureChanged.Type.Created)
-                (activeProfile, oldProfile) = ((Profile?)arg3, null);
+            {
+                activeProfile = arg3 as Profile;
+            }
+            else if (arg3 is ValueTuple<Profile?, Profile?> profilePayload)
+            {
+                (activeProfile, oldProfile) = profilePayload;
+            }
             else
-                (activeProfile, oldProfile) = ((Profile?, Profile?))arg3;
+            {
+                return;
+            }
 
             //do not send event if we are entering editor
             if (activeProfile != null && activeProfile.ProfileType == ProfileType.Editor)
@@ -507,6 +522,6 @@ public partial class CustomizePlusIpc
 
         _logger.Debug($"Sending player update message: Character: {character.Name.ToString().Incognify()}, Profile: {(profile != null ? profile.ToString() : "no profile")}");
 
-        OnProfileUpdate(character.ObjectIndex, profile != null ? profile.UniqueId : Guid.Empty);
+        OnProfileUpdate?.Invoke(character.ObjectIndex, profile != null ? profile.UniqueId : Guid.Empty);
     }
 }

@@ -1,4 +1,7 @@
-﻿using Dalamud.Plugin;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using OtterGui.Services;
 

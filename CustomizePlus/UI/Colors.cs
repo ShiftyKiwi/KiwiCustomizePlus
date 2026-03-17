@@ -1,4 +1,7 @@
-﻿using System.Collections.Generic;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using System.Collections.Generic;
 
 namespace CustomizePlus.UI;
 

@@ -1,4 +1,7 @@
-﻿using OtterGui.Classes;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using OtterGui.Classes;
 using OtterGui.Filesystem;
 using OtterGui.Log;
 using System;
@@ -47,6 +50,15 @@ public sealed class TemplateFileSystem : FileSystem<Template>, IDisposable, ISav
 
     private void OnTemplateChange(TemplateChanged.Type type, Template? template, object? data)
     {
+        if (type == TemplateChanged.Type.ReloadedAll)
+        {
+            Reload();
+            return;
+        }
+
+        if (template == null)
+            return;
+
         switch (type)
         {
             case TemplateChanged.Type.Created:
@@ -67,9 +79,6 @@ public sealed class TemplateFileSystem : FileSystem<Template>, IDisposable, ISav
             case TemplateChanged.Type.Deleted:
                 if (TryGetValue(template, out var leaf1))
                     Delete(leaf1);
-                return;
-            case TemplateChanged.Type.ReloadedAll:
-                Reload();
                 return;
             case TemplateChanged.Type.Renamed when data is string oldName:
                 if (!TryGetValue(template, out var leaf2))

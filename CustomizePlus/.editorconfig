@@ -1,9 +1,21 @@
-[*.{cs,vb}]
+﻿[*.{cs,vb}]
 dotnet_style_operator_placement_when_wrapping = beginning_of_line
 tab_width = 4
 indent_size = 4
 end_of_line = crlf
 [*.cs]
+file_header_template = Copyright (c) Customize+.\nLicensed under the MIT license.
+dotnet_diagnostic.SA1633.severity = none
+dotnet_diagnostic.SA1306.severity = none
+dotnet_diagnostic.SA1309.severity = none
+dotnet_diagnostic.SA1312.severity = none
+dotnet_diagnostic.SA1313.severity = none
+dotnet_diagnostic.SA1401.severity = none
+dotnet_diagnostic.SA1407.severity = none
+dotnet_diagnostic.SA1408.severity = none
+dotnet_diagnostic.SA1119.severity = none
+dotnet_diagnostic.SA0001.severity = none
+dotnet_diagnostic.AD0001.severity = none
 csharp_indent_labels = one_less_than_current
 csharp_using_directive_placement = outside_namespace:silent
 csharp_prefer_simple_using_statement = true:suggestion

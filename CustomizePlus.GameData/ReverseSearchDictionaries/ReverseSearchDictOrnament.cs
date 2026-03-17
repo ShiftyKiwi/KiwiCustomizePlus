@@ -1,6 +1,6 @@
-﻿using Dalamud.Plugin.Services;
+using Dalamud.Plugin.Services;
 using Dalamud.Plugin;
-using OtterGui.Log;
+using Luna;
 using Penumbra.GameData.Data;
 using System.Collections.Frozen;
 using System.Diagnostics.CodeAnalysis;
@@ -32,6 +32,6 @@ public sealed class ReverseSearchDictOrnament(IDalamudPluginInterface pluginInte
         => Value.TryGetValue(key, out value);
 
     /// <inheritdoc cref="ReverseNameDictionary.this"/>
-    public uint this[string key]
+    public new uint this[string key]
         => Value[key];
 }

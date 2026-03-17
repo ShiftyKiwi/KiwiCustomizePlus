@@ -1,4 +1,7 @@
-﻿using Dalamud.Plugin;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Plugin;
 using Newtonsoft.Json.Linq;
 using OtterGui.Log;
 using Penumbra.Api.Helpers;

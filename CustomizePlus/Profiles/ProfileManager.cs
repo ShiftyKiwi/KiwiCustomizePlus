@@ -1,4 +1,7 @@
-﻿using System;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -647,6 +650,9 @@ public partial class ProfileManager : IDisposable
         if (type is not TemplateChanged.Type.Deleted)
             return;
 
+        if (template == null)
+            return;
+
         foreach (var profile in Profiles)
         {
             for (var i = 0; i < profile.Templates.Count; ++i)
@@ -686,7 +692,7 @@ public partial class ProfileManager : IDisposable
             //hack: sending TemporaryProfileDeleted will result in OnArmatureChange being sent
             //so we need to make sure that we do not end up with endless loop here
             //the whole reason DeletionReason exists is this
-            if ((ArmatureChanged.DeletionReason)arg3 != ArmatureChanged.DeletionReason.Gone)
+            if (arg3 is not ArmatureChanged.DeletionReason reason || reason != ArmatureChanged.DeletionReason.Gone)
                 return;
 
             var profile = armature!.Profile;

@@ -1,4 +1,7 @@
-﻿using ECommonsLite.EzIpcManager;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using ECommonsLite.EzIpcManager;
 
 namespace CustomizePlus.Api;
 

@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Api.Data;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Api.Data;
 using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Extensions;
 using CustomizePlus.Core.Services;
@@ -81,7 +84,7 @@ public sealed class Template : ISavable
 
     #region Serialization
 
-    public new JObject JsonSerialize()
+    public JObject JsonSerialize()
     {
         var ret = new JObject()
         {

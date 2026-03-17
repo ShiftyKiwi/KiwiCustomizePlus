@@ -1,4 +1,7 @@
-﻿using Dalamud.Hooking;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using System;
 using System.Runtime.InteropServices;

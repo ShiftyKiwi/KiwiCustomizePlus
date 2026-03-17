@@ -1,4 +1,7 @@
-﻿using Dalamud.Interface.Utility;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Interface.Utility;
 using Dalamud.Interface;
 using Dalamud.Bindings.ImGui;
 using OtterGui;

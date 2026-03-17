@@ -1,4 +1,7 @@
-﻿using System;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using System;
 using CustomizePlus.Core.Helpers;
 using CustomizePlus.Game.Services;
 using CustomizePlus.UI.Windows;

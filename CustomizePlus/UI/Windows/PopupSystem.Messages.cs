@@ -1,4 +1,7 @@
-﻿using System.Numerics;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using System.Numerics;
 
 namespace CustomizePlus.UI.Windows;
 

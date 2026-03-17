@@ -1,4 +1,7 @@
-﻿using Dalamud.Interface.Utility;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Interface.Utility;
 using Dalamud.Bindings.ImGui;
 using OtterGui.Classes;
 using OtterGui.Log;
@@ -146,7 +149,7 @@ public abstract class TemplateComboBase : FilterComboCache<Tuple<Template, strin
         return filter.IsContained(path) || design.Name.Lower.Contains(filter.Lower);
     }
 
-    private void OnTemplateChange(TemplateChanged.Type type, Template template, object? data = null)
+    private void OnTemplateChange(TemplateChanged.Type type, Template? template, object? data = null)
     {
         _isCurrentSelectionDirty = type switch
         {

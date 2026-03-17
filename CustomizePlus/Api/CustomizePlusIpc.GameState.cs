@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Api.Enums;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Api.Enums;
 using ECommonsLite.EzIpcManager;
 
 namespace CustomizePlus.Api;

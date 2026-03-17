@@ -1,4 +1,7 @@
-﻿using Dalamud.Utility;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Utility;
 using System;
 
 namespace CustomizePlus.Core.Extensions;

@@ -1,4 +1,7 @@
-﻿using System;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using System;
 using System.Numerics;
 
 namespace CustomizePlus.Configuration.Data.Version3;

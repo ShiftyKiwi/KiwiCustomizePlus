@@ -1,4 +1,7 @@
-﻿using System;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using System;
 using Dalamud.Interface;
 using Dalamud.Utility;
 using Dalamud.Bindings.ImGui;

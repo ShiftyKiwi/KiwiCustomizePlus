@@ -1,4 +1,7 @@
-﻿using Dalamud.Game.Command;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Game.Command;
 using Dalamud.Plugin.Services;
 using OtterGui.Classes;
 using System;

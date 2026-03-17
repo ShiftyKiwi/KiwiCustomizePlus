@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Configuration.Data;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Configuration.Data;
 using CustomizePlus.Core.Data;
 using CustomizePlus.Game.Services;
 using CustomizePlus.GameData.Extensions;
@@ -28,7 +31,7 @@ public class TemplateEditorManager : IDisposable
     /// <summary>
     /// Reference to the original template which is currently being edited, should not be edited!
     /// </summary>
-    private Template _currentlyEditedTemplateOriginal;
+    private Template _currentlyEditedTemplateOriginal = null!;
 
     /// <summary>
     /// Internal profile for the editor

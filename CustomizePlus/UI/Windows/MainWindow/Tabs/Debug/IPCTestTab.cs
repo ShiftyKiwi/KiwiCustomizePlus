@@ -1,4 +1,7 @@
-﻿using Dalamud.Plugin;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
 using Newtonsoft.Json;
@@ -36,52 +39,52 @@ public class IPCTestTab //: IDisposable
     private readonly Logger _logger;
 
     [EzIPC("General.GetApiVersion")] 
-    private readonly Func<(int, int)> _getApiVersionIpcFunc;
+    private readonly Func<(int, int)> _getApiVersionIpcFunc = null!;
 
     [EzIPC("General.IsValid")]
-    private readonly Func<bool> _isValidIpcFunc;
+    private readonly Func<bool> _isValidIpcFunc = null!;
 
     [EzIPC("Profile.GetList")]
-    private readonly Func<IList<IPCProfileDataTuple>> _getProfileListIpcFunc;
+    private readonly Func<IList<IPCProfileDataTuple>> _getProfileListIpcFunc = null!;
 
     [EzIPC("Profile.EnableByUniqueId")]
-    private readonly Func<Guid, int> _enableProfileByUniqueIdIpcFunc;
+    private readonly Func<Guid, int> _enableProfileByUniqueIdIpcFunc = null!;
 
     [EzIPC("Profile.DisableByUniqueId")]
-    private readonly Func<Guid, int> _disableProfileByUniqueIdIpcFunc;
+    private readonly Func<Guid, int> _disableProfileByUniqueIdIpcFunc = null!;
 
     [EzIPC("Profile.SetPriorityByUniqueId")]
-    private readonly Func<Guid, int, int> _setPriorityByUniqueIdIpcFunc;
+    private readonly Func<Guid, int, int> _setPriorityByUniqueIdIpcFunc = null!;
 
     [EzIPC("Profile.GetActiveProfileIdOnCharacter")]
-    private readonly Func<ushort, (int, Guid?)> _getActiveProfileIdOnCharacterIpcFunc;
+    private readonly Func<ushort, (int, Guid?)> _getActiveProfileIdOnCharacterIpcFunc = null!;
 
     [EzIPC("Profile.SetTemporaryProfileOnCharacter")]
-    private readonly Func<ushort, string, (int, Guid?)> _setTemporaryProfileOnCharacterIpcFunc;
+    private readonly Func<ushort, string, (int, Guid?)> _setTemporaryProfileOnCharacterIpcFunc = null!;
 
     [EzIPC("Profile.DeleteTemporaryProfileOnCharacter")]
-    private readonly Func<ushort, int> _deleteTemporaryProfileOnCharacterIpcFunc;
+    private readonly Func<ushort, int> _deleteTemporaryProfileOnCharacterIpcFunc = null!;
 
     [EzIPC("Profile.DeleteTemporaryProfileByUniqueId")]
-    private readonly Func<Guid, int> _deleteTemporaryProfileByUniqueIdIpcFunc;
+    private readonly Func<Guid, int> _deleteTemporaryProfileByUniqueIdIpcFunc = null!;
 
     [EzIPC("Profile.AddPlayerCharacter")]
-    private readonly Func<Guid, string, ushort, int> _addPlayerCharacterIpcFunc;
+    private readonly Func<Guid, string, ushort, int> _addPlayerCharacterIpcFunc = null!;
 
     [EzIPC("Profile.RemovePlayerCharacter")]
-    private readonly Func<Guid, string, ushort, int> _removePlayerCharacterIpcFunc;
+    private readonly Func<Guid, string, ushort, int> _removePlayerCharacterIpcFunc = null!;
 
     [EzIPC("Profile.GetByUniqueId")]
-    private readonly Func<Guid, (int, string?)> _getProfileByIdIpcFunc;
+    private readonly Func<Guid, (int, string?)> _getProfileByIdIpcFunc = null!;
 
     [EzIPC("Profile.GetTemplates")]
-    private readonly Func<Guid, (int, List<IPCTemplateStatusTuple>?)> _getProfileTemplatesIpcFunc;
+    private readonly Func<Guid, (int, List<IPCTemplateStatusTuple>?)> _getProfileTemplatesIpcFunc = null!;
 
     [EzIPC("GameState.GetCutsceneParentIndex")]
-    private readonly Func<int, int> _getCutsceneParentIdxIpcFunc;
+    private readonly Func<int, int> _getCutsceneParentIdxIpcFunc = null!;
 
     [EzIPC("GameState.SetCutsceneParentIndex")]
-    private readonly Func<int, int, int> _setCutsceneParentIdxIpcFunc;
+    private readonly Func<int, int, int> _setCutsceneParentIdxIpcFunc = null!;
 
     private string? _rememberedProfileJson;
 

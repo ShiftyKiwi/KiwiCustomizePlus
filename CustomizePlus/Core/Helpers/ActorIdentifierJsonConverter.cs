@@ -1,4 +1,7 @@
-﻿using System;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using System;
 using Newtonsoft.Json;
 using Penumbra.GameData.Actors;
 using Newtonsoft.Json.Linq;

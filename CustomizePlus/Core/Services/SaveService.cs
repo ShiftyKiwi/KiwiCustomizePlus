@@ -1,4 +1,7 @@
-﻿using OtterGui.Classes;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using OtterGui.Classes;
 using OtterGui.Log;
 
 namespace CustomizePlus.Core.Services;

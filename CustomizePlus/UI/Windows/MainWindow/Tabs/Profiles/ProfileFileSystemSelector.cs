@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Configuration.Data;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Configuration.Data;
 using CustomizePlus.Game.Services;
 using CustomizePlus.GameData.Extensions;
 using CustomizePlus.Profiles;
@@ -99,7 +102,7 @@ public class ProfileFileSystemSelector : FileSystemSelector<Profile, ProfileStat
         SetFilterTooltip();
     }
 
-    public void Dispose()
+    public override void Dispose()
     {
         base.Dispose();
         _event.Unsubscribe(OnProfileChange);

@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Profiles.Data;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Profiles.Data;
 using OtterGui.Classes;
 
 namespace CustomizePlus.Profiles.Events;

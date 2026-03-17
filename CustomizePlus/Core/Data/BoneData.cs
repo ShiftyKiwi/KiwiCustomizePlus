@@ -1,3 +1,6 @@
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -613,7 +616,7 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
                     output.Add(result);
                 }
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 Plugin.Logger.Error($"Failed to dynamically parse bones for hairstyle of '{boneNames[index]}'");
             }

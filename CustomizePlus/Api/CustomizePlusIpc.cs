@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Armatures.Events;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Armatures.Events;
 using CustomizePlus.Core.Services;
 using CustomizePlus.Game.Services;
 using CustomizePlus.GameData.Services;

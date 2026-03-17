@@ -1,4 +1,7 @@
-﻿using System;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using System;
 using System.Numerics;
 using CustomizePlus.Anamnesis.Data;
 using FFXIVClientStructs.Havok.Common.Base.Math.Quaternion;

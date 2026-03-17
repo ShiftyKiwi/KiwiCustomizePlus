@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Armatures.Data;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Armatures.Data;
 using CustomizePlus.Armatures.Services;
 using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Extensions;

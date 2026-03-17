@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Core.Data;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Core.Data;
 using CustomizePlus.Templates.Data;
 using CustomizePlus.Api.Data;
 using CustomizePlus.Profiles.Data;
@@ -14,7 +17,7 @@ using System.Text;
 namespace CustomizePlus.Core.Helpers;
 public class BoneTransformData // literally not cooking
 {
-    public string BoneCodeName { get; set; }
+    public string BoneCodeName { get; set; } = string.Empty;
     public Vector3 Translation { get; set; }
     public Vector3 Rotation { get; set; }
     public Vector3 Scaling { get; set; }
@@ -132,7 +135,7 @@ public static class Base64Helper
         }
     }
 
-    public static List<BoneTransformData> ImportEditedBonesFromBase64(string base64)
+    public static List<BoneTransformData>? ImportEditedBonesFromBase64(string base64)
     {
         try
         {

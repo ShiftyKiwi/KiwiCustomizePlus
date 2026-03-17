@@ -1,4 +1,7 @@
-﻿using OtterGui.Filesystem;
+﻿// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using OtterGui.Filesystem;
 using OtterGui.Log;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -46,6 +49,15 @@ public class ProfileFileSystem : FileSystem<Profile>, IDisposable, ISavable
 
     private void OnProfileChange(ProfileChanged.Type type, Profile? profile, object? data)
     {
+        if (type == ProfileChanged.Type.ReloadedAll)
+        {
+            Reload();
+            return;
+        }
+
+        if (profile == null)
+            return;
+
         switch (type)
         {
             case ProfileChanged.Type.Created:
@@ -66,9 +78,6 @@ public class ProfileFileSystem : FileSystem<Profile>, IDisposable, ISavable
             case ProfileChanged.Type.Deleted:
                 if (TryGetValue(profile, out var leaf1))
                     Delete(leaf1);
-                return;
-            case ProfileChanged.Type.ReloadedAll:
-                Reload();
                 return;
             case ProfileChanged.Type.Renamed when data is string oldName:
                 if (!TryGetValue(profile, out var leaf2))

@@ -1,4 +1,7 @@
-﻿using FFXIVClientStructs.Havok.Common.Base.Math.QsTransform;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using FFXIVClientStructs.Havok.Common.Base.Math.QsTransform;
 using FFXIVClientStructs.Havok.Common.Base.Math.Quaternion;
 using FFXIVClientStructs.Havok.Common.Base.Math.Vector;
 using System.Numerics;

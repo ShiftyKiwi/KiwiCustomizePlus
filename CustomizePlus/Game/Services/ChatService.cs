@@ -1,4 +1,7 @@
-﻿using Dalamud.Game.Text.SeStringHandling;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Plugin.Services;
 
 namespace CustomizePlus.Game.Services;

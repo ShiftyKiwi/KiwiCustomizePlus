@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Api.Data;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Api.Data;
 using CustomizePlus.Configuration.Data;
 using CustomizePlus.Interop.Ipc;
 using CustomizePlus.Profiles;

@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Configuration.Data;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Configuration.Data;
 using OtterGui.Widgets;
 
 namespace CustomizePlus.UI.Windows;

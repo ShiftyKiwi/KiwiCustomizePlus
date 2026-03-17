@@ -1,4 +1,4 @@
-﻿using Dalamud.Hooking;
+using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility.Signatures;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -59,7 +59,7 @@ public unsafe class GameEventManager : IDisposable
                 {
                     ((CharacterDestructorEvent)subscriber).Invoke(character);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     //Penumbra.Log.Error($"{Prefix} Error in {nameof(CharacterDestructor)} event when executing {subscriber.Method.Name}:\n{ex}");
                     //todo: log
@@ -92,7 +92,7 @@ public unsafe class GameEventManager : IDisposable
                 {
                     ((CopyCharacterEvent)subscriber).Invoke(character, (Character*)source);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     /*Penumbra.Log.Error(
                         $"{Prefix} Error in {nameof(CopyCharacter)} event when executing {subscriber.Method.Name}:\n{ex}");*/
@@ -125,7 +125,7 @@ public unsafe class GameEventManager : IDisposable
                 {
                     ((CreatingCharacterBaseEvent)subscriber).Invoke((nint)(&a), b, c);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     /*Penumbra.Log.Error(
                         $"{Prefix} Error in {nameof(CharacterBaseCreateDetour)} event when executing {subscriber.Method.Name}:\n{ex}");*/
@@ -141,7 +141,7 @@ public unsafe class GameEventManager : IDisposable
                 {
                     ((CharacterBaseCreatedEvent)subscriber).Invoke(a, b, c, ret);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     /*Penumbra.Log.Error(
                         $"{Prefix} Error in {nameof(CharacterBaseCreateDetour)} event when executing {subscriber.Method.Name}:\n{ex}");*/
@@ -172,7 +172,7 @@ public unsafe class GameEventManager : IDisposable
                 {
                     ((CharacterBaseDestructorEvent)subscriber).Invoke(drawBase);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     /*Penumbra.Log.Error(
                         $"{Prefix} Error in {nameof(CharacterBaseDestructorDetour)} event when executing {subscriber.Method.Name}:\n{ex}");*/

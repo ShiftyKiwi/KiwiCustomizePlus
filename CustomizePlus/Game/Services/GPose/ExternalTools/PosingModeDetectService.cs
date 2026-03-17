@@ -1,4 +1,7 @@
-﻿using Dalamud.Plugin.Services;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using Dalamud.Plugin.Services;
 
 namespace CustomizePlus.Game.Services.GPose.ExternalTools;
 

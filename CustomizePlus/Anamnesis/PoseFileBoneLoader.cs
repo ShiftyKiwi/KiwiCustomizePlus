@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Anamnesis.Data;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Anamnesis.Data;
 using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Extensions;
 using Newtonsoft.Json;

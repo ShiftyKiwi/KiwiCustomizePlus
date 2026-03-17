@@ -1,4 +1,7 @@
-﻿using CustomizePlus.Templates.Data;
+// Copyright (c) Customize+.
+// Licensed under the MIT license.
+
+using CustomizePlus.Templates.Data;
 using OtterGui.Classes;
 
 namespace CustomizePlus.Templates.Events;
