@@ -292,6 +292,11 @@ public class ProfilePanel
 
         var profile = _selector.Selected;
         var globalSettings = _configuration.AdvancedBodyScalingSettings;
+        var settingColumnWidth = 190 * ImGuiHelpers.GlobalScale;
+        var overrideColumnWidth = MathF.Max(
+            80 * ImGuiHelpers.GlobalScale,
+            ImGui.CalcTextSize("Override").X + (ImGui.GetStyle().FramePadding.X * 2));
+        var overrideTableWidth = new Vector2(ImGui.GetContentRegionAvail().X, 0);
 
         if (!ImGui.CollapsingHeader("Advanced Body Scaling (Profile)"))
             return;
@@ -329,13 +334,14 @@ public class ProfilePanel
                     overrides.RegionOverrides.Remove(region);
             });
 
-        using var table = ImRaii.Table("ProfileAdvancedBodyScaling", 3, ImGuiTableFlags.RowBg);
+        using var table = ImRaii.Table("ProfileAdvancedBodyScaling", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX, overrideTableWidth);
         if (!table)
             return;
 
-        ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, 220 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
         ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, ImGui.GetFrameHeight());
+        ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+        ImGui.TableSetupScrollFreeze(0, 1);
         ImGui.TableHeadersRow();
 
         var overrides = profile.AdvancedBodyScalingOverrides.Overrides;
@@ -648,12 +654,17 @@ public class ProfilePanel
             if (!ImGui.TreeNode($"{region}##ProfileRegion{region}"))
                 continue;
 
-            using var regionTable = ImRaii.Table($"ProfileRegionOverrides_{region}", 3, ImGuiTableFlags.RowBg);
+            using var regionTable = ImRaii.Table(
+                $"ProfileRegionOverrides_{region}",
+                3,
+                ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX,
+                new Vector2(ImGui.GetContentRegionAvail().X, 0));
             if (regionTable)
             {
-                ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, 220 * ImGuiHelpers.GlobalScale);
+                ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
                 ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
-                ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, ImGui.GetFrameHeight());
+                ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+                ImGui.TableSetupScrollFreeze(0, 1);
                 ImGui.TableHeadersRow();
 
                 void DrawRegionFloatOverride(

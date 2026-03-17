@@ -6,6 +6,7 @@ using CustomizePlus.Configuration.Data;
 using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Helpers;
 using CustomizePlus.Core.Services;
+using CustomizePlus.Game.Services;
 using CustomizePlus.Templates;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
@@ -20,6 +21,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
+using Penumbra.GameData.Interop;
 using Penumbra.GameData.Enums;
 
 namespace CustomizePlus.UI.Windows.MainWindow.Tabs;
@@ -51,7 +53,10 @@ public class SettingsTab
     private readonly MessageService _messageService;
     private readonly SupportLogBuilderService _supportLogBuilderService;
     private readonly PcpService _pcpService;
+    private readonly GameObjectService _gameObjectService;
     private Race _neckPresetRace = Race.Elezen;
+    private Race _lastDetectedNeckPresetRace = Race.Unknown;
+    private bool _followDetectedNeckPresetRace;
 
     public SettingsTab(
         IDalamudPluginInterface pluginInterface,
@@ -62,7 +67,8 @@ public class SettingsTab
         CPlusChangeLog changeLog,
         MessageService messageService,
         SupportLogBuilderService supportLogBuilderService,
-        PcpService pcpService)
+        PcpService pcpService,
+        GameObjectService gameObjectService)
     {
         _pluginInterface = pluginInterface;
         _configuration = configuration;
@@ -73,6 +79,7 @@ public class SettingsTab
         _messageService = messageService;
         _supportLogBuilderService = supportLogBuilderService;
         _pcpService = pcpService;
+        _gameObjectService = gameObjectService;
     }
 
     public void Draw()
@@ -612,24 +619,50 @@ public class SettingsTab
         CtrlHelper.AddHoverText("When enabled, races with presets override the neck compensation values.");
 
         using var disabled = ImRaii.Disabled(!settings.UseRaceSpecificNeckCompensation);
+        var detectedRace = GetDetectedPresetEditorRace();
+        SyncDetectedPresetRace(settings, detectedRace);
+
+        ImGui.TextDisabled($"Detected actor race: {GetRaceLabelOrUnknown(detectedRace)}");
+        CtrlHelper.AddHoverText(
+            "This is the race currently detected from the active preview actor when available, otherwise your current character.");
+
+        var followDetectedRace = _followDetectedNeckPresetRace;
+        if (ImGui.Checkbox("Follow detected actor race", ref followDetectedRace))
+        {
+            _followDetectedNeckPresetRace = followDetectedRace;
+            if (_followDetectedNeckPresetRace && TrySetPresetEditorRace(detectedRace) && settings.UseRaceSpecificNeckCompensation)
+                _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText(
+            "Automatically switches the preset editor to the currently detected actor race. Manual selection stays available when disabled.");
+
+        ImGui.SameLine();
+        using (var applyDetectedDisabled = ImRaii.Disabled(detectedRace == Race.Unknown))
+        {
+            if (ImGui.Button("Use detected race"))
+                TrySetPresetEditorRace(detectedRace);
+        }
 
         var raceLabel = GetRaceLabel(_neckPresetRace);
-        if (ImGui.BeginCombo("Preset race", raceLabel))
+        using (var followDisabled = ImRaii.Disabled(_followDetectedNeckPresetRace && detectedRace != Race.Unknown))
         {
-            foreach (var race in Enum.GetValues<Race>())
+            if (ImGui.BeginCombo("Preset race", raceLabel))
             {
-                if (race == Race.Unknown)
-                    continue;
+                foreach (var race in Enum.GetValues<Race>())
+                {
+                    if (race == Race.Unknown)
+                        continue;
 
-                var selected = race == _neckPresetRace;
-                if (ImGui.Selectable(GetRaceLabel(race), selected))
-                    _neckPresetRace = race;
+                    var selected = race == _neckPresetRace;
+                    if (ImGui.Selectable(GetRaceLabel(race), selected))
+                        _neckPresetRace = race;
 
-                if (selected)
-                    ImGui.SetItemDefaultFocus();
+                    if (selected)
+                        ImGui.SetItemDefaultFocus();
+                }
+
+                ImGui.EndCombo();
             }
-
-            ImGui.EndCombo();
         }
 
         var presets = settings.RaceNeckPresets;
@@ -708,6 +741,68 @@ public class SettingsTab
             Race.Miqote => "Miqo'te",
             _ => race.ToString()
         };
+
+    private static string GetRaceLabelOrUnknown(Race race)
+        => race == Race.Unknown ? "Unknown" : GetRaceLabel(race);
+
+    private void SyncDetectedPresetRace(AdvancedBodyScalingSettings settings, Race detectedRace)
+    {
+        if (_lastDetectedNeckPresetRace == detectedRace)
+            return;
+
+        _lastDetectedNeckPresetRace = detectedRace;
+        if (!_followDetectedNeckPresetRace || !TrySetPresetEditorRace(detectedRace) || !settings.UseRaceSpecificNeckCompensation)
+            return;
+
+        _armatureManager.RebindAllArmatures();
+    }
+
+    private bool TrySetPresetEditorRace(Race race)
+    {
+        if (race == Race.Unknown || _neckPresetRace == race)
+            return false;
+
+        _neckPresetRace = race;
+        return true;
+    }
+
+    private Race GetDetectedPresetEditorRace()
+    {
+        if ((_templateEditorManager.IsEditorActive || _templateEditorManager.IsEditorPaused) &&
+            TryGetRaceForCharacter(_templateEditorManager.Character, out var previewRace))
+            return previewRace;
+
+        return TryGetActorRace(_gameObjectService.GetLocalPlayerActor(), out var currentRace)
+            ? currentRace
+            : Race.Unknown;
+    }
+
+    private bool TryGetRaceForCharacter(Penumbra.GameData.Actors.ActorIdentifier character, out Race race)
+    {
+        foreach (var (_, actor) in _gameObjectService.FindActorsByIdentifierIgnoringOwnership(character))
+        {
+            if (TryGetActorRace(actor, out race))
+                return true;
+        }
+
+        race = Race.Unknown;
+        return false;
+    }
+
+    private static unsafe bool TryGetActorRace(Actor actor, out Race race)
+    {
+        race = Race.Unknown;
+
+        if (!actor || !actor.IsCharacter)
+            return false;
+
+        var customize = actor.Customize;
+        if (customize == null)
+            return false;
+
+        race = customize->Race;
+        return race != Race.Unknown;
+    }
 
     private void DrawAdvancedBodyScalingResets(AdvancedBodyScalingSettings settings)
     {

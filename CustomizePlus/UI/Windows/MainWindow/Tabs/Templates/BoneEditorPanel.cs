@@ -585,7 +585,7 @@ public class BoneEditorPanel
 
     private bool ResetBoneButton(EditRowParams bone)
     {
-        var output = ImGuiComponents.IconButton(bone.BoneCodeName, FontAwesomeIcon.Recycle);
+        var output = ImGuiComponents.IconButton($"##Reset{bone.BoneCodeName}", FontAwesomeIcon.Recycle);
         CtrlHelper.AddHoverText(
             $"Reset '{BoneData.GetBoneDisplayName(bone.BoneCodeName)}' to default {_editingAttribute} values");
 
@@ -601,7 +601,7 @@ public class BoneEditorPanel
 
     private bool RevertBoneButton(EditRowParams bone)
     {
-        var output = ImGuiComponents.IconButton(bone.BoneCodeName, FontAwesomeIcon.ArrowCircleLeft);
+        var output = ImGuiComponents.IconButton($"##Revert{bone.BoneCodeName}", FontAwesomeIcon.ArrowCircleLeft);
         CtrlHelper.AddHoverText(
             $"Revert '{BoneData.GetBoneDisplayName(bone.BoneCodeName)}' to last saved {_editingAttribute} values");
 

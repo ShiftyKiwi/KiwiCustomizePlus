@@ -29,7 +29,7 @@ public class TemplateEditorManager : IDisposable
     private readonly PluginConfiguration _configuration;
 
     /// <summary>
-    /// Reference to the original template which is currently being edited, should not be edited!
+    /// Immutable snapshot of the template state when the current editing session started.
     /// </summary>
     private Template _currentlyEditedTemplateOriginal = null!;
 
@@ -126,7 +126,7 @@ public class TemplateEditorManager : IDisposable
         _logger.Debug($"Enabling editor profile for {template.Name} via character {Character.Incognito(null)}");
 
         CurrentlyEditedTemplateId = template.UniqueId;
-        _currentlyEditedTemplateOriginal = template;
+        _currentlyEditedTemplateOriginal = new Template(template);
         CurrentlyEditedTemplate = new Template(template)
         {
             CreationDate = DateTimeOffset.UtcNow,

@@ -16,10 +16,7 @@ internal static class StringExtensions
         if (str.IsNullOrWhitespace())
             return str;
 
-#if !INCOGNIFY_STRINGS
-        return str;
-#endif
-
+#if INCOGNIFY_STRINGS
         str = str.Trim();
 
         if (str.Contains(" "))
@@ -31,6 +28,9 @@ internal static class StringExtensions
         }
 
         return str.GetCutString();
+#else
+        return str;
+#endif
     }
 
     private static string GetCutString(this string str, int maxLength = 5)
