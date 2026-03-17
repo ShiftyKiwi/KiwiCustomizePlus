@@ -35,6 +35,8 @@ using OtterGui.Log;
 using OtterGui.Raii;
 using OtterGui.Services;
 using Penumbra.GameData.Actors;
+using Penumbra.GameData.Data;
+using Penumbra.GameData.DataContainers;
 using Penumbra.GameData.Interop;
 using Penumbra.GameData.Structs;
 using System.Collections.Generic;
@@ -231,6 +233,13 @@ public static class ServiceManagerBuilder
     private static ServiceManager AddGameDataServices(this ServiceManager services)
     {
         services
+            .AddSingleton<DictWorld>()
+            .AddSingleton<DictMount>()
+            .AddSingleton<DictCompanion>()
+            .AddSingleton<DictOrnament>()
+            .AddSingleton<DictBNpc>()
+            .AddSingleton<DictENpc>()
+            .AddSingleton<NameDicts>()
             .AddSingleton<ActorManager>()
             .AddSingleton<CutsceneService>()
             .AddSingleton<GameEventManager>()
