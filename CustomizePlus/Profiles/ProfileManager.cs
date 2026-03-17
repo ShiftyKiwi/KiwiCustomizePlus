@@ -7,6 +7,7 @@ using OtterGui.Filesystem;
 using Penumbra.GameData.Actors;
 using CustomizePlus.Core.Services;
 using CustomizePlus.Core.Helpers;
+using CustomizePlus.Core.Data;
 using CustomizePlus.Armatures.Events;
 using CustomizePlus.Configuration.Data;
 using CustomizePlus.Armatures.Data;
@@ -243,6 +244,15 @@ public partial class ProfileManager : IDisposable
         SaveProfile(profile);
 
         _event.Invoke(ProfileChanged.Type.Toggled, profile, value);
+    }
+
+    public void UpdateAdvancedBodyScalingOverrides(Profile profile, Action<AdvancedBodyScalingProfileSettings> update)
+    {
+        update(profile.AdvancedBodyScalingOverrides);
+
+        SaveProfile(profile);
+
+        _event.Invoke(ProfileChanged.Type.AdvancedBodyScalingSettingsChanged, profile, null);
     }
     
     public void SetEnabled(Guid profileId, bool value)

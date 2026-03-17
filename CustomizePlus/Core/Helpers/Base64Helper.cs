@@ -23,6 +23,7 @@ public class BoneTransformData // literally not cooking
     public bool PropagateTranslation { get; set; }
     public bool PropagateRotation { get; set; }
     public bool PropagateScale { get; set; }
+    public BoneLockState LockState { get; set; } = BoneLockState.Unlocked;
 }
 
 //this is jank but I don't have time to rewrite it
@@ -109,7 +110,8 @@ public static class Base64Helper
                 ChildScalingIndependent = b.Transform.ChildScalingIndependent,
                 PropagateTranslation = b.Transform.PropagateTranslation,
                 PropagateRotation = b.Transform.PropagateRotation,
-                PropagateScale = b.Transform.PropagateScale
+                PropagateScale = b.Transform.PropagateScale,
+                LockState = b.Transform.LockState
             }).ToList(); // dont let me cook
 
             var json = JsonConvert.SerializeObject(DataList, Formatting.None);

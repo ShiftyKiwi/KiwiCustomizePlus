@@ -210,6 +210,11 @@ public class TemplateManager : IDisposable
         SaveTemplate(targetTemplate);
     }
 
+    public void QueueSave(Template template)
+    {
+        SaveTemplate(template);
+    }
+
     //Creates, updates or deletes bone transform
     //not to be used on editor-related features by anything but TemplateEditorManager
     public bool ModifyBoneTransform(Template template, string boneName, BoneTransform transform)
@@ -269,7 +274,7 @@ public class TemplateManager : IDisposable
             return;
 
         var uneditedBones = template.Bones
-            .Where(kvp => !kvp.Value.IsEdited())
+            .Where(kvp => !kvp.Value.IsEdited(true))
             .Select(kvp => kvp.Key)
             .ToList();
 

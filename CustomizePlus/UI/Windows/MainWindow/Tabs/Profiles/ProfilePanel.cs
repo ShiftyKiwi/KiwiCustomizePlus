@@ -25,6 +25,19 @@ namespace CustomizePlus.UI.Windows.MainWindow.Tabs.Profiles;
 
 public class ProfilePanel
 {
+    private static readonly AdvancedBodyRegion[] RegionOrder =
+    {
+        AdvancedBodyRegion.Spine,
+        AdvancedBodyRegion.Chest,
+        AdvancedBodyRegion.Pelvis,
+        AdvancedBodyRegion.Arms,
+        AdvancedBodyRegion.Hands,
+        AdvancedBodyRegion.Legs,
+        AdvancedBodyRegion.Feet,
+        AdvancedBodyRegion.Toes,
+        AdvancedBodyRegion.Tail
+    };
+
     private readonly ProfileFileSystemSelector _selector;
     private readonly ProfileManager _manager;
     private readonly PluginConfiguration _configuration;
@@ -172,6 +185,10 @@ public class ProfilePanel
 
             ImGui.Separator();
 
+            DrawAdvancedBodyScalingOverrides();
+
+            ImGui.Separator();
+
             var isShouldDraw = ImGui.CollapsingHeader("Add character");
 
             if (isShouldDraw)
@@ -261,6 +278,387 @@ public class ProfilePanel
                 ImGuiComponents.HelpMarker("Profiles with a higher number here take precedence before profiles with a lower number.\n" +
                     "That means if two or more profiles affect same character, profile with higher priority will be applied to that character.");
             }
+        }
+    }
+
+    private void DrawAdvancedBodyScalingOverrides()
+    {
+        if (_selector.Selected == null)
+            return;
+
+        var profile = _selector.Selected;
+        var globalSettings = _configuration.AdvancedBodyScalingSettings;
+
+        if (!ImGui.CollapsingHeader("Advanced Body Scaling (Profile)"))
+            return;
+
+        var useOverrides = profile.AdvancedBodyScalingOverrides.UseProfileOverrides;
+        if (ImGui.RadioButton("Use Global Settings", !useOverrides))
+            _manager.UpdateAdvancedBodyScalingOverrides(profile, settings => settings.UseProfileOverrides = false);
+
+        ImGui.SameLine();
+        if (ImGui.RadioButton("Use Profile Overrides", useOverrides))
+            _manager.UpdateAdvancedBodyScalingOverrides(profile, settings => settings.UseProfileOverrides = true);
+
+        if (!profile.AdvancedBodyScalingOverrides.UseProfileOverrides)
+        {
+            ImGui.TextDisabled("Inheriting global advanced body scaling settings.");
+            return;
+        }
+
+        void ToggleOverride(Action<AdvancedBodyScalingOverrides> update)
+            => _manager.UpdateAdvancedBodyScalingOverrides(profile, settings => update(settings.Overrides));
+
+        void UpdateRegionOverride(AdvancedBodyRegion region, Action<AdvancedBodyScalingRegionProfileOverrides> update)
+            => _manager.UpdateAdvancedBodyScalingOverrides(profile, settings =>
+            {
+                var overrides = settings.Overrides;
+                if (!overrides.RegionOverrides.TryGetValue(region, out var regionOverride))
+                {
+                    regionOverride = new AdvancedBodyScalingRegionProfileOverrides();
+                    overrides.RegionOverrides[region] = regionOverride;
+                }
+
+                update(regionOverride);
+
+                if (regionOverride.IsEmpty)
+                    overrides.RegionOverrides.Remove(region);
+            });
+
+        using var table = ImRaii.Table("ProfileAdvancedBodyScaling", 3, ImGuiTableFlags.RowBg);
+        if (!table)
+            return;
+
+        ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, 220 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, ImGui.GetFrameHeight());
+        ImGui.TableHeadersRow();
+
+        var overrides = profile.AdvancedBodyScalingOverrides.Overrides;
+
+        // Enabled
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Advanced body scaling");
+        ImGui.TableNextColumn();
+        if (overrides.Enabled.HasValue)
+        {
+            var enabled = overrides.Enabled.Value;
+            if (ImGui.Checkbox("##ProfileAdvScalingEnabled", ref enabled))
+                ToggleOverride(o => o.Enabled = enabled);
+        }
+        else
+        {
+            var enabled = globalSettings.Enabled;
+            using (ImRaii.Disabled())
+                ImGui.Checkbox("##ProfileAdvScalingEnabled", ref enabled);
+        }
+        CtrlHelper.AddHoverText("Enable or disable advanced body scaling for this profile.");
+        ImGui.TableNextColumn();
+        var enabledOverride = overrides.Enabled.HasValue;
+        if (ImGui.Checkbox("##ProfileAdvScalingEnabledOverride", ref enabledOverride))
+            ToggleOverride(o => o.Enabled = enabledOverride ? globalSettings.Enabled : null);
+
+        // Automation mode
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Automation mode");
+        ImGui.TableNextColumn();
+        if (overrides.Mode.HasValue)
+        {
+            var mode = overrides.Mode ?? globalSettings.Mode;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.BeginCombo("##ProfileAdvScalingMode", mode.ToString()))
+            {
+                foreach (var value in Enum.GetValues<AdvancedBodyScalingMode>())
+                {
+                    var selected = value == mode;
+                    if (ImGui.Selectable(value.ToString(), selected))
+                        ToggleOverride(o => o.Mode = value);
+
+                    if (selected)
+                        ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+        }
+        else
+        {
+            ImGui.TextDisabled($"Global: {globalSettings.Mode}");
+        }
+        CtrlHelper.AddHoverText("Manual disables automation. Assist is light smoothing. Automatic runs full balancing. Strong is more aggressive.");
+        ImGui.TableNextColumn();
+        var modeOverride = overrides.Mode.HasValue;
+        if (ImGui.Checkbox("##ProfileAdvScalingModeOverride", ref modeOverride))
+            ToggleOverride(o => o.Mode = modeOverride ? globalSettings.Mode : null);
+
+        // Surface balancing strength
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Surface balancing strength");
+        ImGui.TableNextColumn();
+        if (overrides.SurfaceBalancingStrength.HasValue)
+        {
+            var value = overrides.SurfaceBalancingStrength.Value;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat("##ProfileAdvScalingSurface", ref value, 0f, 1f, "%.2f"))
+                ToggleOverride(o => o.SurfaceBalancingStrength = value);
+        }
+        else
+        {
+            var value = globalSettings.SurfaceBalancingStrength;
+            using (ImRaii.Disabled())
+            {
+                ImGui.SetNextItemWidth(-1);
+                ImGui.SliderFloat("##ProfileAdvScalingSurface", ref value, 0f, 1f, "%.2f");
+            }
+        }
+        CtrlHelper.AddHoverText("Scales how strongly neighboring bones are smoothed. 0 disables, 1 uses the mode default.");
+        ImGui.TableNextColumn();
+        var surfaceOverride = overrides.SurfaceBalancingStrength.HasValue;
+        if (ImGui.Checkbox("##ProfileAdvScalingSurfaceOverride", ref surfaceOverride))
+            ToggleOverride(o => o.SurfaceBalancingStrength = surfaceOverride ? globalSettings.SurfaceBalancingStrength : null);
+
+        // Mass redistribution strength
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Mass redistribution strength");
+        ImGui.TableNextColumn();
+        if (overrides.MassRedistributionStrength.HasValue)
+        {
+            var value = overrides.MassRedistributionStrength.Value;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat("##ProfileAdvScalingMass", ref value, 0f, 1f, "%.2f"))
+                ToggleOverride(o => o.MassRedistributionStrength = value);
+        }
+        else
+        {
+            var value = globalSettings.MassRedistributionStrength;
+            using (ImRaii.Disabled())
+            {
+                ImGui.SetNextItemWidth(-1);
+                ImGui.SliderFloat("##ProfileAdvScalingMass", ref value, 0f, 1f, "%.2f");
+            }
+        }
+        CtrlHelper.AddHoverText("Scales how much scale deltas are redistributed across neighboring bones. 0 disables, 1 uses the mode default.");
+        ImGui.TableNextColumn();
+        var massOverride = overrides.MassRedistributionStrength.HasValue;
+        if (ImGui.Checkbox("##ProfileAdvScalingMassOverride", ref massOverride))
+            ToggleOverride(o => o.MassRedistributionStrength = massOverride ? globalSettings.MassRedistributionStrength : null);
+
+        // Proportion guardrail mode
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Proportion guardrail mode");
+        ImGui.TableNextColumn();
+        if (overrides.GuardrailMode.HasValue)
+        {
+            var mode = overrides.GuardrailMode ?? globalSettings.GuardrailMode;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.BeginCombo("##ProfileAdvScalingGuardrail", mode.ToString()))
+            {
+                foreach (var value in Enum.GetValues<AdvancedBodyScalingGuardrailMode>())
+                {
+                    var selected = value == mode;
+                    if (ImGui.Selectable(value.ToString(), selected))
+                        ToggleOverride(o => o.GuardrailMode = value);
+
+                    if (selected)
+                        ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+        }
+        else
+        {
+            ImGui.TextDisabled($"Global: {globalSettings.GuardrailMode}");
+        }
+        CtrlHelper.AddHoverText("Controls how strict the body proportion guardrails are. Off disables guardrails.");
+        ImGui.TableNextColumn();
+        var guardrailOverride = overrides.GuardrailMode.HasValue;
+        if (ImGui.Checkbox("##ProfileAdvScalingGuardrailOverride", ref guardrailOverride))
+            ToggleOverride(o => o.GuardrailMode = guardrailOverride ? globalSettings.GuardrailMode : null);
+
+        // Naturalization strength
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Naturalization strength");
+        ImGui.TableNextColumn();
+        if (overrides.NaturalizationStrength.HasValue)
+        {
+            var value = overrides.NaturalizationStrength.Value;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat("##ProfileAdvScalingNaturalization", ref value, 0f, 1f, "%.2f"))
+                ToggleOverride(o => o.NaturalizationStrength = value);
+        }
+        else
+        {
+            var value = globalSettings.NaturalizationStrength;
+            using (ImRaii.Disabled())
+            {
+                ImGui.SetNextItemWidth(-1);
+                ImGui.SliderFloat("##ProfileAdvScalingNaturalization", ref value, 0f, 1f, "%.2f");
+            }
+        }
+        CtrlHelper.AddHoverText("Blends between your edits and the balanced result. 0 keeps your edits, 1 fully balances.");
+        ImGui.TableNextColumn();
+        var naturalizationOverride = overrides.NaturalizationStrength.HasValue;
+        if (ImGui.Checkbox("##ProfileAdvScalingNaturalizationOverride", ref naturalizationOverride))
+            ToggleOverride(o => o.NaturalizationStrength = naturalizationOverride ? globalSettings.NaturalizationStrength : null);
+
+        // Pose-aware validation mode
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Pose-aware validation mode");
+        ImGui.TableNextColumn();
+        if (overrides.PoseValidationMode.HasValue)
+        {
+            var mode = overrides.PoseValidationMode ?? globalSettings.PoseValidationMode;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.BeginCombo("##ProfileAdvScalingPose", mode.ToString()))
+            {
+                foreach (var value in Enum.GetValues<AdvancedBodyScalingPoseValidationMode>())
+                {
+                    var selected = value == mode;
+                    if (ImGui.Selectable(value.ToString(), selected))
+                        ToggleOverride(o => o.PoseValidationMode = value);
+
+                    if (selected)
+                        ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+        }
+        else
+        {
+            ImGui.TextDisabled($"Global: {globalSettings.PoseValidationMode}");
+        }
+        CtrlHelper.AddHoverText("Adds extra pose-aware guardrails to reduce deformation in extreme poses.");
+        ImGui.TableNextColumn();
+        var poseOverride = overrides.PoseValidationMode.HasValue;
+        if (ImGui.Checkbox("##ProfileAdvScalingPoseOverride", ref poseOverride))
+            ToggleOverride(o => o.PoseValidationMode = poseOverride ? globalSettings.PoseValidationMode : null);
+
+        ImGui.Spacing();
+        if (!ImGui.CollapsingHeader("Region Tuning Overrides"))
+            return;
+
+        ImGui.TextDisabled("Override per-region tuning settings. Disabled fields inherit the global region tuning.");
+
+        foreach (var region in RegionOrder)
+        {
+            var globalProfile = globalSettings.GetRegionProfile(region);
+            overrides.RegionOverrides.TryGetValue(region, out var regionOverride);
+
+            if (!ImGui.TreeNode($"{region}##ProfileRegion{region}"))
+                continue;
+
+            using var regionTable = ImRaii.Table($"ProfileRegionOverrides_{region}", 3, ImGuiTableFlags.RowBg);
+            if (regionTable)
+            {
+                ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, 220 * ImGuiHelpers.GlobalScale);
+                ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, ImGui.GetFrameHeight());
+                ImGui.TableHeadersRow();
+
+                void DrawRegionFloatOverride(
+                    string label,
+                    string idSuffix,
+                    float globalValue,
+                    float? overrideValue,
+                    Action<AdvancedBodyScalingRegionProfileOverrides, float?> setter)
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.TextUnformatted(label);
+                    ImGui.TableNextColumn();
+
+                    if (overrideValue.HasValue)
+                    {
+                        var value = overrideValue.Value;
+                        ImGui.SetNextItemWidth(-1);
+                        if (ImGui.SliderFloat($"##{idSuffix}_{region}", ref value, 0f, 1f, "%.2f"))
+                            UpdateRegionOverride(region, o => setter(o, value));
+                    }
+                    else
+                    {
+                        var value = globalValue;
+                        using (ImRaii.Disabled())
+                        {
+                            ImGui.SetNextItemWidth(-1);
+                            ImGui.SliderFloat($"##{idSuffix}_{region}", ref value, 0f, 1f, "%.2f");
+                        }
+                    }
+
+                    ImGui.TableNextColumn();
+                    var enabled = overrideValue.HasValue;
+                    if (ImGui.Checkbox($"##{idSuffix}_{region}_Override", ref enabled))
+                        UpdateRegionOverride(region, o => setter(o, enabled ? globalValue : null));
+                }
+
+                void DrawRegionBoolOverride(
+                    string label,
+                    string idSuffix,
+                    bool globalValue,
+                    bool? overrideValue,
+                    Action<AdvancedBodyScalingRegionProfileOverrides, bool?> setter)
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.TextUnformatted(label);
+                    ImGui.TableNextColumn();
+
+                    if (overrideValue.HasValue)
+                    {
+                        var value = overrideValue.Value;
+                        if (ImGui.Checkbox($"##{idSuffix}_{region}", ref value))
+                            UpdateRegionOverride(region, o => setter(o, value));
+                    }
+                    else
+                    {
+                        var value = globalValue;
+                        using (ImRaii.Disabled())
+                            ImGui.Checkbox($"##{idSuffix}_{region}", ref value);
+                    }
+
+                    ImGui.TableNextColumn();
+                    var enabled = overrideValue.HasValue;
+                    if (ImGui.Checkbox($"##{idSuffix}_{region}_Override", ref enabled))
+                        UpdateRegionOverride(region, o => setter(o, enabled ? globalValue : null));
+                }
+
+                DrawRegionFloatOverride("Influence (propagation)", "Influence", globalProfile.InfluenceMultiplier, regionOverride?.InfluenceMultiplier,
+                    (o, v) => o.InfluenceMultiplier = v);
+                DrawRegionFloatOverride("Smoothing", "Smoothing", globalProfile.SmoothingMultiplier, regionOverride?.SmoothingMultiplier,
+                    (o, v) => o.SmoothingMultiplier = v);
+                DrawRegionFloatOverride("Guardrail strength", "Guardrail", globalProfile.GuardrailMultiplier, regionOverride?.GuardrailMultiplier,
+                    (o, v) => o.GuardrailMultiplier = v);
+                DrawRegionFloatOverride("Mass redistribution", "Mass", globalProfile.MassRedistributionMultiplier, regionOverride?.MassRedistributionMultiplier,
+                    (o, v) => o.MassRedistributionMultiplier = v);
+                DrawRegionFloatOverride("Pose validation", "Pose", globalProfile.PoseValidationMultiplier, regionOverride?.PoseValidationMultiplier,
+                    (o, v) => o.PoseValidationMultiplier = v);
+                DrawRegionFloatOverride("Naturalization", "Naturalization", globalProfile.NaturalizationMultiplier, regionOverride?.NaturalizationMultiplier,
+                    (o, v) => o.NaturalizationMultiplier = v);
+
+                DrawRegionBoolOverride("Allow guardrails", "AllowGuardrails", globalProfile.AllowGuardrails, regionOverride?.AllowGuardrails,
+                    (o, v) => o.AllowGuardrails = v);
+                DrawRegionBoolOverride("Allow pose validation", "AllowPose", globalProfile.AllowPoseValidation, regionOverride?.AllowPoseValidation,
+                    (o, v) => o.AllowPoseValidation = v);
+                DrawRegionBoolOverride("Allow naturalization", "AllowNatural", globalProfile.AllowNaturalization, regionOverride?.AllowNaturalization,
+                    (o, v) => o.AllowNaturalization = v);
+            }
+
+            ImGui.TreePop();
+            ImGui.Spacing();
         }
     }
 

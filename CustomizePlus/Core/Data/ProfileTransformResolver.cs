@@ -69,6 +69,7 @@ internal static class ProfileTransformResolver
         private bool _childScalingIndependent;
         private float _falloffSum;
         private float _falloffWeight;
+        private BoneLockState _lockState = BoneLockState.Unlocked;
 
         public void Add(BoneTransform transform, float weight)
         {
@@ -104,6 +105,11 @@ internal static class ProfileTransformResolver
             _propagateTranslation |= transform.PropagateTranslation;
             _propagateRotation |= transform.PropagateRotation;
             _propagateScale |= transform.PropagateScale;
+
+            if (transform.LockState == BoneLockState.Locked)
+                _lockState = BoneLockState.Locked;
+            else if (transform.LockState == BoneLockState.Priority && _lockState == BoneLockState.Unlocked)
+                _lockState = BoneLockState.Priority;
 
             if (transform.PropagateTranslation || transform.PropagateRotation || transform.PropagateScale)
             {
@@ -146,6 +152,7 @@ internal static class ProfileTransformResolver
                 PropagationFalloff = _falloffWeight > 0f
                     ? _falloffSum / _falloffWeight
                     : Constants.DefaultPropagationFalloff,
+                LockState = _lockState,
             };
         }
     }

@@ -17,6 +17,13 @@ public enum BoneAttribute
     ChildScaling = 3
 }
 
+public enum BoneLockState
+{
+    Unlocked = 0,
+    Locked = 1,
+    Priority = 2
+}
+
 [Serializable]
 public class BoneTransform
 {
@@ -75,6 +82,7 @@ public class BoneTransform
     public bool PropagateRotation = false;
     public bool PropagateScale = false;
     public bool ChildScalingIndependent = false;
+    public BoneLockState LockState { get; set; } = BoneLockState.Unlocked;
     private float _propagationFalloff = Constants.DefaultPropagationFalloff;
     [NonSerialized]
     private Quaternion? _runtimeRotationQuaternion;
@@ -87,6 +95,7 @@ public class BoneTransform
 
     public bool ShouldSerializeChildScaling() => ChildScalingIndependent;
     public bool ShouldSerializePropagationFalloff() => MathF.Abs(PropagationFalloff - Constants.DefaultPropagationFalloff) > 0.0001f;
+    public bool ShouldSerializeLockState() => LockState != BoneLockState.Unlocked;
 
     [OnDeserialized]
     internal void OnDeserialized(StreamingContext context)
@@ -101,6 +110,9 @@ public class BoneTransform
             _childScaling = Vector3.One;
         else
             _childScaling = ClampToDefaultLimits(_childScaling);
+
+        if (!Enum.IsDefined(typeof(BoneLockState), LockState))
+            LockState = BoneLockState.Unlocked;
     }
 
     //"considerPropagationAsEdit" only should be true if you know what you are doing
@@ -111,7 +123,8 @@ public class BoneTransform
         if (considerPropagationAsEdit)
             propagation = PropagateTranslation || PropagateRotation || PropagateScale
                 || (MathF.Abs(PropagationFalloff - Constants.DefaultPropagationFalloff) > 0.0001f
-                    && (PropagateTranslation || PropagateRotation || PropagateScale));
+                    && (PropagateTranslation || PropagateRotation || PropagateScale))
+                || LockState != BoneLockState.Unlocked;
 
         return !Translation.IsApproximately(Vector3.Zero, 0.00001f)
                || HasEffectiveRotation()
@@ -139,6 +152,7 @@ public class BoneTransform
             ChildScaling = ChildScaling,
             ChildScalingIndependent = ChildScalingIndependent,
             PropagationFalloff = PropagationFalloff,
+            LockState = LockState,
         };
     }
 
@@ -182,6 +196,7 @@ public class BoneTransform
         PropagateScale = newValues.PropagateScale;
         ChildScalingIndependent = newValues.ChildScalingIndependent;
         PropagationFalloff = newValues.PropagationFalloff;
+        LockState = newValues.LockState;
         _runtimeRotationQuaternion = newValues._runtimeRotationQuaternion;
     }
 
@@ -202,6 +217,7 @@ public class BoneTransform
             PropagateScale = PropagateScale,
             ChildScalingIndependent = ChildScalingIndependent,
             PropagationFalloff = PropagationFalloff,
+            LockState = LockState,
         };
     }
 
@@ -222,6 +238,7 @@ public class BoneTransform
             PropagateScale = PropagateScale,
             ChildScalingIndependent = ChildScalingIndependent,
             PropagationFalloff = PropagationFalloff,
+            LockState = LockState,
         };
     }
 
@@ -382,6 +399,7 @@ public class BoneTransform
         PropagateTranslation = target.PropagateTranslation;
         PropagateRotation = target.PropagateRotation;
         PropagateScale = target.PropagateScale;
+        LockState = target.LockState;
 
         var currentRotation = GetEffectiveRotationQuaternion();
         var targetRotation = target.GetEffectiveRotationQuaternion();

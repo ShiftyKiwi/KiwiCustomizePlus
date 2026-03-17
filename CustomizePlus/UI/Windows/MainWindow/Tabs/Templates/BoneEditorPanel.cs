@@ -300,7 +300,7 @@ public class BoneEditorPanel
                 var col3Label = _editingAttribute == BoneAttribute.Rotation ? "Yaw" : "Z";
                 var col4Label = _editingAttribute == BoneAttribute.Scale ? "All" : "N/A";
 
-                ImGui.TableSetupColumn("Bones", ImGuiTableColumnFlags.NoReorder | ImGuiTableColumnFlags.WidthFixed, 6 * CtrlHelper.IconButtonWidth);
+                ImGui.TableSetupColumn("Bones", ImGuiTableColumnFlags.NoReorder | ImGuiTableColumnFlags.WidthFixed, 7 * CtrlHelper.IconButtonWidth);
 
                 ImGui.TableSetupColumn($"{col1Label}", ImGuiTableColumnFlags.NoReorder | ImGuiTableColumnFlags.WidthStretch);
                 ImGui.TableSetupColumn($"{col2Label}", ImGuiTableColumnFlags.NoReorder | ImGuiTableColumnFlags.WidthStretch);
@@ -394,7 +394,8 @@ public class BoneEditorPanel
                                             ChildScalingIndependent = boneData.ChildScalingIndependent,
                                             PropagateTranslation = boneData.PropagateTranslation,
                                             PropagateRotation = boneData.PropagateRotation,
-                                            PropagateScale = boneData.PropagateScale
+                                            PropagateScale = boneData.PropagateScale,
+                                            LockState = boneData.LockState
                                         }
                                     );
                                 }
@@ -662,6 +663,47 @@ public class BoneEditorPanel
         return isFavorite;
     }
 
+    private bool LockStateButton(EditRowParams bone, ref BoneLockState lockState)
+    {
+        var id = $"##LockState{bone.BoneCodeName}";
+        var icon = lockState switch
+        {
+            BoneLockState.Locked => FontAwesomeIcon.Lock,
+            BoneLockState.Priority => FontAwesomeIcon.ExclamationTriangle,
+            _ => FontAwesomeIcon.LockOpen
+        };
+
+        if (lockState == BoneLockState.Locked)
+            ImGui.PushStyleColor(ImGuiCol.Text, Constants.Colors.Warning);
+        else if (lockState == BoneLockState.Priority)
+            ImGui.PushStyleColor(ImGuiCol.Text, Constants.Colors.Info);
+
+        var output = ImGuiComponents.IconButton(id, icon);
+
+        if (lockState == BoneLockState.Locked || lockState == BoneLockState.Priority)
+            ImGui.PopStyleColor();
+
+        var tooltip = lockState switch
+        {
+            BoneLockState.Locked => "Locked: automatic systems cannot modify this bone.",
+            BoneLockState.Priority => "Priority: influences neighbors but is not modified.",
+            _ => "Unlocked: automatic systems can modify this bone."
+        };
+        CtrlHelper.AddHoverText(tooltip);
+
+        if (output)
+        {
+            lockState = lockState switch
+            {
+                BoneLockState.Unlocked => BoneLockState.Locked,
+                BoneLockState.Locked => BoneLockState.Priority,
+                _ => BoneLockState.Unlocked
+            };
+        }
+
+        return output;
+    }
+
     private bool FullBoneSlider(string label, ref Vector3 value)
     {
         var velocity = _editingAttribute == BoneAttribute.Rotation ? 0.1f : 0.001f;
@@ -723,6 +765,7 @@ public class BoneEditorPanel
             BoneAttribute.Rotation => transform.PropagateRotation,
             _ => transform.PropagateScale
         };
+        var lockState = transform.LockState;
 
         bool valueChanged = false;
 
@@ -744,6 +787,14 @@ public class BoneEditorPanel
             if (PropagateCheckbox(bone, ref propagationEnabled))
             {
                 SaveStateForUndo(CaptureCurrentState());
+                valueChanged = true;
+            }
+
+            ImGui.SameLine();
+            if (LockStateButton(bone, ref lockState))
+            {
+                SaveStateForUndo(CaptureCurrentState());
+                transform.LockState = lockState;
                 valueChanged = true;
             }
 

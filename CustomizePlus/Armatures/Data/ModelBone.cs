@@ -99,13 +99,22 @@ public unsafe class ModelBone
     {
         if (template == null)
         {
-            var hadState = CustomizedTransform != null || _appliedTransform != null;
-            CustomizedTransform = null;
+            if (resolvedTransform == null)
+            {
+                var hadState = CustomizedTransform != null || _appliedTransform != null;
+                CustomizedTransform = null;
 
-            if (hadState)
-                Plugin.Logger.Verbose($"Unlinked {BoneName} from all templates");
+                if (hadState)
+                    Plugin.Logger.Verbose($"Unlinked {BoneName} from all templates");
 
-            return hadState;
+                return hadState;
+            }
+
+            CustomizedTransform ??= new BoneTransform();
+            CustomizedTransform.UpdateToMatch(resolvedTransform);
+            _appliedTransform ??= new BoneTransform();
+
+            return true;
         }
 
         if (!template.Bones.ContainsKey(BoneName))

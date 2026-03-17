@@ -1,5 +1,6 @@
 ﻿using CustomizePlus.Armatures.Services;
 using CustomizePlus.Configuration.Data;
+using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Helpers;
 using CustomizePlus.Core.Services;
 using CustomizePlus.Templates;
@@ -12,6 +13,7 @@ using OtterGui;
 using OtterGui.Classes;
 using OtterGui.Raii;
 using OtterGui.Widgets;
+using System;
 using System.Diagnostics;
 using System.Numerics;
 
@@ -21,6 +23,18 @@ public class SettingsTab
 {
     private const uint DiscordColor = 0xFFDA8972;
     private const uint DonateColor = 0xFF5B5EFF;
+    private static readonly AdvancedBodyRegion[] RegionOrder =
+    {
+        AdvancedBodyRegion.Spine,
+        AdvancedBodyRegion.Chest,
+        AdvancedBodyRegion.Pelvis,
+        AdvancedBodyRegion.Arms,
+        AdvancedBodyRegion.Hands,
+        AdvancedBodyRegion.Legs,
+        AdvancedBodyRegion.Feet,
+        AdvancedBodyRegion.Toes,
+        AdvancedBodyRegion.Tail
+    };
 
     private readonly IDalamudPluginInterface _pluginInterface;
     private readonly PluginConfiguration _configuration;
@@ -364,6 +378,7 @@ public class SettingsTab
         DrawTransitionSpeedSlider();
         DrawSoftScaleLimitsCheckbox();
         DrawAutomaticChildScaleCompensationCheckbox();
+        DrawAdvancedBodyScalingSettings();
         DrawDebugModeCheckbox();
     }
 
@@ -427,6 +442,252 @@ public class SettingsTab
             _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled = isChecked;
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
+        }
+    }
+
+    private void DrawAdvancedBodyScalingSettings()
+    {
+        var settings = _configuration.AdvancedBodyScalingSettings;
+        var isEnabled = settings.Enabled;
+
+        if (CtrlHelper.CheckboxWithTextAndHelp("##advancedbodyscaling", "Advanced body scaling",
+                "Enable the advanced body scaling pipeline with influence propagation, smoothing, and guardrails. Runtime only.", ref isEnabled))
+        {
+            settings.Enabled = isEnabled;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+
+        using (var disabled = ImRaii.Disabled(!settings.Enabled))
+        {
+            var mode = settings.Mode;
+            if (ImGui.BeginCombo("Automation mode", mode.ToString()))
+            {
+                foreach (var value in Enum.GetValues<AdvancedBodyScalingMode>())
+                {
+                    var selected = value == mode;
+                    if (ImGui.Selectable(value.ToString(), selected))
+                    {
+                        settings.Mode = value;
+                        _configuration.Save();
+                        _armatureManager.RebindAllArmatures();
+                    }
+
+                    if (selected)
+                        ImGui.SetItemDefaultFocus();
+                }
+
+                ImGui.EndCombo();
+            }
+            CtrlHelper.AddHoverText("Manual disables automation. Assist is light smoothing. Automatic runs full balancing. Strong is more aggressive.");
+
+            var surfaceBalancing = settings.SurfaceBalancingStrength;
+            if (ImGui.SliderFloat("Surface balancing strength", ref surfaceBalancing, 0f, 1f, "%.2f"))
+            {
+                settings.SurfaceBalancingStrength = surfaceBalancing;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Scales how strongly neighboring bones are smoothed. 0 disables, 1 uses the mode default.");
+
+            var massRedistribution = settings.MassRedistributionStrength;
+            if (ImGui.SliderFloat("Mass redistribution strength", ref massRedistribution, 0f, 1f, "%.2f"))
+            {
+                settings.MassRedistributionStrength = massRedistribution;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Scales how much scale deltas are redistributed across neighboring bones. 0 disables, 1 uses the mode default.");
+
+            var guardrailMode = settings.GuardrailMode;
+            if (ImGui.BeginCombo("Proportion guardrail mode", guardrailMode.ToString()))
+            {
+                foreach (var value in Enum.GetValues<AdvancedBodyScalingGuardrailMode>())
+                {
+                    var selected = value == guardrailMode;
+                    if (ImGui.Selectable(value.ToString(), selected))
+                    {
+                        settings.GuardrailMode = value;
+                        _configuration.Save();
+                        _armatureManager.RebindAllArmatures();
+                    }
+
+                    if (selected)
+                        ImGui.SetItemDefaultFocus();
+                }
+
+                ImGui.EndCombo();
+            }
+            CtrlHelper.AddHoverText("Controls how strict the body proportion guardrails are. Off disables guardrails.");
+
+            var naturalization = settings.NaturalizationStrength;
+            if (ImGui.SliderFloat("Naturalization strength", ref naturalization, 0f, 1f, "%.2f"))
+            {
+                settings.NaturalizationStrength = naturalization;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Blends between your edits and the balanced result. 0 keeps your edits, 1 fully balances.");
+
+            var poseValidation = settings.PoseValidationMode;
+            if (ImGui.BeginCombo("Pose-aware validation mode", poseValidation.ToString()))
+            {
+                foreach (var value in Enum.GetValues<AdvancedBodyScalingPoseValidationMode>())
+                {
+                    var selected = value == poseValidation;
+                    if (ImGui.Selectable(value.ToString(), selected))
+                    {
+                        settings.PoseValidationMode = value;
+                        _configuration.Save();
+                        _armatureManager.RebindAllArmatures();
+                    }
+
+                    if (selected)
+                        ImGui.SetItemDefaultFocus();
+                }
+
+                ImGui.EndCombo();
+            }
+            CtrlHelper.AddHoverText("Adds extra pose-aware guardrails to reduce deformation in extreme poses.");
+
+            ImGui.Spacing();
+            DrawAdvancedBodyScalingResets(settings);
+
+            ImGui.Spacing();
+            DrawAdvancedBodyScalingRegionProfiles(settings);
+        }
+    }
+
+    private void DrawAdvancedBodyScalingResets(AdvancedBodyScalingSettings settings)
+    {
+        var defaults = new AdvancedBodyScalingSettings();
+
+        ImGui.Text("Quick resets:");
+        if (ImGui.Button("Reset Surface Balancing"))
+        {
+            settings.SurfaceBalancingStrength = defaults.SurfaceBalancingStrength;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Reset Naturalization"))
+        {
+            settings.NaturalizationStrength = defaults.NaturalizationStrength;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Reset Pose-Aware"))
+        {
+            settings.PoseValidationMode = defaults.PoseValidationMode;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Reset All Advanced Scaling"))
+        {
+            settings.ResetToDefaults();
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+    }
+
+    private void DrawAdvancedBodyScalingRegionProfiles(AdvancedBodyScalingSettings settings)
+    {
+        if (!ImGui.CollapsingHeader("Region Tuning"))
+            return;
+
+        ImGui.TextDisabled("Adjust how strongly each region participates in propagation, smoothing, and guardrails.");
+
+        foreach (var region in RegionOrder)
+        {
+            var profile = settings.GetRegionProfile(region);
+            if (!ImGui.TreeNode($"{region}##Region{region}"))
+                continue;
+
+            var influence = profile.InfluenceMultiplier;
+            if (ImGui.SliderFloat("Influence (propagation)", ref influence, 0f, 1f, "%.2f"))
+            {
+                profile.InfluenceMultiplier = influence;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Scales how strongly this region propagates scale changes to neighbors.");
+
+            var smoothing = profile.SmoothingMultiplier;
+            if (ImGui.SliderFloat("Smoothing", ref smoothing, 0f, 1f, "%.2f"))
+            {
+                profile.SmoothingMultiplier = smoothing;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Scales how strongly surface balancing and curve smoothing affect this region.");
+
+            var guardrail = profile.GuardrailMultiplier;
+            if (ImGui.SliderFloat("Guardrail strength", ref guardrail, 0f, 1f, "%.2f"))
+            {
+                profile.GuardrailMultiplier = guardrail;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Scales the proportion guardrail strength for this region.");
+
+            var mass = profile.MassRedistributionMultiplier;
+            if (ImGui.SliderFloat("Mass redistribution", ref mass, 0f, 1f, "%.2f"))
+            {
+                profile.MassRedistributionMultiplier = mass;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Scales how much mass redistribution affects this region.");
+
+            var pose = profile.PoseValidationMultiplier;
+            if (ImGui.SliderFloat("Pose validation", ref pose, 0f, 1f, "%.2f"))
+            {
+                profile.PoseValidationMultiplier = pose;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Scales how strongly pose-aware corrections affect this region.");
+
+            var naturalization = profile.NaturalizationMultiplier;
+            if (ImGui.SliderFloat("Naturalization", ref naturalization, 0f, 1f, "%.2f"))
+            {
+                profile.NaturalizationMultiplier = naturalization;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Scales how much final results blend toward the balanced output for this region.");
+
+            var allowGuardrails = profile.AllowGuardrails;
+            if (ImGui.Checkbox("Allow guardrails", ref allowGuardrails))
+            {
+                profile.AllowGuardrails = allowGuardrails;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+
+            var allowPose = profile.AllowPoseValidation;
+            if (ImGui.Checkbox("Allow pose validation", ref allowPose))
+            {
+                profile.AllowPoseValidation = allowPose;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+
+            var allowNaturalization = profile.AllowNaturalization;
+            if (ImGui.Checkbox("Allow naturalization", ref allowNaturalization))
+            {
+                profile.AllowNaturalization = allowNaturalization;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+
+            ImGui.TreePop();
+            ImGui.Spacing();
         }
     }
 

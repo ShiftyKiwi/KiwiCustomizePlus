@@ -2,6 +2,7 @@
 using CustomizePlus.Profiles.Events;
 using CustomizePlus.Templates.Data;
 using CustomizePlus.Core.Extensions;
+using CustomizePlus.Core.Data;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Newtonsoft.Json.Linq;
 using OtterGui.Classes;
@@ -85,6 +86,7 @@ public partial class ProfileManager : IDisposable
             //Ignore everything below v4
              4 => LoadV4(obj),
              5 => LoadV5(obj),
+             6 => LoadV5(obj),
             _ => throw new Exception("The profile to be loaded has no valid Version."),
         };
     }
@@ -163,7 +165,7 @@ public partial class ProfileManager : IDisposable
         return profile;
     }
 
-    //V4 and V5 are mostly the same, so common loading logic is here
+    //V4+ are mostly the same, so common loading logic is here
     private Profile LoadProfileV4V5(JObject obj)
     {
         var creationDate = obj["CreationDate"]?.ToObject<DateTimeOffset>() ?? throw new ArgumentNullException("CreationDate");
@@ -178,6 +180,13 @@ public partial class ProfileManager : IDisposable
             IsWriteProtected = obj["IsWriteProtected"]?.ToObject<bool>() ?? false,
             Templates = new List<Template>()
         };
+
+        if (obj["AdvancedBodyScaling"] is JObject advancedBodyScalingObj)
+        {
+            var advancedSettings = advancedBodyScalingObj.ToObject<AdvancedBodyScalingProfileSettings>();
+            if (advancedSettings != null)
+                profile.AdvancedBodyScalingOverrides = advancedSettings;
+        }
         if (profile.ModifiedDate < creationDate)
             profile.ModifiedDate = creationDate;
 

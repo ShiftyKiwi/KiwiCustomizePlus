@@ -159,6 +159,8 @@ public class PluginConfiguration : IPluginConfiguration, ISavable
 
     public RuntimeBehaviorSettingsEntries RuntimeBehaviorSettings { get; set; } = new();
 
+    public AdvancedBodyScalingSettings AdvancedBodyScalingSettings { get; set; } = new();
+
     [JsonIgnore]
     private readonly SaveService _saveService;
 

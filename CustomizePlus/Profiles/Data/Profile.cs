@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using CustomizePlus.Armatures.Data;
+using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Extensions;
 using CustomizePlus.Core.Services;
 using CustomizePlus.Profiles.Enums;
@@ -20,7 +21,7 @@ namespace CustomizePlus.Profiles.Data;
 /// </summary>
 public sealed class Profile : ISavable
 {
-    public const int Version = 5;
+    public const int Version = 6;
 
     private static int _nextGlobalId;
 
@@ -45,6 +46,8 @@ public sealed class Profile : ISavable
     public bool IsWriteProtected { get; internal set; }
 
     public ProfileType ProfileType { get; set; }
+
+    public AdvancedBodyScalingProfileSettings AdvancedBodyScalingOverrides { get; set; } = new();
 
     /// <summary>
     /// Profile priority when there are several profiles affecting same character
@@ -72,6 +75,7 @@ public sealed class Profile : ISavable
     public Profile(Profile original) : this()
     {
         Characters = original.Characters.ToList();
+        AdvancedBodyScalingOverrides = original.AdvancedBodyScalingOverrides.DeepCopy();
 
         foreach (var template in original.Templates)
         {
@@ -109,7 +113,8 @@ public sealed class Profile : ISavable
             ["Enabled"] = Enabled,
             ["IsWriteProtected"] = IsWriteProtected,
             ["Priority"] = Priority,
-            ["Templates"] = SerializeTemplates()
+            ["Templates"] = SerializeTemplates(),
+            ["AdvancedBodyScaling"] = JObject.FromObject(AdvancedBodyScalingOverrides)
         };
 
         return ret;

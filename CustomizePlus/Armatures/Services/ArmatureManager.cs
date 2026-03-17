@@ -134,6 +134,9 @@ public unsafe sealed class ArmatureManager : IDisposable
             kvPair.Value.IsPendingProfileRebind = true;
     }
 
+    private AdvancedBodyScalingSettings ResolveAdvancedBodyScaling(Profile profile)
+        => profile.AdvancedBodyScalingOverrides.Resolve(_configuration.AdvancedBodyScalingSettings);
+
     /// <summary>
     /// Deletes armatures which no longer have actor associated with them and creates armatures for new actors
     /// </summary>
@@ -222,7 +225,8 @@ public unsafe sealed class ArmatureManager : IDisposable
 
                 armature.RebuildBoneTemplateBinding(
                     _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
-                    _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled);
+                    _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
+                    ResolveAdvancedBodyScaling(armature.Profile));
 
                 //warn: might be a bit of a performance hit on profiles with a lot of templates/bones
                 //warn: this must be done after RebuildBoneTemplateBinding or it will not work
@@ -318,7 +322,8 @@ public unsafe sealed class ArmatureManager : IDisposable
             armature.RebuildSkeleton(
                 actor.Model.AsCharacterBase,
                 _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
-                _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled);
+                _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
+                ResolveAdvancedBodyScaling(armature.Profile));
         }
 
         return true;
@@ -521,6 +526,7 @@ public unsafe sealed class ArmatureManager : IDisposable
             type is not ProfileChanged.Type.MovedTemplate &&
             type is not ProfileChanged.Type.ChangedTemplate &&
             type is not ProfileChanged.Type.TemplateWeightChanged &&
+            type is not ProfileChanged.Type.AdvancedBodyScalingSettingsChanged &&
             type is not ProfileChanged.Type.Toggled &&
             type is not ProfileChanged.Type.Deleted &&
             type is not ProfileChanged.Type.TemporaryProfileAdded &&

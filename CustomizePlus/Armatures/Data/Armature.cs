@@ -217,7 +217,7 @@ public unsafe class Armature
     /// <summary>
     /// Rebuild the armature using the provided character base as a reference.
     /// </summary>
-    public void RebuildSkeleton(CharacterBase* cBase, bool enableSoftScaleLimits = true, bool enableAutomaticChildCompensation = true)
+    public void RebuildSkeleton(CharacterBase* cBase, bool enableSoftScaleLimits = true, bool enableAutomaticChildCompensation = true, AdvancedBodyScalingSettings? advancedBodyScaling = null)
     {
         if (cBase == null)
             return;
@@ -226,7 +226,7 @@ public unsafe class Armature
 
         _partialSkeletons = newPartials.Select(x => x.ToArray()).ToArray();
 
-        RebuildBoneTemplateBinding(enableSoftScaleLimits, enableAutomaticChildCompensation); //todo: intentionally not calling ArmatureChanged.Type.Updated because this is pending rewrite
+        RebuildBoneTemplateBinding(enableSoftScaleLimits, enableAutomaticChildCompensation, advancedBodyScaling); //todo: intentionally not calling ArmatureChanged.Type.Updated because this is pending rewrite
 
         Plugin.Logger.Debug($"Rebuilt {this}");
     }
@@ -318,9 +318,13 @@ public unsafe class Armature
         return newPartials;
     }
 
-    public void RebuildBoneTemplateBinding(bool enableSoftScaleLimits = true, bool enableAutomaticChildCompensation = true)
+    public void RebuildBoneTemplateBinding(bool enableSoftScaleLimits = true, bool enableAutomaticChildCompensation = true, AdvancedBodyScalingSettings? advancedBodyScaling = null)
     {
         var resolution = ProfileTransformResolver.Resolve(Profile);
+        var effectiveTransforms = resolution.EffectiveTransforms;
+
+        if (advancedBodyScaling != null && advancedBodyScaling.Enabled && advancedBodyScaling.Mode != AdvancedBodyScalingMode.Manual)
+            effectiveTransforms = AdvancedBodyScalingPipeline.Apply(effectiveTransforms, advancedBodyScaling);
 
         BoneTemplateBinding.Clear();
         ResolvedBoneTransforms.Clear();
@@ -329,12 +333,17 @@ public unsafe class Armature
         foreach (var kvPair in resolution.BoneOwners)
             BoneTemplateBinding[kvPair.Key] = kvPair.Value;
 
-        foreach (var kvPair in resolution.EffectiveTransforms)
-            ResolvedBoneTransforms[kvPair.Key] = BoneRuntimeSafeguards.Apply(
+        foreach (var kvPair in effectiveTransforms)
+        {
+            var adjusted = BoneRuntimeSafeguards.Apply(
                 kvPair.Key,
                 kvPair.Value,
                 enableSoftScaleLimits,
                 enableAutomaticChildCompensation);
+
+            if (adjusted.IsEdited())
+                ResolvedBoneTransforms[kvPair.Key] = adjusted;
+        }
 
         foreach (var bone in GetAllBones())
         {
