@@ -235,6 +235,7 @@ public static class ServiceManagerBuilder
             .AddSingleton<CutsceneService>()
             .AddSingleton<GameEventManager>()
             .AddSingleton(p => new CutsceneResolver(idx => (short)p.GetRequiredService<CutsceneService>().GetParentIndex(idx)))
+            .AddSingleton<ObjectManager>()
             .AddSingleton<ActorObjectManager>();
 
         return services;
