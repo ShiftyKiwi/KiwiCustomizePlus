@@ -696,7 +696,7 @@ public class SettingsTab
     #region Support Area
     private void DrawSupportButtons()
     {
-        var width = ImGui.CalcTextSize("Copy Support Info to Clipboard").X + ImGui.GetStyle().FramePadding.X * 2;
+        var width = ImGui.CalcTextSize("Copy Support Info to Clipboard").X + (ImGui.GetStyle().FramePadding.X * 2);
         var xPos = ImGui.GetWindowWidth() - width;
         // Respect the scroll bar width.
         if (ImGui.GetScrollMaxY() > 0)

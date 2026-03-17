@@ -680,7 +680,9 @@ public class ProfilePanel
     {
         using (var style = ImRaii.PushStyle(ImGuiStyleVar.ButtonTextAlign, new Vector2(0, 0.5f)))
         {
-            var width = new Vector2(ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize("Limit to my creatures").X - 68, 0);
+            var width = new Vector2(
+                ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize("Limit to my creatures").X - 68,
+                0);
 
             ImGui.SetNextItemWidth(width.X);
 
@@ -691,7 +693,9 @@ public class ProfilePanel
                 ImGui.SameLine();
                 _actorAssignmentUi.DrawPlayerInput(width.X / 2);
 
-                var buttonWidth = new Vector2(165 * ImGuiHelpers.GlobalScale - ImGui.GetStyle().ItemSpacing.X / 2, 0);
+                var buttonWidth = new Vector2(
+                    (165 * ImGuiHelpers.GlobalScale) - (ImGui.GetStyle().ItemSpacing.X / 2),
+                    0);
 
                 if (ImGuiUtil.DrawDisabledButton("Apply to player character", buttonWidth, string.Empty, !_actorAssignmentUi.CanSetPlayer))
                     _manager.AddCharacter(_selector.Selected!, _actorAssignmentUi.PlayerIdentifier);
