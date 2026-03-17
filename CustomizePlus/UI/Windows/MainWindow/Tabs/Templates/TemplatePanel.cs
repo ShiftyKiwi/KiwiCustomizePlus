@@ -39,6 +39,8 @@ public class TemplatePanel : IDisposable
     private Template? _changedTemplate;
     private BodyAnalysisResult? _analysisResult;
     private bool _showFixPreview;
+    private Guid _lastAnalyzerFixTemplateId = Guid.Empty;
+    private Dictionary<string, BoneTransform?>? _lastAnalyzerFixSnapshot;
     private IReadOnlyDictionary<string, BoneTransform>? _advancedPreview;
     private AdvancedBodyScalingDebugReport? _advancedDebug;
     private bool _showAdvancedPreview;
@@ -240,6 +242,14 @@ public class TemplatePanel : IDisposable
                 _analysisResult = null;
                 _showFixPreview = false;
             }
+        }
+
+        ImGui.SameLine();
+        var canRevertFix = CanRevertAnalyzerFix(_selector.Selected!);
+        using (var disabled = ImRaii.Disabled(!canRevertFix))
+        {
+            if (ImGui.Button("Revert Fix"))
+                RevertAnalyzerFixes(_selector.Selected!);
         }
 
         ImGui.SameLine();
@@ -463,6 +473,14 @@ public class TemplatePanel : IDisposable
 
     private void ApplyAnalyzerFixes(Template template, IReadOnlyDictionary<string, BoneTransform> fixes)
     {
+        _lastAnalyzerFixTemplateId = template.UniqueId;
+        _lastAnalyzerFixSnapshot = fixes.ToDictionary(
+            kvp => kvp.Key,
+            kvp => template.Bones.TryGetValue(kvp.Key, out var existing)
+                ? existing.DeepCopy()
+                : null,
+            StringComparer.Ordinal);
+
         foreach (var kvp in fixes)
         {
             var transform = template.Bones.TryGetValue(kvp.Key, out var existing)
@@ -475,6 +493,29 @@ public class TemplatePanel : IDisposable
 
         _manager.QueueSave(template);
         _messageService.NotificationMessage("Applied body analyzer fixes to template.", NotificationType.Success, false);
+    }
+
+    private bool CanRevertAnalyzerFix(Template template)
+        => _lastAnalyzerFixSnapshot != null
+            && _lastAnalyzerFixTemplateId == template.UniqueId
+            && !_boneEditor.IsEditorActive
+            && !template.IsWriteProtected;
+
+    private void RevertAnalyzerFixes(Template template)
+    {
+        if (_lastAnalyzerFixSnapshot == null || _lastAnalyzerFixTemplateId != template.UniqueId)
+            return;
+
+        foreach (var kvp in _lastAnalyzerFixSnapshot)
+        {
+            var transform = kvp.Value?.DeepCopy() ?? new BoneTransform();
+            _manager.ModifyBoneTransform(template, kvp.Key, transform);
+        }
+
+        _manager.QueueSave(template);
+        _lastAnalyzerFixSnapshot = null;
+        _lastAnalyzerFixTemplateId = Guid.Empty;
+        _messageService.NotificationMessage("Reverted the last body analyzer fix.", NotificationType.Success, false);
     }
 
     private static float GetUniformScale(Vector3 scale)

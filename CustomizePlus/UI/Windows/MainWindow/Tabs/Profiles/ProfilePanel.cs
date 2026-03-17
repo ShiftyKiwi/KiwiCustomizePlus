@@ -292,7 +292,7 @@ public class ProfilePanel
 
         var profile = _selector.Selected;
         var globalSettings = _configuration.AdvancedBodyScalingSettings;
-        var settingColumnWidth = 190 * ImGuiHelpers.GlobalScale;
+        var settingColumnWidth = 170 * ImGuiHelpers.GlobalScale;
         var overrideColumnWidth = MathF.Max(
             80 * ImGuiHelpers.GlobalScale,
             ImGui.CalcTextSize("Override").X + (ImGui.GetStyle().FramePadding.X * 2));
@@ -335,7 +335,11 @@ public class ProfilePanel
             });
 
         var overrides = profile.AdvancedBodyScalingOverrides.Overrides;
-        using (var table = ImRaii.Table("ProfileAdvancedBodyScaling", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX, overrideTableWidth))
+        using (var table = ImRaii.Table(
+                   "ProfileAdvancedBodyScaling",
+                   3,
+                   ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoHostExtendY,
+                   overrideTableWidth))
         {
             if (!table)
                 return;
@@ -655,106 +659,108 @@ public class ProfilePanel
             if (!ImGui.TreeNode($"{region}##ProfileRegion{region}"))
                 continue;
 
-            using var regionTable = ImRaii.Table(
-                $"ProfileRegionOverrides_{region}",
-                3,
-                ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX,
-                new Vector2(ImGui.GetContentRegionAvail().X, 0));
-            if (regionTable)
+            using (var regionTable = ImRaii.Table(
+                       $"ProfileRegionOverrides_{region}",
+                       3,
+                       ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoHostExtendY,
+                       new Vector2(ImGui.GetContentRegionAvail().X, 0)))
             {
-                ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-                ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
-                ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
-                ImGui.TableSetupScrollFreeze(0, 1);
-                ImGui.TableHeadersRow();
-
-                void DrawRegionFloatOverride(
-                    string label,
-                    string idSuffix,
-                    float globalValue,
-                    float? overrideValue,
-                    Action<AdvancedBodyScalingRegionProfileOverrides, float?> setter)
+                if (regionTable)
                 {
-                    ImGui.TableNextRow();
-                    ImGui.TableNextColumn();
-                    ImGui.AlignTextToFramePadding();
-                    ImGui.TextUnformatted(label);
-                    ImGui.TableNextColumn();
+                    ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
+                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+                    ImGui.TableSetupScrollFreeze(0, 1);
+                    ImGui.TableHeadersRow();
 
-                    if (overrideValue.HasValue)
+                    void DrawRegionFloatOverride(
+                        string label,
+                        string idSuffix,
+                        float globalValue,
+                        float? overrideValue,
+                        Action<AdvancedBodyScalingRegionProfileOverrides, float?> setter)
                     {
-                        var value = overrideValue.Value;
-                        ImGui.SetNextItemWidth(-1);
-                        if (ImGui.SliderFloat($"##{idSuffix}_{region}", ref value, 0f, 1f, "%.2f"))
-                            UpdateRegionOverride(region, o => setter(o, value));
-                    }
-                    else
-                    {
-                        var value = globalValue;
-                        using (ImRaii.Disabled())
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted(label);
+                        ImGui.TableNextColumn();
+
+                        if (overrideValue.HasValue)
                         {
+                            var value = overrideValue.Value;
                             ImGui.SetNextItemWidth(-1);
-                            ImGui.SliderFloat($"##{idSuffix}_{region}", ref value, 0f, 1f, "%.2f");
+                            if (ImGui.SliderFloat($"##{idSuffix}_{region}", ref value, 0f, 1f, "%.2f"))
+                                UpdateRegionOverride(region, o => setter(o, value));
                         }
+                        else
+                        {
+                            var value = globalValue;
+                            using (ImRaii.Disabled())
+                            {
+                                ImGui.SetNextItemWidth(-1);
+                                ImGui.SliderFloat($"##{idSuffix}_{region}", ref value, 0f, 1f, "%.2f");
+                            }
+                        }
+
+                        ImGui.TableNextColumn();
+                        var enabled = overrideValue.HasValue;
+                        if (ImGui.Checkbox($"##{idSuffix}_{region}_Override", ref enabled))
+                            UpdateRegionOverride(region, o => setter(o, enabled ? globalValue : null));
                     }
 
-                    ImGui.TableNextColumn();
-                    var enabled = overrideValue.HasValue;
-                    if (ImGui.Checkbox($"##{idSuffix}_{region}_Override", ref enabled))
-                        UpdateRegionOverride(region, o => setter(o, enabled ? globalValue : null));
-                }
-
-                void DrawRegionBoolOverride(
-                    string label,
-                    string idSuffix,
-                    bool globalValue,
-                    bool? overrideValue,
-                    Action<AdvancedBodyScalingRegionProfileOverrides, bool?> setter)
-                {
-                    ImGui.TableNextRow();
-                    ImGui.TableNextColumn();
-                    ImGui.AlignTextToFramePadding();
-                    ImGui.TextUnformatted(label);
-                    ImGui.TableNextColumn();
-
-                    if (overrideValue.HasValue)
+                    void DrawRegionBoolOverride(
+                        string label,
+                        string idSuffix,
+                        bool globalValue,
+                        bool? overrideValue,
+                        Action<AdvancedBodyScalingRegionProfileOverrides, bool?> setter)
                     {
-                        var value = overrideValue.Value;
-                        if (ImGui.Checkbox($"##{idSuffix}_{region}", ref value))
-                            UpdateRegionOverride(region, o => setter(o, value));
-                    }
-                    else
-                    {
-                        var value = globalValue;
-                        using (ImRaii.Disabled())
-                            ImGui.Checkbox($"##{idSuffix}_{region}", ref value);
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted(label);
+                        ImGui.TableNextColumn();
+
+                        if (overrideValue.HasValue)
+                        {
+                            var value = overrideValue.Value;
+                            if (ImGui.Checkbox($"##{idSuffix}_{region}", ref value))
+                                UpdateRegionOverride(region, o => setter(o, value));
+                        }
+                        else
+                        {
+                            var value = globalValue;
+                            using (ImRaii.Disabled())
+                                ImGui.Checkbox($"##{idSuffix}_{region}", ref value);
+                        }
+
+                        ImGui.TableNextColumn();
+                        var enabled = overrideValue.HasValue;
+                        if (ImGui.Checkbox($"##{idSuffix}_{region}_Override", ref enabled))
+                            UpdateRegionOverride(region, o => setter(o, enabled ? globalValue : null));
                     }
 
-                    ImGui.TableNextColumn();
-                    var enabled = overrideValue.HasValue;
-                    if (ImGui.Checkbox($"##{idSuffix}_{region}_Override", ref enabled))
-                        UpdateRegionOverride(region, o => setter(o, enabled ? globalValue : null));
+                    DrawRegionFloatOverride("Influence (propagation)", "Influence", globalProfile.InfluenceMultiplier, regionOverride?.InfluenceMultiplier,
+                        (o, v) => o.InfluenceMultiplier = v);
+                    DrawRegionFloatOverride("Smoothing", "Smoothing", globalProfile.SmoothingMultiplier, regionOverride?.SmoothingMultiplier,
+                        (o, v) => o.SmoothingMultiplier = v);
+                    DrawRegionFloatOverride("Guardrail strength", "Guardrail", globalProfile.GuardrailMultiplier, regionOverride?.GuardrailMultiplier,
+                        (o, v) => o.GuardrailMultiplier = v);
+                    DrawRegionFloatOverride("Mass redistribution", "Mass", globalProfile.MassRedistributionMultiplier, regionOverride?.MassRedistributionMultiplier,
+                        (o, v) => o.MassRedistributionMultiplier = v);
+                    DrawRegionFloatOverride("Pose validation", "Pose", globalProfile.PoseValidationMultiplier, regionOverride?.PoseValidationMultiplier,
+                        (o, v) => o.PoseValidationMultiplier = v);
+                    DrawRegionFloatOverride("Naturalization", "Naturalization", globalProfile.NaturalizationMultiplier, regionOverride?.NaturalizationMultiplier,
+                        (o, v) => o.NaturalizationMultiplier = v);
+
+                    DrawRegionBoolOverride("Allow guardrails", "AllowGuardrails", globalProfile.AllowGuardrails, regionOverride?.AllowGuardrails,
+                        (o, v) => o.AllowGuardrails = v);
+                    DrawRegionBoolOverride("Allow pose validation", "AllowPose", globalProfile.AllowPoseValidation, regionOverride?.AllowPoseValidation,
+                        (o, v) => o.AllowPoseValidation = v);
+                    DrawRegionBoolOverride("Allow naturalization", "AllowNatural", globalProfile.AllowNaturalization, regionOverride?.AllowNaturalization,
+                        (o, v) => o.AllowNaturalization = v);
                 }
-
-                DrawRegionFloatOverride("Influence (propagation)", "Influence", globalProfile.InfluenceMultiplier, regionOverride?.InfluenceMultiplier,
-                    (o, v) => o.InfluenceMultiplier = v);
-                DrawRegionFloatOverride("Smoothing", "Smoothing", globalProfile.SmoothingMultiplier, regionOverride?.SmoothingMultiplier,
-                    (o, v) => o.SmoothingMultiplier = v);
-                DrawRegionFloatOverride("Guardrail strength", "Guardrail", globalProfile.GuardrailMultiplier, regionOverride?.GuardrailMultiplier,
-                    (o, v) => o.GuardrailMultiplier = v);
-                DrawRegionFloatOverride("Mass redistribution", "Mass", globalProfile.MassRedistributionMultiplier, regionOverride?.MassRedistributionMultiplier,
-                    (o, v) => o.MassRedistributionMultiplier = v);
-                DrawRegionFloatOverride("Pose validation", "Pose", globalProfile.PoseValidationMultiplier, regionOverride?.PoseValidationMultiplier,
-                    (o, v) => o.PoseValidationMultiplier = v);
-                DrawRegionFloatOverride("Naturalization", "Naturalization", globalProfile.NaturalizationMultiplier, regionOverride?.NaturalizationMultiplier,
-                    (o, v) => o.NaturalizationMultiplier = v);
-
-                DrawRegionBoolOverride("Allow guardrails", "AllowGuardrails", globalProfile.AllowGuardrails, regionOverride?.AllowGuardrails,
-                    (o, v) => o.AllowGuardrails = v);
-                DrawRegionBoolOverride("Allow pose validation", "AllowPose", globalProfile.AllowPoseValidation, regionOverride?.AllowPoseValidation,
-                    (o, v) => o.AllowPoseValidation = v);
-                DrawRegionBoolOverride("Allow naturalization", "AllowNatural", globalProfile.AllowNaturalization, regionOverride?.AllowNaturalization,
-                    (o, v) => o.AllowNaturalization = v);
             }
 
             ImGui.TreePop();
