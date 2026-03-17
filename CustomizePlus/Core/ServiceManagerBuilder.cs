@@ -15,6 +15,8 @@ using CustomizePlus.Game.Services;
 using CustomizePlus.Game.Services.GPose;
 using CustomizePlus.Game.Services.GPose.ExternalTools;
 using CustomizePlus.GameData.Services;
+using CustomizePlus.GameData.Data;
+using CustomizePlus.GameData.ReverseSearchDictionaries;
 using CustomizePlus.Interop.Ipc;
 using CustomizePlus.Profiles;
 using CustomizePlus.Profiles.Events;
@@ -240,6 +242,12 @@ public static class ServiceManagerBuilder
             .AddSingleton<DictBNpc>()
             .AddSingleton<DictENpc>()
             .AddSingleton<NameDicts>()
+            .AddSingleton<ReverseSearchDictMount>()
+            .AddSingleton<ReverseSearchDictCompanion>()
+            .AddSingleton<ReverseSearchDictBNpc>()
+            .AddSingleton<ReverseSearchDictENpc>()
+            .AddSingleton<ReverseSearchDictOrnament>()
+            .AddSingleton<ReverseNameDicts>()
             .AddSingleton<ActorManager>()
             .AddSingleton<CutsceneService>()
             .AddSingleton<GameEventManager>()
