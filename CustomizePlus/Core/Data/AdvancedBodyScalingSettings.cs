@@ -211,6 +211,41 @@ public sealed class AdvancedBodyScalingNeckCompensationPreset
     private float _neckShoulderBlendStrength;
     private float _clavicleShoulderSmoothing;
 
+    private static readonly AdvancedBodyScalingNeckCompensationPreset LongNeckStrong = new()
+    {
+        NeckLengthCompensation = 0.16f,
+        NeckShoulderBlendStrength = 0.55f,
+        ClavicleShoulderSmoothing = 0.45f
+    };
+
+    private static readonly AdvancedBodyScalingNeckCompensationPreset ModerateLongNeck = new()
+    {
+        NeckLengthCompensation = 0.12f,
+        NeckShoulderBlendStrength = 0.45f,
+        ClavicleShoulderSmoothing = 0.38f
+    };
+
+    private static readonly AdvancedBodyScalingNeckCompensationPreset LightLongNeck = new()
+    {
+        NeckLengthCompensation = 0.05f,
+        NeckShoulderBlendStrength = 0.40f,
+        ClavicleShoulderSmoothing = 0.32f
+    };
+
+    private static readonly AdvancedBodyScalingNeckCompensationPreset Neutral = new()
+    {
+        NeckLengthCompensation = 0.01f,
+        NeckShoulderBlendStrength = 0.35f,
+        ClavicleShoulderSmoothing = 0.25f
+    };
+
+    private static readonly AdvancedBodyScalingNeckCompensationPreset Compact = new()
+    {
+        NeckLengthCompensation = 0.00f,
+        NeckShoulderBlendStrength = 0.25f,
+        ClavicleShoulderSmoothing = 0.20f
+    };
+
     public float NeckLengthCompensation
     {
         get => _neckLengthCompensation;
@@ -240,18 +275,14 @@ public sealed class AdvancedBodyScalingNeckCompensationPreset
     public static Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset> CreateDefaults()
         => new()
         {
-            [Race.Elezen] = new AdvancedBodyScalingNeckCompensationPreset
-            {
-                NeckLengthCompensation = 0.10f,
-                NeckShoulderBlendStrength = 0.35f,
-                ClavicleShoulderSmoothing = 0.25f
-            },
-            [Race.Viera] = new AdvancedBodyScalingNeckCompensationPreset
-            {
-                NeckLengthCompensation = 0.08f,
-                NeckShoulderBlendStrength = 0.35f,
-                ClavicleShoulderSmoothing = 0.25f
-            }
+            [Race.Elezen] = LongNeckStrong.DeepCopy(),
+            [Race.Viera] = ModerateLongNeck.DeepCopy(),
+            [Race.Miqote] = LightLongNeck.DeepCopy(),
+            [Race.Hyur] = Neutral.DeepCopy(),
+            [Race.AuRa] = Neutral.DeepCopy(),
+            [Race.Roegadyn] = Compact.DeepCopy(),
+            [Race.Hrothgar] = Compact.DeepCopy(),
+            [Race.Lalafell] = Compact.DeepCopy()
         };
 }
 
