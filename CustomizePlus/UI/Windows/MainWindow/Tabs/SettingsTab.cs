@@ -772,6 +772,10 @@ public class SettingsTab
             TryGetRaceForCharacter(_templateEditorManager.Character, out var previewRace))
             return previewRace;
 
+        var currentPlayer = _gameObjectService.GetCurrentPlayerActorIdentifier().CreatePermanent();
+        if (TryGetRaceForCharacter(currentPlayer, out var resolvedRace))
+            return resolvedRace;
+
         return TryGetActorRace(_gameObjectService.GetLocalPlayerActor(), out var currentRace)
             ? currentRace
             : Race.Unknown;
@@ -795,6 +799,15 @@ public class SettingsTab
 
         if (!actor || !actor.IsCharacter)
             return false;
+
+        var model = actor.Model;
+        if (model && model.IsHuman)
+        {
+            var modelCustomize = model.GetCustomize();
+            race = modelCustomize.Race;
+            if (race != Race.Unknown)
+                return true;
+        }
 
         var customize = actor.Customize;
         if (customize == null)

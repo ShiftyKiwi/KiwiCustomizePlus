@@ -334,311 +334,312 @@ public class ProfilePanel
                     overrides.RegionOverrides.Remove(region);
             });
 
-        using var table = ImRaii.Table("ProfileAdvancedBodyScaling", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX, overrideTableWidth);
-        if (!table)
-            return;
-
-        ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
-        ImGui.TableSetupScrollFreeze(0, 1);
-        ImGui.TableHeadersRow();
-
         var overrides = profile.AdvancedBodyScalingOverrides.Overrides;
+        using (var table = ImRaii.Table("ProfileAdvancedBodyScaling", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX, overrideTableWidth))
+        {
+            if (!table)
+                return;
 
-        // Enabled
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Advanced body scaling");
-        ImGui.TableNextColumn();
-        if (overrides.Enabled.HasValue)
-        {
-            var enabled = overrides.Enabled.Value;
-            if (ImGui.Checkbox("##ProfileAdvScalingEnabled", ref enabled))
-                ToggleOverride(o => o.Enabled = enabled);
-        }
-        else
-        {
-            var enabled = globalSettings.Enabled;
-            using (ImRaii.Disabled())
-                ImGui.Checkbox("##ProfileAdvScalingEnabled", ref enabled);
-        }
-        CtrlHelper.AddHoverText("Enable or disable advanced body scaling for this profile.");
-        ImGui.TableNextColumn();
-        var enabledOverride = overrides.Enabled.HasValue;
-        if (ImGui.Checkbox("##ProfileAdvScalingEnabledOverride", ref enabledOverride))
-            ToggleOverride(o => o.Enabled = enabledOverride ? globalSettings.Enabled : null);
+            ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
+            ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+            ImGui.TableSetupScrollFreeze(0, 1);
+            ImGui.TableHeadersRow();
 
-        // Automation mode
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Automation mode");
-        ImGui.TableNextColumn();
-        if (overrides.Mode.HasValue)
-        {
-            var mode = overrides.Mode ?? globalSettings.Mode;
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.BeginCombo("##ProfileAdvScalingMode", mode.ToString()))
+            // Enabled
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Advanced body scaling");
+            ImGui.TableNextColumn();
+            if (overrides.Enabled.HasValue)
             {
-                foreach (var value in Enum.GetValues<AdvancedBodyScalingMode>())
+                var enabled = overrides.Enabled.Value;
+                if (ImGui.Checkbox("##ProfileAdvScalingEnabled", ref enabled))
+                    ToggleOverride(o => o.Enabled = enabled);
+            }
+            else
+            {
+                var enabled = globalSettings.Enabled;
+                using (ImRaii.Disabled())
+                    ImGui.Checkbox("##ProfileAdvScalingEnabled", ref enabled);
+            }
+            CtrlHelper.AddHoverText("Enable or disable advanced body scaling for this profile.");
+            ImGui.TableNextColumn();
+            var enabledOverride = overrides.Enabled.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingEnabledOverride", ref enabledOverride))
+                ToggleOverride(o => o.Enabled = enabledOverride ? globalSettings.Enabled : null);
+
+            // Automation mode
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Automation mode");
+            ImGui.TableNextColumn();
+            if (overrides.Mode.HasValue)
+            {
+                var mode = overrides.Mode ?? globalSettings.Mode;
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.BeginCombo("##ProfileAdvScalingMode", mode.ToString()))
                 {
-                    var selected = value == mode;
-                    if (ImGui.Selectable(value.ToString(), selected))
-                        ToggleOverride(o => o.Mode = value);
+                    foreach (var value in Enum.GetValues<AdvancedBodyScalingMode>())
+                    {
+                        var selected = value == mode;
+                        if (ImGui.Selectable(value.ToString(), selected))
+                            ToggleOverride(o => o.Mode = value);
 
-                    if (selected)
-                        ImGui.SetItemDefaultFocus();
+                        if (selected)
+                            ImGui.SetItemDefaultFocus();
+                    }
+                    ImGui.EndCombo();
                 }
-                ImGui.EndCombo();
             }
-        }
-        else
-        {
-            ImGui.TextDisabled($"Global: {globalSettings.Mode}");
-        }
-        CtrlHelper.AddHoverText("Manual disables automation. Assist is light smoothing. Automatic runs full balancing. Strong is more aggressive.");
-        ImGui.TableNextColumn();
-        var modeOverride = overrides.Mode.HasValue;
-        if (ImGui.Checkbox("##ProfileAdvScalingModeOverride", ref modeOverride))
-            ToggleOverride(o => o.Mode = modeOverride ? globalSettings.Mode : null);
-
-        // Surface balancing strength
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Surface balancing strength");
-        ImGui.TableNextColumn();
-        if (overrides.SurfaceBalancingStrength.HasValue)
-        {
-            var value = overrides.SurfaceBalancingStrength.Value;
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.SliderFloat("##ProfileAdvScalingSurface", ref value, 0f, 1f, "%.2f"))
-                ToggleOverride(o => o.SurfaceBalancingStrength = value);
-        }
-        else
-        {
-            var value = globalSettings.SurfaceBalancingStrength;
-            using (ImRaii.Disabled())
+            else
             {
+                ImGui.TextDisabled($"Global: {globalSettings.Mode}");
+            }
+            CtrlHelper.AddHoverText("Manual disables automation. Assist is light smoothing. Automatic runs full balancing. Strong is more aggressive.");
+            ImGui.TableNextColumn();
+            var modeOverride = overrides.Mode.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingModeOverride", ref modeOverride))
+                ToggleOverride(o => o.Mode = modeOverride ? globalSettings.Mode : null);
+
+            // Surface balancing strength
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Surface balancing strength");
+            ImGui.TableNextColumn();
+            if (overrides.SurfaceBalancingStrength.HasValue)
+            {
+                var value = overrides.SurfaceBalancingStrength.Value;
                 ImGui.SetNextItemWidth(-1);
-                ImGui.SliderFloat("##ProfileAdvScalingSurface", ref value, 0f, 1f, "%.2f");
+                if (ImGui.SliderFloat("##ProfileAdvScalingSurface", ref value, 0f, 1f, "%.2f"))
+                    ToggleOverride(o => o.SurfaceBalancingStrength = value);
             }
-        }
-        CtrlHelper.AddHoverText("Scales how strongly neighboring bones are smoothed. 0 disables, 1 uses the mode default.");
-        ImGui.TableNextColumn();
-        var surfaceOverride = overrides.SurfaceBalancingStrength.HasValue;
-        if (ImGui.Checkbox("##ProfileAdvScalingSurfaceOverride", ref surfaceOverride))
-            ToggleOverride(o => o.SurfaceBalancingStrength = surfaceOverride ? globalSettings.SurfaceBalancingStrength : null);
-
-        // Mass redistribution strength
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Mass redistribution strength");
-        ImGui.TableNextColumn();
-        if (overrides.MassRedistributionStrength.HasValue)
-        {
-            var value = overrides.MassRedistributionStrength.Value;
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.SliderFloat("##ProfileAdvScalingMass", ref value, 0f, 1f, "%.2f"))
-                ToggleOverride(o => o.MassRedistributionStrength = value);
-        }
-        else
-        {
-            var value = globalSettings.MassRedistributionStrength;
-            using (ImRaii.Disabled())
+            else
             {
-                ImGui.SetNextItemWidth(-1);
-                ImGui.SliderFloat("##ProfileAdvScalingMass", ref value, 0f, 1f, "%.2f");
-            }
-        }
-        CtrlHelper.AddHoverText("Scales how much scale deltas are redistributed across neighboring bones. 0 disables, 1 uses the mode default.");
-        ImGui.TableNextColumn();
-        var massOverride = overrides.MassRedistributionStrength.HasValue;
-        if (ImGui.Checkbox("##ProfileAdvScalingMassOverride", ref massOverride))
-            ToggleOverride(o => o.MassRedistributionStrength = massOverride ? globalSettings.MassRedistributionStrength : null);
-
-        // Proportion guardrail mode
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Proportion guardrail mode");
-        ImGui.TableNextColumn();
-        if (overrides.GuardrailMode.HasValue)
-        {
-            var mode = overrides.GuardrailMode ?? globalSettings.GuardrailMode;
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.BeginCombo("##ProfileAdvScalingGuardrail", mode.ToString()))
-            {
-                foreach (var value in Enum.GetValues<AdvancedBodyScalingGuardrailMode>())
+                var value = globalSettings.SurfaceBalancingStrength;
+                using (ImRaii.Disabled())
                 {
-                    var selected = value == mode;
-                    if (ImGui.Selectable(value.ToString(), selected))
-                        ToggleOverride(o => o.GuardrailMode = value);
-
-                    if (selected)
-                        ImGui.SetItemDefaultFocus();
+                    ImGui.SetNextItemWidth(-1);
+                    ImGui.SliderFloat("##ProfileAdvScalingSurface", ref value, 0f, 1f, "%.2f");
                 }
-                ImGui.EndCombo();
             }
-        }
-        else
-        {
-            ImGui.TextDisabled($"Global: {globalSettings.GuardrailMode}");
-        }
-        CtrlHelper.AddHoverText("Controls how strict the body proportion guardrails are. Off disables guardrails.");
-        ImGui.TableNextColumn();
-        var guardrailOverride = overrides.GuardrailMode.HasValue;
-        if (ImGui.Checkbox("##ProfileAdvScalingGuardrailOverride", ref guardrailOverride))
-            ToggleOverride(o => o.GuardrailMode = guardrailOverride ? globalSettings.GuardrailMode : null);
+            CtrlHelper.AddHoverText("Scales how strongly neighboring bones are smoothed. 0 disables, 1 uses the mode default.");
+            ImGui.TableNextColumn();
+            var surfaceOverride = overrides.SurfaceBalancingStrength.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingSurfaceOverride", ref surfaceOverride))
+                ToggleOverride(o => o.SurfaceBalancingStrength = surfaceOverride ? globalSettings.SurfaceBalancingStrength : null);
 
-        // Naturalization strength
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Naturalization strength");
-        ImGui.TableNextColumn();
-        if (overrides.NaturalizationStrength.HasValue)
-        {
-            var value = overrides.NaturalizationStrength.Value;
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.SliderFloat("##ProfileAdvScalingNaturalization", ref value, 0f, 1f, "%.2f"))
-                ToggleOverride(o => o.NaturalizationStrength = value);
-        }
-        else
-        {
-            var value = globalSettings.NaturalizationStrength;
-            using (ImRaii.Disabled())
+            // Mass redistribution strength
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Mass redistribution strength");
+            ImGui.TableNextColumn();
+            if (overrides.MassRedistributionStrength.HasValue)
             {
+                var value = overrides.MassRedistributionStrength.Value;
                 ImGui.SetNextItemWidth(-1);
-                ImGui.SliderFloat("##ProfileAdvScalingNaturalization", ref value, 0f, 1f, "%.2f");
+                if (ImGui.SliderFloat("##ProfileAdvScalingMass", ref value, 0f, 1f, "%.2f"))
+                    ToggleOverride(o => o.MassRedistributionStrength = value);
             }
-        }
-        CtrlHelper.AddHoverText("Blends between your edits and the balanced result. 0 keeps your edits, 1 fully balances.");
-        ImGui.TableNextColumn();
-        var naturalizationOverride = overrides.NaturalizationStrength.HasValue;
-        if (ImGui.Checkbox("##ProfileAdvScalingNaturalizationOverride", ref naturalizationOverride))
-            ToggleOverride(o => o.NaturalizationStrength = naturalizationOverride ? globalSettings.NaturalizationStrength : null);
-
-        // Pose-aware validation mode
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Pose-aware validation mode");
-        ImGui.TableNextColumn();
-        if (overrides.PoseValidationMode.HasValue)
-        {
-            var mode = overrides.PoseValidationMode ?? globalSettings.PoseValidationMode;
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.BeginCombo("##ProfileAdvScalingPose", mode.ToString()))
+            else
             {
-                foreach (var value in Enum.GetValues<AdvancedBodyScalingPoseValidationMode>())
+                var value = globalSettings.MassRedistributionStrength;
+                using (ImRaii.Disabled())
                 {
-                    var selected = value == mode;
-                    if (ImGui.Selectable(value.ToString(), selected))
-                        ToggleOverride(o => o.PoseValidationMode = value);
-
-                    if (selected)
-                        ImGui.SetItemDefaultFocus();
+                    ImGui.SetNextItemWidth(-1);
+                    ImGui.SliderFloat("##ProfileAdvScalingMass", ref value, 0f, 1f, "%.2f");
                 }
-                ImGui.EndCombo();
             }
-        }
-        else
-        {
-            ImGui.TextDisabled($"Global: {globalSettings.PoseValidationMode}");
-        }
-        CtrlHelper.AddHoverText("Adds extra pose-aware guardrails to reduce deformation in extreme poses.");
-        ImGui.TableNextColumn();
-        var poseOverride = overrides.PoseValidationMode.HasValue;
-        if (ImGui.Checkbox("##ProfileAdvScalingPoseOverride", ref poseOverride))
-            ToggleOverride(o => o.PoseValidationMode = poseOverride ? globalSettings.PoseValidationMode : null);
+            CtrlHelper.AddHoverText("Scales how much scale deltas are redistributed across neighboring bones. 0 disables, 1 uses the mode default.");
+            ImGui.TableNextColumn();
+            var massOverride = overrides.MassRedistributionStrength.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingMassOverride", ref massOverride))
+                ToggleOverride(o => o.MassRedistributionStrength = massOverride ? globalSettings.MassRedistributionStrength : null);
 
-        // Neck length compensation
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Neck length compensation");
-        ImGui.TableNextColumn();
-        if (overrides.NeckLengthCompensation.HasValue)
-        {
-            var value = overrides.NeckLengthCompensation.Value;
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.SliderFloat("##ProfileAdvScalingNeckLength", ref value, 0f, 1f, "%.2f"))
-                ToggleOverride(o => o.NeckLengthCompensation = value);
-        }
-        else
-        {
-            var value = globalSettings.NeckLengthCompensation;
-            using (ImRaii.Disabled())
+            // Proportion guardrail mode
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Proportion guardrail mode");
+            ImGui.TableNextColumn();
+            if (overrides.GuardrailMode.HasValue)
             {
+                var mode = overrides.GuardrailMode ?? globalSettings.GuardrailMode;
                 ImGui.SetNextItemWidth(-1);
-                ImGui.SliderFloat("##ProfileAdvScalingNeckLength", ref value, 0f, 1f, "%.2f");
-            }
-        }
-        CtrlHelper.AddHoverText("Shortens neck length along its primary axis without shrinking width.");
-        ImGui.TableNextColumn();
-        var neckLengthOverride = overrides.NeckLengthCompensation.HasValue;
-        if (ImGui.Checkbox("##ProfileAdvScalingNeckLengthOverride", ref neckLengthOverride))
-            ToggleOverride(o => o.NeckLengthCompensation = neckLengthOverride ? globalSettings.NeckLengthCompensation : null);
+                if (ImGui.BeginCombo("##ProfileAdvScalingGuardrail", mode.ToString()))
+                {
+                    foreach (var value in Enum.GetValues<AdvancedBodyScalingGuardrailMode>())
+                    {
+                        var selected = value == mode;
+                        if (ImGui.Selectable(value.ToString(), selected))
+                            ToggleOverride(o => o.GuardrailMode = value);
 
-        // Neck-to-shoulder blend
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Neck-to-shoulder blend");
-        ImGui.TableNextColumn();
-        if (overrides.NeckShoulderBlendStrength.HasValue)
-        {
-            var value = overrides.NeckShoulderBlendStrength.Value;
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.SliderFloat("##ProfileAdvScalingNeckBlend", ref value, 0f, 1f, "%.2f"))
-                ToggleOverride(o => o.NeckShoulderBlendStrength = value);
-        }
-        else
-        {
-            var value = globalSettings.NeckShoulderBlendStrength;
-            using (ImRaii.Disabled())
-            {
-                ImGui.SetNextItemWidth(-1);
-                ImGui.SliderFloat("##ProfileAdvScalingNeckBlend", ref value, 0f, 1f, "%.2f");
+                        if (selected)
+                            ImGui.SetItemDefaultFocus();
+                    }
+                    ImGui.EndCombo();
+                }
             }
-        }
-        CtrlHelper.AddHoverText("Blends the length correction into upper spine and shoulder roots.");
-        ImGui.TableNextColumn();
-        var neckBlendOverride = overrides.NeckShoulderBlendStrength.HasValue;
-        if (ImGui.Checkbox("##ProfileAdvScalingNeckBlendOverride", ref neckBlendOverride))
-            ToggleOverride(o => o.NeckShoulderBlendStrength = neckBlendOverride ? globalSettings.NeckShoulderBlendStrength : null);
+            else
+            {
+                ImGui.TextDisabled($"Global: {globalSettings.GuardrailMode}");
+            }
+            CtrlHelper.AddHoverText("Controls how strict the body proportion guardrails are. Off disables guardrails.");
+            ImGui.TableNextColumn();
+            var guardrailOverride = overrides.GuardrailMode.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingGuardrailOverride", ref guardrailOverride))
+                ToggleOverride(o => o.GuardrailMode = guardrailOverride ? globalSettings.GuardrailMode : null);
 
-        // Clavicle/shoulder bridge smoothing
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Clavicle/shoulder smoothing");
-        ImGui.TableNextColumn();
-        if (overrides.ClavicleShoulderSmoothing.HasValue)
-        {
-            var value = overrides.ClavicleShoulderSmoothing.Value;
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.SliderFloat("##ProfileAdvScalingClavicleSmoothing", ref value, 0f, 1f, "%.2f"))
-                ToggleOverride(o => o.ClavicleShoulderSmoothing = value);
-        }
-        else
-        {
-            var value = globalSettings.ClavicleShoulderSmoothing;
-            using (ImRaii.Disabled())
+            // Naturalization strength
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Naturalization strength");
+            ImGui.TableNextColumn();
+            if (overrides.NaturalizationStrength.HasValue)
             {
+                var value = overrides.NaturalizationStrength.Value;
                 ImGui.SetNextItemWidth(-1);
-                ImGui.SliderFloat("##ProfileAdvScalingClavicleSmoothing", ref value, 0f, 1f, "%.2f");
+                if (ImGui.SliderFloat("##ProfileAdvScalingNaturalization", ref value, 0f, 1f, "%.2f"))
+                    ToggleOverride(o => o.NaturalizationStrength = value);
             }
+            else
+            {
+                var value = globalSettings.NaturalizationStrength;
+                using (ImRaii.Disabled())
+                {
+                    ImGui.SetNextItemWidth(-1);
+                    ImGui.SliderFloat("##ProfileAdvScalingNaturalization", ref value, 0f, 1f, "%.2f");
+                }
+            }
+            CtrlHelper.AddHoverText("Blends between your edits and the balanced result. 0 keeps your edits, 1 fully balances.");
+            ImGui.TableNextColumn();
+            var naturalizationOverride = overrides.NaturalizationStrength.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingNaturalizationOverride", ref naturalizationOverride))
+                ToggleOverride(o => o.NaturalizationStrength = naturalizationOverride ? globalSettings.NaturalizationStrength : null);
+
+            // Pose-aware validation mode
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Pose-aware validation mode");
+            ImGui.TableNextColumn();
+            if (overrides.PoseValidationMode.HasValue)
+            {
+                var mode = overrides.PoseValidationMode ?? globalSettings.PoseValidationMode;
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.BeginCombo("##ProfileAdvScalingPose", mode.ToString()))
+                {
+                    foreach (var value in Enum.GetValues<AdvancedBodyScalingPoseValidationMode>())
+                    {
+                        var selected = value == mode;
+                        if (ImGui.Selectable(value.ToString(), selected))
+                            ToggleOverride(o => o.PoseValidationMode = value);
+
+                        if (selected)
+                            ImGui.SetItemDefaultFocus();
+                    }
+                    ImGui.EndCombo();
+                }
+            }
+            else
+            {
+                ImGui.TextDisabled($"Global: {globalSettings.PoseValidationMode}");
+            }
+            CtrlHelper.AddHoverText("Adds extra pose-aware guardrails to reduce deformation in extreme poses.");
+            ImGui.TableNextColumn();
+            var poseOverride = overrides.PoseValidationMode.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingPoseOverride", ref poseOverride))
+                ToggleOverride(o => o.PoseValidationMode = poseOverride ? globalSettings.PoseValidationMode : null);
+
+            // Neck length compensation
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Neck length compensation");
+            ImGui.TableNextColumn();
+            if (overrides.NeckLengthCompensation.HasValue)
+            {
+                var value = overrides.NeckLengthCompensation.Value;
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.SliderFloat("##ProfileAdvScalingNeckLength", ref value, 0f, 1f, "%.2f"))
+                    ToggleOverride(o => o.NeckLengthCompensation = value);
+            }
+            else
+            {
+                var value = globalSettings.NeckLengthCompensation;
+                using (ImRaii.Disabled())
+                {
+                    ImGui.SetNextItemWidth(-1);
+                    ImGui.SliderFloat("##ProfileAdvScalingNeckLength", ref value, 0f, 1f, "%.2f");
+                }
+            }
+            CtrlHelper.AddHoverText("Shortens neck length along its primary axis without shrinking width.");
+            ImGui.TableNextColumn();
+            var neckLengthOverride = overrides.NeckLengthCompensation.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingNeckLengthOverride", ref neckLengthOverride))
+                ToggleOverride(o => o.NeckLengthCompensation = neckLengthOverride ? globalSettings.NeckLengthCompensation : null);
+
+            // Neck-to-shoulder blend
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Neck-to-shoulder blend");
+            ImGui.TableNextColumn();
+            if (overrides.NeckShoulderBlendStrength.HasValue)
+            {
+                var value = overrides.NeckShoulderBlendStrength.Value;
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.SliderFloat("##ProfileAdvScalingNeckBlend", ref value, 0f, 1f, "%.2f"))
+                    ToggleOverride(o => o.NeckShoulderBlendStrength = value);
+            }
+            else
+            {
+                var value = globalSettings.NeckShoulderBlendStrength;
+                using (ImRaii.Disabled())
+                {
+                    ImGui.SetNextItemWidth(-1);
+                    ImGui.SliderFloat("##ProfileAdvScalingNeckBlend", ref value, 0f, 1f, "%.2f");
+                }
+            }
+            CtrlHelper.AddHoverText("Blends the length correction into upper spine and shoulder roots.");
+            ImGui.TableNextColumn();
+            var neckBlendOverride = overrides.NeckShoulderBlendStrength.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingNeckBlendOverride", ref neckBlendOverride))
+                ToggleOverride(o => o.NeckShoulderBlendStrength = neckBlendOverride ? globalSettings.NeckShoulderBlendStrength : null);
+
+            // Clavicle/shoulder bridge smoothing
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Clavicle/shoulder smoothing");
+            ImGui.TableNextColumn();
+            if (overrides.ClavicleShoulderSmoothing.HasValue)
+            {
+                var value = overrides.ClavicleShoulderSmoothing.Value;
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.SliderFloat("##ProfileAdvScalingClavicleSmoothing", ref value, 0f, 1f, "%.2f"))
+                    ToggleOverride(o => o.ClavicleShoulderSmoothing = value);
+            }
+            else
+            {
+                var value = globalSettings.ClavicleShoulderSmoothing;
+                using (ImRaii.Disabled())
+                {
+                    ImGui.SetNextItemWidth(-1);
+                    ImGui.SliderFloat("##ProfileAdvScalingClavicleSmoothing", ref value, 0f, 1f, "%.2f");
+                }
+            }
+            CtrlHelper.AddHoverText("Adds extra smoothing across clavicles and shoulder roots.");
+            ImGui.TableNextColumn();
+            var clavicleOverride = overrides.ClavicleShoulderSmoothing.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingClavicleSmoothingOverride", ref clavicleOverride))
+                ToggleOverride(o => o.ClavicleShoulderSmoothing = clavicleOverride ? globalSettings.ClavicleShoulderSmoothing : null);
         }
-        CtrlHelper.AddHoverText("Adds extra smoothing across clavicles and shoulder roots.");
-        ImGui.TableNextColumn();
-        var clavicleOverride = overrides.ClavicleShoulderSmoothing.HasValue;
-        if (ImGui.Checkbox("##ProfileAdvScalingClavicleSmoothingOverride", ref clavicleOverride))
-            ToggleOverride(o => o.ClavicleShoulderSmoothing = clavicleOverride ? globalSettings.ClavicleShoulderSmoothing : null);
 
         ImGui.Spacing();
         if (!ImGui.CollapsingHeader("Region Tuning Overrides"))
