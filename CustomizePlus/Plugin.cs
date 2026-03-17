@@ -31,6 +31,7 @@ public sealed class Plugin : IDalamudPlugin
 
             _services = ServiceManagerBuilder.CreateProvider(pluginInterface, Logger);
             _services.EnsureRequiredServices();
+            _services.GetService<Luna.ImSharpDalamudContext>();
 
             _services.GetService<IpcHandler>().Initialize();
             _services.GetService<PcpService>();

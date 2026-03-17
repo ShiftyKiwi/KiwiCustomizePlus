@@ -42,6 +42,8 @@ using Penumbra.GameData.DataContainers;
 using Penumbra.GameData.Interop;
 using Penumbra.GameData.Structs;
 using System.Collections.Generic;
+using Microsoft.Extensions.Logging;
+using ImSharpDalamudContext = Luna.ImSharpDalamudContext;
 using LunaLogger = Luna.Logger;
 
 namespace CustomizePlus.Core;
@@ -52,9 +54,12 @@ public static class ServiceManagerBuilder
     {
         EventWrapperBase.ChangeLogger(logger);
 
+        var lunaLogger = new LunaLogger();
+
         var services = new ServiceManager(logger)
             .AddExistingService(logger)
-            .AddExistingService(new LunaLogger())
+            .AddExistingService(lunaLogger)
+            .AddExistingService<ILogger>(lunaLogger)
             .AddCore()
             .AddEvents()
             .AddGPoseServices()
@@ -145,6 +150,7 @@ public static class ServiceManagerBuilder
     private static ServiceManager AddCore(this ServiceManager services)
     {
         services
+            .AddSingleton<ImSharpDalamudContext>()
             .AddSingleton<HookingService>()
             .AddSingleton<ChatService>()
             .AddSingleton<CommandService>()
