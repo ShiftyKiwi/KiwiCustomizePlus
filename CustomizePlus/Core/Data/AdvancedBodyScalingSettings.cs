@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Penumbra.GameData.Enums;
 
 namespace CustomizePlus.Core.Data;
 
@@ -26,7 +27,8 @@ public enum AdvancedBodyRegion
     Legs = 5,
     Feet = 6,
     Toes = 7,
-    Tail = 8
+    Tail = 8,
+    NeckShoulder = 9
 }
 
 [Serializable]
@@ -113,6 +115,14 @@ public sealed class AdvancedBodyScalingRegionProfile
         => new()
         {
             [AdvancedBodyRegion.Spine] = new AdvancedBodyScalingRegionProfile(),
+            [AdvancedBodyRegion.NeckShoulder] = new AdvancedBodyScalingRegionProfile
+            {
+                InfluenceMultiplier = 0.85f,
+                SmoothingMultiplier = 0.85f,
+                GuardrailMultiplier = 0.85f,
+                MassRedistributionMultiplier = 0.85f,
+                PoseValidationMultiplier = 0.85f
+            },
             [AdvancedBodyRegion.Chest] = new AdvancedBodyScalingRegionProfile
             {
                 InfluenceMultiplier = 0.9f,
@@ -195,6 +205,57 @@ public sealed class AdvancedBodyScalingRegionProfile
 }
 
 [Serializable]
+public sealed class AdvancedBodyScalingNeckCompensationPreset
+{
+    private float _neckLengthCompensation;
+    private float _neckShoulderBlendStrength;
+    private float _clavicleShoulderSmoothing;
+
+    public float NeckLengthCompensation
+    {
+        get => _neckLengthCompensation;
+        set => _neckLengthCompensation = Math.Clamp(value, 0f, 1f);
+    }
+
+    public float NeckShoulderBlendStrength
+    {
+        get => _neckShoulderBlendStrength;
+        set => _neckShoulderBlendStrength = Math.Clamp(value, 0f, 1f);
+    }
+
+    public float ClavicleShoulderSmoothing
+    {
+        get => _clavicleShoulderSmoothing;
+        set => _clavicleShoulderSmoothing = Math.Clamp(value, 0f, 1f);
+    }
+
+    public AdvancedBodyScalingNeckCompensationPreset DeepCopy()
+        => new()
+        {
+            NeckLengthCompensation = NeckLengthCompensation,
+            NeckShoulderBlendStrength = NeckShoulderBlendStrength,
+            ClavicleShoulderSmoothing = ClavicleShoulderSmoothing
+        };
+
+    public static Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset> CreateDefaults()
+        => new()
+        {
+            [Race.Elezen] = new AdvancedBodyScalingNeckCompensationPreset
+            {
+                NeckLengthCompensation = 0.10f,
+                NeckShoulderBlendStrength = 0.35f,
+                ClavicleShoulderSmoothing = 0.25f
+            },
+            [Race.Viera] = new AdvancedBodyScalingNeckCompensationPreset
+            {
+                NeckLengthCompensation = 0.08f,
+                NeckShoulderBlendStrength = 0.35f,
+                ClavicleShoulderSmoothing = 0.25f
+            }
+        };
+}
+
+[Serializable]
 public sealed class AdvancedBodyScalingSettings
 {
     public bool Enabled { get; set; } = false;
@@ -225,6 +286,35 @@ public sealed class AdvancedBodyScalingSettings
         set => _naturalizationStrength = Math.Clamp(value, 0f, 1f);
     }
 
+    private float _neckLengthCompensation;
+
+    public float NeckLengthCompensation
+    {
+        get => _neckLengthCompensation;
+        set => _neckLengthCompensation = Math.Clamp(value, 0f, 1f);
+    }
+
+    private float _neckShoulderBlendStrength = 0.35f;
+
+    public float NeckShoulderBlendStrength
+    {
+        get => _neckShoulderBlendStrength;
+        set => _neckShoulderBlendStrength = Math.Clamp(value, 0f, 1f);
+    }
+
+    private float _clavicleShoulderSmoothing = 0.25f;
+
+    public float ClavicleShoulderSmoothing
+    {
+        get => _clavicleShoulderSmoothing;
+        set => _clavicleShoulderSmoothing = Math.Clamp(value, 0f, 1f);
+    }
+
+    public bool UseRaceSpecificNeckCompensation { get; set; } = false;
+
+    public Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset> RaceNeckPresets { get; set; }
+        = AdvancedBodyScalingNeckCompensationPreset.CreateDefaults();
+
     public Dictionary<AdvancedBodyRegion, AdvancedBodyScalingRegionProfile> RegionProfiles { get; set; }
         = AdvancedBodyScalingRegionProfile.CreateDefaults();
 
@@ -242,6 +332,22 @@ public sealed class AdvancedBodyScalingSettings
         return profile;
     }
 
+    public AdvancedBodyScalingSettings ApplyRaceNeckPreset(Race race)
+    {
+        if (!UseRaceSpecificNeckCompensation || race == Race.Unknown)
+            return this;
+
+        if (RaceNeckPresets == null || !RaceNeckPresets.TryGetValue(race, out var preset))
+            return this;
+
+        var resolved = DeepCopy();
+        resolved.NeckLengthCompensation = preset.NeckLengthCompensation;
+        resolved.NeckShoulderBlendStrength = preset.NeckShoulderBlendStrength;
+        resolved.ClavicleShoulderSmoothing = preset.ClavicleShoulderSmoothing;
+
+        return resolved;
+    }
+
     public void ResetToDefaults()
     {
         var defaults = new AdvancedBodyScalingSettings();
@@ -252,6 +358,11 @@ public sealed class AdvancedBodyScalingSettings
         GuardrailMode = defaults.GuardrailMode;
         PoseValidationMode = defaults.PoseValidationMode;
         NaturalizationStrength = defaults.NaturalizationStrength;
+        NeckLengthCompensation = defaults.NeckLengthCompensation;
+        NeckShoulderBlendStrength = defaults.NeckShoulderBlendStrength;
+        ClavicleShoulderSmoothing = defaults.ClavicleShoulderSmoothing;
+        UseRaceSpecificNeckCompensation = defaults.UseRaceSpecificNeckCompensation;
+        RaceNeckPresets = AdvancedBodyScalingNeckCompensationPreset.CreateDefaults();
         RegionProfiles = AdvancedBodyScalingRegionProfile.CreateDefaults();
     }
 
@@ -265,6 +376,13 @@ public sealed class AdvancedBodyScalingSettings
             GuardrailMode = GuardrailMode,
             PoseValidationMode = PoseValidationMode,
             NaturalizationStrength = NaturalizationStrength,
+            NeckLengthCompensation = NeckLengthCompensation,
+            NeckShoulderBlendStrength = NeckShoulderBlendStrength,
+            ClavicleShoulderSmoothing = ClavicleShoulderSmoothing,
+            UseRaceSpecificNeckCompensation = UseRaceSpecificNeckCompensation,
+            RaceNeckPresets = RaceNeckPresets == null
+                ? new Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset>()
+                : RaceNeckPresets.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
             RegionProfiles = RegionProfiles.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy())
         };
 }

@@ -31,6 +31,7 @@ public class ProfilePanel
     private static readonly AdvancedBodyRegion[] RegionOrder =
     {
         AdvancedBodyRegion.Spine,
+        AdvancedBodyRegion.NeckShoulder,
         AdvancedBodyRegion.Chest,
         AdvancedBodyRegion.Pelvis,
         AdvancedBodyRegion.Arms,
@@ -548,6 +549,90 @@ public class ProfilePanel
         var poseOverride = overrides.PoseValidationMode.HasValue;
         if (ImGui.Checkbox("##ProfileAdvScalingPoseOverride", ref poseOverride))
             ToggleOverride(o => o.PoseValidationMode = poseOverride ? globalSettings.PoseValidationMode : null);
+
+        // Neck length compensation
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Neck length compensation");
+        ImGui.TableNextColumn();
+        if (overrides.NeckLengthCompensation.HasValue)
+        {
+            var value = overrides.NeckLengthCompensation.Value;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat("##ProfileAdvScalingNeckLength", ref value, 0f, 1f, "%.2f"))
+                ToggleOverride(o => o.NeckLengthCompensation = value);
+        }
+        else
+        {
+            var value = globalSettings.NeckLengthCompensation;
+            using (ImRaii.Disabled())
+            {
+                ImGui.SetNextItemWidth(-1);
+                ImGui.SliderFloat("##ProfileAdvScalingNeckLength", ref value, 0f, 1f, "%.2f");
+            }
+        }
+        CtrlHelper.AddHoverText("Shortens neck length along its primary axis without shrinking width.");
+        ImGui.TableNextColumn();
+        var neckLengthOverride = overrides.NeckLengthCompensation.HasValue;
+        if (ImGui.Checkbox("##ProfileAdvScalingNeckLengthOverride", ref neckLengthOverride))
+            ToggleOverride(o => o.NeckLengthCompensation = neckLengthOverride ? globalSettings.NeckLengthCompensation : null);
+
+        // Neck-to-shoulder blend
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Neck-to-shoulder blend");
+        ImGui.TableNextColumn();
+        if (overrides.NeckShoulderBlendStrength.HasValue)
+        {
+            var value = overrides.NeckShoulderBlendStrength.Value;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat("##ProfileAdvScalingNeckBlend", ref value, 0f, 1f, "%.2f"))
+                ToggleOverride(o => o.NeckShoulderBlendStrength = value);
+        }
+        else
+        {
+            var value = globalSettings.NeckShoulderBlendStrength;
+            using (ImRaii.Disabled())
+            {
+                ImGui.SetNextItemWidth(-1);
+                ImGui.SliderFloat("##ProfileAdvScalingNeckBlend", ref value, 0f, 1f, "%.2f");
+            }
+        }
+        CtrlHelper.AddHoverText("Blends the length correction into upper spine and shoulder roots.");
+        ImGui.TableNextColumn();
+        var neckBlendOverride = overrides.NeckShoulderBlendStrength.HasValue;
+        if (ImGui.Checkbox("##ProfileAdvScalingNeckBlendOverride", ref neckBlendOverride))
+            ToggleOverride(o => o.NeckShoulderBlendStrength = neckBlendOverride ? globalSettings.NeckShoulderBlendStrength : null);
+
+        // Clavicle/shoulder bridge smoothing
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Clavicle/shoulder smoothing");
+        ImGui.TableNextColumn();
+        if (overrides.ClavicleShoulderSmoothing.HasValue)
+        {
+            var value = overrides.ClavicleShoulderSmoothing.Value;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat("##ProfileAdvScalingClavicleSmoothing", ref value, 0f, 1f, "%.2f"))
+                ToggleOverride(o => o.ClavicleShoulderSmoothing = value);
+        }
+        else
+        {
+            var value = globalSettings.ClavicleShoulderSmoothing;
+            using (ImRaii.Disabled())
+            {
+                ImGui.SetNextItemWidth(-1);
+                ImGui.SliderFloat("##ProfileAdvScalingClavicleSmoothing", ref value, 0f, 1f, "%.2f");
+            }
+        }
+        CtrlHelper.AddHoverText("Adds extra smoothing across clavicles and shoulder roots.");
+        ImGui.TableNextColumn();
+        var clavicleOverride = overrides.ClavicleShoulderSmoothing.HasValue;
+        if (ImGui.Checkbox("##ProfileAdvScalingClavicleSmoothingOverride", ref clavicleOverride))
+            ToggleOverride(o => o.ClavicleShoulderSmoothing = clavicleOverride ? globalSettings.ClavicleShoulderSmoothing : null);
 
         ImGui.Spacing();
         if (!ImGui.CollapsingHeader("Region Tuning Overrides"))

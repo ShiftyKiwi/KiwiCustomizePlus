@@ -34,6 +34,9 @@ public sealed class AdvancedBodyScalingOverrides
     public AdvancedBodyScalingGuardrailMode? GuardrailMode { get; set; }
     public float? NaturalizationStrength { get; set; }
     public AdvancedBodyScalingPoseValidationMode? PoseValidationMode { get; set; }
+    public float? NeckLengthCompensation { get; set; }
+    public float? NeckShoulderBlendStrength { get; set; }
+    public float? ClavicleShoulderSmoothing { get; set; }
     public Dictionary<AdvancedBodyRegion, AdvancedBodyScalingRegionProfileOverrides> RegionOverrides { get; set; } = new();
 
     public AdvancedBodyScalingSettings MergeOnto(AdvancedBodyScalingSettings baseline)
@@ -61,6 +64,15 @@ public sealed class AdvancedBodyScalingOverrides
         if (PoseValidationMode.HasValue)
             merged.PoseValidationMode = PoseValidationMode.Value;
 
+        if (NeckLengthCompensation.HasValue)
+            merged.NeckLengthCompensation = NeckLengthCompensation.Value;
+
+        if (NeckShoulderBlendStrength.HasValue)
+            merged.NeckShoulderBlendStrength = NeckShoulderBlendStrength.Value;
+
+        if (ClavicleShoulderSmoothing.HasValue)
+            merged.ClavicleShoulderSmoothing = ClavicleShoulderSmoothing.Value;
+
         if (RegionOverrides.Count > 0)
         {
             foreach (var (region, overrides) in RegionOverrides)
@@ -86,6 +98,9 @@ public sealed class AdvancedBodyScalingOverrides
             GuardrailMode = GuardrailMode,
             NaturalizationStrength = NaturalizationStrength,
             PoseValidationMode = PoseValidationMode,
+            NeckLengthCompensation = NeckLengthCompensation,
+            NeckShoulderBlendStrength = NeckShoulderBlendStrength,
+            ClavicleShoulderSmoothing = ClavicleShoulderSmoothing,
             RegionOverrides = RegionOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy())
         };
 }

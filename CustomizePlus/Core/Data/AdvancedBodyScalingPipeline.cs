@@ -17,6 +17,7 @@ internal static class AdvancedBodyScalingPipeline
     private const float DefaultCurveThreshold = 0.12f;
     private const float DefaultPropagationFalloff = 0.6f;
     private const int DefaultPropagationDepth = 2;
+    private const float MaxNeckLengthReduction = 0.15f;
     private const float MinAutoScale = 0.25f;
     private const float MaxAutoScale = 3.0f;
 
@@ -30,6 +31,21 @@ internal static class AdvancedBodyScalingPipeline
         BoneData.BoneFamily.Legs,
         BoneData.BoneFamily.Feet,
         BoneData.BoneFamily.Tail
+    };
+
+    private static readonly string[] NeckBones = { "j_kubi" };
+    private static readonly string[] UpperSpineBones = { "j_sebo_c" };
+    private static readonly string[] ClavicleBones = { "j_sako_l", "j_sako_r" };
+    private static readonly string[] ShoulderRootBones = { "n_hkata_l", "n_hkata_r" };
+
+    private static readonly HashSet<string> NeckShoulderBones = new(StringComparer.Ordinal)
+    {
+        "j_sebo_c",
+        "j_kubi",
+        "j_sako_l",
+        "j_sako_r",
+        "n_hkata_l",
+        "n_hkata_r"
     };
 
     private readonly record struct ModeTuning(
@@ -74,7 +90,10 @@ internal static class AdvancedBodyScalingPipeline
         }
 
         if (sources.Count == 0)
+        {
+            ApplyNeckCompensation(output, userTransforms, settings);
             return output;
+        }
 
         foreach (var source in sources)
             ExpandNeighbors(source, tuning.PropagationDepth, relevantBones);
@@ -185,6 +204,8 @@ internal static class AdvancedBodyScalingPipeline
                 debug.FinalScales[bone] = finalUniform;
         }
 
+        ApplyNeckCompensation(output, userTransforms, settings);
+
         return output;
     }
 
@@ -222,6 +243,13 @@ internal static class AdvancedBodyScalingPipeline
             GuardrailMode = settings.GuardrailMode,
             PoseValidationMode = settings.PoseValidationMode,
             NaturalizationStrength = settings.NaturalizationStrength,
+            NeckLengthCompensation = settings.NeckLengthCompensation,
+            NeckShoulderBlendStrength = settings.NeckShoulderBlendStrength,
+            ClavicleShoulderSmoothing = settings.ClavicleShoulderSmoothing,
+            UseRaceSpecificNeckCompensation = settings.UseRaceSpecificNeckCompensation,
+            RaceNeckPresets = settings.RaceNeckPresets == null
+                ? new Dictionary<Penumbra.GameData.Enums.Race, AdvancedBodyScalingNeckCompensationPreset>()
+                : settings.RaceNeckPresets.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
             RegionProfiles = settings.RegionProfiles.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy())
         };
 
@@ -271,6 +299,9 @@ internal static class AdvancedBodyScalingPipeline
 
     private static AdvancedBodyRegion ResolveRegion(string boneName)
     {
+        if (IsNeckShoulderBone(boneName))
+            return AdvancedBodyRegion.NeckShoulder;
+
         var family = BoneData.GetBoneFamily(boneName);
         return family switch
         {
@@ -284,6 +315,9 @@ internal static class AdvancedBodyScalingPipeline
             _ => AdvancedBodyRegion.Spine
         };
     }
+
+    private static bool IsNeckShoulderBone(string boneName)
+        => NeckShoulderBones.Contains(boneName);
 
     private static bool IsToeBone(string boneName)
         => boneName.StartsWith("iv_asi_", StringComparison.Ordinal)
@@ -525,6 +559,68 @@ internal static class AdvancedBodyScalingPipeline
         foreach (var chain in CurveChains.All)
             ApplyCurveSmoothing(scales, lockStates, regionProfiles, chain, strength, threshold);
     }
+
+    private static void ApplyNeckCompensation(
+        Dictionary<string, BoneTransform> output,
+        IReadOnlyDictionary<string, BoneTransform> userTransforms,
+        AdvancedBodyScalingSettings settings)
+    {
+        var compensation = settings.NeckLengthCompensation;
+        if (compensation <= 0f)
+            return;
+
+        var blend = Math.Clamp(settings.NeckShoulderBlendStrength, 0f, 1f);
+        var clavicleSmoothing = Math.Clamp(settings.ClavicleShoulderSmoothing, 0f, 1f);
+
+        var reduction = compensation * MaxNeckLengthReduction;
+        if (reduction <= 0f)
+            return;
+
+        var upperSpineWeight = 0.6f * blend;
+        var clavicleWeight = blend * Lerp(0.2f, 0.45f, clavicleSmoothing);
+        var shoulderWeight = blend * Lerp(0.15f, 0.35f, clavicleSmoothing);
+
+        foreach (var bone in NeckBones)
+            ApplyNeckScale(output, userTransforms, bone, reduction, 1f);
+
+        foreach (var bone in UpperSpineBones)
+            ApplyNeckScale(output, userTransforms, bone, reduction, upperSpineWeight);
+
+        foreach (var bone in ClavicleBones)
+            ApplyNeckScale(output, userTransforms, bone, reduction, clavicleWeight);
+
+        foreach (var bone in ShoulderRootBones)
+            ApplyNeckScale(output, userTransforms, bone, reduction, shoulderWeight);
+    }
+
+    private static void ApplyNeckScale(
+        Dictionary<string, BoneTransform> output,
+        IReadOnlyDictionary<string, BoneTransform> userTransforms,
+        string bone,
+        float reduction,
+        float weight)
+    {
+        if (weight <= 0f || reduction <= 0f)
+            return;
+
+        if (IsLockedByUser(userTransforms, bone))
+            return;
+
+        var multiplier = 1f - (reduction * weight);
+        if (multiplier >= 0.999f)
+            return;
+
+        if (!output.TryGetValue(bone, out var transform))
+            transform = new BoneTransform();
+
+        var scale = transform.Scaling;
+        scale.Y = Math.Clamp(scale.Y * multiplier, MinAutoScale, MaxAutoScale);
+        transform.Scaling = scale;
+        output[bone] = transform;
+    }
+
+    private static bool IsLockedByUser(IReadOnlyDictionary<string, BoneTransform> userTransforms, string bone)
+        => userTransforms.TryGetValue(bone, out var transform) && transform.LockState != BoneLockState.Unlocked;
 
     private static void ApplyPoseAwareValidation(
         Dictionary<string, float> scales,

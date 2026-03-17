@@ -137,8 +137,29 @@ public unsafe sealed class ArmatureManager : IDisposable
             kvPair.Value.IsPendingProfileRebind = true;
     }
 
-    private AdvancedBodyScalingSettings ResolveAdvancedBodyScaling(Profile profile)
-        => profile.AdvancedBodyScalingOverrides.Resolve(_configuration.AdvancedBodyScalingSettings);
+    private AdvancedBodyScalingSettings ResolveAdvancedBodyScaling(Profile profile, Actor actor)
+    {
+        var baseline = _configuration.AdvancedBodyScalingSettings;
+        if (TryGetActorRace(actor, out var race))
+            baseline = baseline.ApplyRaceNeckPreset(race);
+
+        return profile.AdvancedBodyScalingOverrides.Resolve(baseline);
+    }
+
+    private static bool TryGetActorRace(Actor actor, out Race race)
+    {
+        race = Race.Unknown;
+
+        if (!actor || !actor.IsCharacter)
+            return false;
+
+        var customize = actor.Customize;
+        if (customize == null)
+            return false;
+
+        race = customize->Race;
+        return race != Race.Unknown;
+    }
 
     /// <summary>
     /// Deletes armatures which no longer have actor associated with them and creates armatures for new actors
@@ -226,10 +247,11 @@ public unsafe sealed class ArmatureManager : IDisposable
                     activeProfile.Armatures.Add(armature);
                 }
 
+                var actorForSettings = obj.Value.Objects.Count > 0 ? obj.Value.Objects[0] : Actor.Null;
                 armature.RebuildBoneTemplateBinding(
                     _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
                     _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
-                    ResolveAdvancedBodyScaling(armature.Profile));
+                    ResolveAdvancedBodyScaling(armature.Profile, actorForSettings));
 
                 //warn: might be a bit of a performance hit on profiles with a lot of templates/bones
                 //warn: this must be done after RebuildBoneTemplateBinding or it will not work
@@ -328,7 +350,7 @@ public unsafe sealed class ArmatureManager : IDisposable
                 actor.Model.AsCharacterBase,
                 _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
                 _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
-                ResolveAdvancedBodyScaling(armature.Profile));
+                ResolveAdvancedBodyScaling(armature.Profile, actor));
         }
 
         return true;

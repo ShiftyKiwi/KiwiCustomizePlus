@@ -1,9 +1,9 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 
 <Project Sdk="Dalamud.NET.Sdk/14.0.2">
   <PropertyGroup>
     <AssemblyTitle>CustomizePlus</AssemblyTitle>
-    <Version>2.1.2.7</Version>
+    <Version>2.1.2.8</Version>
     <Description>Customize+</Description>
     <Copyright></Copyright>
     <PackageProjectUrl>https://github.com/ShiftyKiwi/KiwiCustomizePlus</PackageProjectUrl>

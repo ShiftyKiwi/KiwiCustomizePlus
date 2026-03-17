@@ -17,8 +17,10 @@ using OtterGui.Classes;
 using OtterGui.Raii;
 using OtterGui.Widgets;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
+using Penumbra.GameData.Enums;
 
 namespace CustomizePlus.UI.Windows.MainWindow.Tabs;
 
@@ -29,6 +31,7 @@ public class SettingsTab
     private static readonly AdvancedBodyRegion[] RegionOrder =
     {
         AdvancedBodyRegion.Spine,
+        AdvancedBodyRegion.NeckShoulder,
         AdvancedBodyRegion.Chest,
         AdvancedBodyRegion.Pelvis,
         AdvancedBodyRegion.Arms,
@@ -48,6 +51,7 @@ public class SettingsTab
     private readonly MessageService _messageService;
     private readonly SupportLogBuilderService _supportLogBuilderService;
     private readonly PcpService _pcpService;
+    private Race _neckPresetRace = Race.Elezen;
 
     public SettingsTab(
         IDalamudPluginInterface pluginInterface,
@@ -554,12 +558,156 @@ public class SettingsTab
             CtrlHelper.AddHoverText("Adds extra pose-aware guardrails to reduce deformation in extreme poses.");
 
             ImGui.Spacing();
+            DrawNeckCompensationSettings(settings);
+
+            ImGui.Spacing();
             DrawAdvancedBodyScalingResets(settings);
 
             ImGui.Spacing();
             DrawAdvancedBodyScalingRegionProfiles(settings);
         }
     }
+
+    private void DrawNeckCompensationSettings(AdvancedBodyScalingSettings settings)
+    {
+        ImGui.Text("Neck/Shoulder Compensation");
+
+        var neckLength = settings.NeckLengthCompensation;
+        if (ImGui.SliderFloat("Neck length compensation", ref neckLength, 0f, 1f, "%.2f"))
+        {
+            settings.NeckLengthCompensation = neckLength;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Shortens neck length along its primary axis without shrinking width. 0 disables.");
+
+        var blend = settings.NeckShoulderBlendStrength;
+        if (ImGui.SliderFloat("Neck-to-shoulder blend", ref blend, 0f, 1f, "%.2f"))
+        {
+            settings.NeckShoulderBlendStrength = blend;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Blends the length correction into upper spine and shoulder roots to keep transitions smooth.");
+
+        var clavicleSmoothing = settings.ClavicleShoulderSmoothing;
+        if (ImGui.SliderFloat("Clavicle/shoulder bridge smoothing", ref clavicleSmoothing, 0f, 1f, "%.2f"))
+        {
+            settings.ClavicleShoulderSmoothing = clavicleSmoothing;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Adds extra smoothing across clavicles and shoulder roots to avoid abrupt transitions.");
+
+        if (!ImGui.CollapsingHeader("Race-specific neck presets"))
+            return;
+
+        var useRacePresets = settings.UseRaceSpecificNeckCompensation;
+        if (ImGui.Checkbox("Enable race-specific presets", ref useRacePresets))
+        {
+            settings.UseRaceSpecificNeckCompensation = useRacePresets;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("When enabled, races with presets override the neck compensation values.");
+
+        using var disabled = ImRaii.Disabled(!settings.UseRaceSpecificNeckCompensation);
+
+        var raceLabel = GetRaceLabel(_neckPresetRace);
+        if (ImGui.BeginCombo("Preset race", raceLabel))
+        {
+            foreach (var race in Enum.GetValues<Race>())
+            {
+                if (race == Race.Unknown)
+                    continue;
+
+                var selected = race == _neckPresetRace;
+                if (ImGui.Selectable(GetRaceLabel(race), selected))
+                    _neckPresetRace = race;
+
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+
+        var presets = settings.RaceNeckPresets;
+        AdvancedBodyScalingNeckCompensationPreset? preset = null;
+        if (presets != null)
+            presets.TryGetValue(_neckPresetRace, out preset);
+
+        var hasPreset = preset != null;
+        var baseline = new AdvancedBodyScalingNeckCompensationPreset
+        {
+            NeckLengthCompensation = settings.NeckLengthCompensation,
+            NeckShoulderBlendStrength = settings.NeckShoulderBlendStrength,
+            ClavicleShoulderSmoothing = settings.ClavicleShoulderSmoothing
+        };
+
+        var working = hasPreset ? preset! : baseline;
+
+        var raceLength = working.NeckLengthCompensation;
+        if (ImGui.SliderFloat("Race neck length compensation", ref raceLength, 0f, 1f, "%.2f"))
+        {
+            preset = EnsureRacePreset(settings, _neckPresetRace, baseline);
+            preset.NeckLengthCompensation = raceLength;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+
+        var raceBlend = working.NeckShoulderBlendStrength;
+        if (ImGui.SliderFloat("Race neck-to-shoulder blend", ref raceBlend, 0f, 1f, "%.2f"))
+        {
+            preset = EnsureRacePreset(settings, _neckPresetRace, baseline);
+            preset.NeckShoulderBlendStrength = raceBlend;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+
+        var raceClavicle = working.ClavicleShoulderSmoothing;
+        if (ImGui.SliderFloat("Race clavicle/shoulder smoothing", ref raceClavicle, 0f, 1f, "%.2f"))
+        {
+            preset = EnsureRacePreset(settings, _neckPresetRace, baseline);
+            preset.ClavicleShoulderSmoothing = raceClavicle;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+
+        using (var clearDisabled = ImRaii.Disabled(!hasPreset))
+        {
+            if (ImGui.Button("Clear race preset"))
+            {
+                presets?.Remove(_neckPresetRace);
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+        }
+    }
+
+    private static AdvancedBodyScalingNeckCompensationPreset EnsureRacePreset(
+        AdvancedBodyScalingSettings settings,
+        Race race,
+        AdvancedBodyScalingNeckCompensationPreset baseline)
+    {
+        settings.RaceNeckPresets ??= new Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset>();
+
+        if (!settings.RaceNeckPresets.TryGetValue(race, out var preset))
+        {
+            preset = baseline.DeepCopy();
+            settings.RaceNeckPresets[race] = preset;
+        }
+
+        return preset;
+    }
+
+    private static string GetRaceLabel(Race race)
+        => race switch
+        {
+            Race.AuRa => "Au Ra",
+            Race.Miqote => "Miqo'te",
+            _ => race.ToString()
+        };
 
     private void DrawAdvancedBodyScalingResets(AdvancedBodyScalingSettings settings)
     {
