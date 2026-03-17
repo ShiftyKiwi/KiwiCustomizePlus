@@ -296,7 +296,19 @@ public class ProfilePanel
         var overrideColumnWidth = MathF.Max(
             80 * ImGuiHelpers.GlobalScale,
             ImGui.CalcTextSize("Override").X + (ImGui.GetStyle().FramePadding.X * 2));
-        var overrideTableWidth = new Vector2(ImGui.GetContentRegionAvail().X, 0);
+        const int mainOverrideRowCount = 10;
+        const int regionOverrideRowCount = 9;
+
+        float GetOverrideTableHeight(int rowCount)
+        {
+            var style = ImGui.GetStyle();
+            var headerHeight = ImGui.GetTextLineHeight() + (style.CellPadding.Y * 2);
+            var rowHeight = ImGui.GetFrameHeight() + (style.CellPadding.Y * 2);
+            return headerHeight + (rowHeight * rowCount) + style.ScrollbarSize + style.ItemSpacing.Y;
+        }
+
+        Vector2 GetOverrideTableSize(int rowCount)
+            => new(ImGui.GetContentRegionAvail().X, GetOverrideTableHeight(rowCount));
 
         if (!ImGui.CollapsingHeader("Advanced Body Scaling (Profile)"))
             return;
@@ -338,8 +350,8 @@ public class ProfilePanel
         using (var table = ImRaii.Table(
                    "ProfileAdvancedBodyScaling",
                    3,
-                   ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoHostExtendY,
-                   overrideTableWidth))
+                   ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX | ImGuiTableFlags.SizingStretchProp,
+                   GetOverrideTableSize(mainOverrideRowCount)))
         {
             if (!table)
                 return;
@@ -662,8 +674,8 @@ public class ProfilePanel
             using (var regionTable = ImRaii.Table(
                        $"ProfileRegionOverrides_{region}",
                        3,
-                       ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoHostExtendY,
-                       new Vector2(ImGui.GetContentRegionAvail().X, 0)))
+                       ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX | ImGuiTableFlags.SizingStretchProp,
+                       GetOverrideTableSize(regionOverrideRowCount)))
             {
                 if (regionTable)
                 {
