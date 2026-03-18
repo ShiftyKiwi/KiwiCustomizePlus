@@ -27,6 +27,9 @@ public class BoneTransformData // literally not cooking
     public bool PropagateRotation { get; set; }
     public bool PropagateScale { get; set; }
     public BoneLockState LockState { get; set; } = BoneLockState.Unlocked;
+    public bool PinX { get; set; }
+    public bool PinY { get; set; }
+    public bool PinZ { get; set; }
 }
 
 //this is jank but I don't have time to rewrite it
@@ -114,7 +117,10 @@ public static class Base64Helper
                 PropagateTranslation = b.Transform.PropagateTranslation,
                 PropagateRotation = b.Transform.PropagateRotation,
                 PropagateScale = b.Transform.PropagateScale,
-                LockState = b.Transform.LockState
+                LockState = b.Transform.LockState,
+                PinX = b.Transform.PinX,
+                PinY = b.Transform.PinY,
+                PinZ = b.Transform.PinZ
             }).ToList(); // dont let me cook
 
             var json = JsonConvert.SerializeObject(DataList, Formatting.None);

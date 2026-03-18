@@ -34,6 +34,9 @@ public class IPCCharacterProfile
                 PropagateRotation = kvPair.Value.PropagateRotation,
                 PropagateScale = kvPair.Value.PropagateScale,
                 PropagationFalloff = kvPair.Value.PropagationFalloff,
+                PinX = kvPair.Value.PinX,
+                PinY = kvPair.Value.PinY,
+                PinZ = kvPair.Value.PinZ,
             };
 
         return ipcProfile;
@@ -76,6 +79,9 @@ public class IPCCharacterProfile
                     PropagateRotation = kvPair.Value.PropagateRotation,
                     PropagateScale = kvPair.Value.PropagateScale,
                     PropagationFalloff = kvPair.Value.PropagationFalloff,
+                    PinX = kvPair.Value.PinX,
+                    PinY = kvPair.Value.PinY,
+                    PinZ = kvPair.Value.PinZ,
                 });
 
         fullProfile.Templates.Add(template);
@@ -131,6 +137,9 @@ public class IPCBoneTransform
 
     public bool ChildScaleIndependent { get; set; } = false;
     public float PropagationFalloff { get; set; } = Constants.DefaultPropagationFalloff;
+    public bool PinX { get; set; }
+    public bool PinY { get; set; }
+    public bool PinZ { get; set; }
 
     /// <summary>
     /// Clamp all vector values to be within allowed limits.

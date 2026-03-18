@@ -92,6 +92,7 @@ internal static class AdvancedBodyScalingPipeline
         if (sources.Count == 0)
         {
             ApplyNeckCompensation(output, userTransforms, settings);
+            ApplyPinnedScaleSafety(output, userTransforms, debug);
             return output;
         }
 
@@ -205,6 +206,7 @@ internal static class AdvancedBodyScalingPipeline
         }
 
         ApplyNeckCompensation(output, userTransforms, settings);
+        ApplyPinnedScaleSafety(output, userTransforms, debug);
 
         return output;
     }
@@ -621,6 +623,34 @@ internal static class AdvancedBodyScalingPipeline
 
     private static bool IsLockedByUser(IReadOnlyDictionary<string, BoneTransform> userTransforms, string bone)
         => userTransforms.TryGetValue(bone, out var transform) && transform.LockState != BoneLockState.Unlocked;
+
+    private static void ApplyPinnedScaleSafety(
+        Dictionary<string, BoneTransform> output,
+        IReadOnlyDictionary<string, BoneTransform> userTransforms,
+        AdvancedBodyScalingDebugReport? debug)
+    {
+        foreach (var (bone, sourceTransform) in userTransforms)
+        {
+            if (!sourceTransform.HasPinnedScaleAxes())
+                continue;
+
+            if (!output.TryGetValue(bone, out var resultTransform))
+            {
+                output[bone] = sourceTransform.DeepCopy();
+
+                if (debug != null)
+                    debug.FinalScales[bone] = GetUniformScale(sourceTransform.Scaling);
+
+                continue;
+            }
+
+            resultTransform.Scaling = sourceTransform.ApplyScalePins(resultTransform.Scaling);
+            output[bone] = resultTransform;
+
+            if (debug != null)
+                debug.FinalScales[bone] = GetUniformScale(resultTransform.Scaling);
+        }
+    }
 
     private static void ApplyPoseAwareValidation(
         Dictionary<string, float> scales,

@@ -73,6 +73,9 @@ internal static class ProfileTransformResolver
         private float _falloffSum;
         private float _falloffWeight;
         private BoneLockState _lockState = BoneLockState.Unlocked;
+        private bool _pinX;
+        private bool _pinY;
+        private bool _pinZ;
 
         public void Add(BoneTransform transform, float weight)
         {
@@ -108,6 +111,9 @@ internal static class ProfileTransformResolver
             _propagateTranslation |= transform.PropagateTranslation;
             _propagateRotation |= transform.PropagateRotation;
             _propagateScale |= transform.PropagateScale;
+            _pinX |= transform.PinX;
+            _pinY |= transform.PinY;
+            _pinZ |= transform.PinZ;
 
             if (transform.LockState == BoneLockState.Locked)
                 _lockState = BoneLockState.Locked;
@@ -156,6 +162,9 @@ internal static class ProfileTransformResolver
                     ? _falloffSum / _falloffWeight
                     : Constants.DefaultPropagationFalloff,
                 LockState = _lockState,
+                PinX = _pinX,
+                PinY = _pinY,
+                PinZ = _pinZ,
             };
         }
     }

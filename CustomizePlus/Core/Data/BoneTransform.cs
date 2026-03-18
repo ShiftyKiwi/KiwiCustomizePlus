@@ -86,6 +86,9 @@ public class BoneTransform
     public bool PropagateScale = false;
     public bool ChildScalingIndependent = false;
     public BoneLockState LockState { get; set; } = BoneLockState.Unlocked;
+    public bool PinX { get; set; }
+    public bool PinY { get; set; }
+    public bool PinZ { get; set; }
     private float _propagationFalloff = Constants.DefaultPropagationFalloff;
     [NonSerialized]
     private Quaternion? _runtimeRotationQuaternion;
@@ -99,6 +102,9 @@ public class BoneTransform
     public bool ShouldSerializeChildScaling() => ChildScalingIndependent;
     public bool ShouldSerializePropagationFalloff() => MathF.Abs(PropagationFalloff - Constants.DefaultPropagationFalloff) > 0.0001f;
     public bool ShouldSerializeLockState() => LockState != BoneLockState.Unlocked;
+    public bool ShouldSerializePinX() => PinX;
+    public bool ShouldSerializePinY() => PinY;
+    public bool ShouldSerializePinZ() => PinZ;
 
     [OnDeserialized]
     internal void OnDeserialized(StreamingContext context)
@@ -133,7 +139,22 @@ public class BoneTransform
                || HasEffectiveRotation()
                || !Scaling.IsApproximately(Vector3.One, 0.00001f)
                || (ChildScalingIndependent && !ChildScaling.IsApproximately(Vector3.One, 0.00001f))
+               || HasPinnedScaleAxes()
                || propagation;
+    }
+
+    public bool HasPinnedScaleAxes()
+        => PinX || PinY || PinZ;
+
+    public Vector3 ApplyScalePins(Vector3 automatedScale)
+    {
+        if (!HasPinnedScaleAxes())
+            return automatedScale;
+
+        return new Vector3(
+            PinX ? Scaling.X : automatedScale.X,
+            PinY ? Scaling.Y : automatedScale.Y,
+            PinZ ? Scaling.Z : automatedScale.Z);
     }
 
     public bool HasEffectiveRotation()
@@ -156,6 +177,9 @@ public class BoneTransform
             ChildScalingIndependent = ChildScalingIndependent,
             PropagationFalloff = PropagationFalloff,
             LockState = LockState,
+            PinX = PinX,
+            PinY = PinY,
+            PinZ = PinZ,
         };
     }
 
@@ -200,6 +224,9 @@ public class BoneTransform
         ChildScalingIndependent = newValues.ChildScalingIndependent;
         PropagationFalloff = newValues.PropagationFalloff;
         LockState = newValues.LockState;
+        PinX = newValues.PinX;
+        PinY = newValues.PinY;
+        PinZ = newValues.PinZ;
         _runtimeRotationQuaternion = newValues._runtimeRotationQuaternion;
     }
 
@@ -221,6 +248,9 @@ public class BoneTransform
             ChildScalingIndependent = ChildScalingIndependent,
             PropagationFalloff = PropagationFalloff,
             LockState = LockState,
+            PinX = PinX,
+            PinY = PinY,
+            PinZ = PinZ,
         };
     }
 
@@ -242,6 +272,9 @@ public class BoneTransform
             ChildScalingIndependent = ChildScalingIndependent,
             PropagationFalloff = PropagationFalloff,
             LockState = LockState,
+            PinX = PinX,
+            PinY = PinY,
+            PinZ = PinZ,
         };
     }
 
@@ -403,6 +436,9 @@ public class BoneTransform
         PropagateRotation = target.PropagateRotation;
         PropagateScale = target.PropagateScale;
         LockState = target.LockState;
+        PinX = target.PinX;
+        PinY = target.PinY;
+        PinZ = target.PinZ;
 
         var currentRotation = GetEffectiveRotationQuaternion();
         var targetRotation = target.GetEffectiveRotationQuaternion();

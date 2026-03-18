@@ -58,6 +58,9 @@ public sealed class Template : ISavable
                 PropagateTranslation = ipcBone.PropagateTranslation,
                 PropagateRotation = ipcBone.PropagateRotation,
                 PropagateScale = ipcBone.PropagateScale,
+                PinX = ipcBone.PinX,
+                PinY = ipcBone.PinY,
+                PinZ = ipcBone.PinZ,
             };
         }
     }

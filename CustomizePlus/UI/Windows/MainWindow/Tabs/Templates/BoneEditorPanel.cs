@@ -305,7 +305,8 @@ public class BoneEditorPanel
                 var col3Label = _editingAttribute == BoneAttribute.Rotation ? "Yaw" : "Z";
                 var col4Label = _editingAttribute == BoneAttribute.Scale ? "All" : "N/A";
 
-                ImGui.TableSetupColumn("Bones", ImGuiTableColumnFlags.NoReorder | ImGuiTableColumnFlags.WidthFixed, 7 * CtrlHelper.IconButtonWidth);
+                var controlColumnWidth = (_editingAttribute == BoneAttribute.Scale ? 10.5f : 7f) * CtrlHelper.IconButtonWidth;
+                ImGui.TableSetupColumn("Bones", ImGuiTableColumnFlags.NoReorder | ImGuiTableColumnFlags.WidthFixed, controlColumnWidth);
 
                 ImGui.TableSetupColumn($"{col1Label}", ImGuiTableColumnFlags.NoReorder | ImGuiTableColumnFlags.WidthStretch);
                 ImGui.TableSetupColumn($"{col2Label}", ImGuiTableColumnFlags.NoReorder | ImGuiTableColumnFlags.WidthStretch);
@@ -400,7 +401,10 @@ public class BoneEditorPanel
                                             PropagateTranslation = boneData.PropagateTranslation,
                                             PropagateRotation = boneData.PropagateRotation,
                                             PropagateScale = boneData.PropagateScale,
-                                            LockState = boneData.LockState
+                                            LockState = boneData.LockState,
+                                            PinX = boneData.PinX,
+                                            PinY = boneData.PinY,
+                                            PinZ = boneData.PinZ
                                         }
                                     );
                                 }
@@ -690,9 +694,9 @@ public class BoneEditorPanel
 
         var tooltip = lockState switch
         {
-            BoneLockState.Locked => "Locked: automatic systems cannot modify this bone.",
-            BoneLockState.Priority => "Priority: influences neighbors but is not modified.",
-            _ => "Unlocked: automatic systems can modify this bone."
+            BoneLockState.Locked => "Locked: automatic systems cannot modify this bone.\r\nPins are redundant while the whole row is locked.",
+            BoneLockState.Priority => "Priority: influences neighbors but is not modified.\r\nPins are redundant while the whole row is protected.",
+            _ => "Unlocked: automatic systems can modify this bone.\r\nUse Pin X/Y/Z to protect only selected scale axes."
         };
         CtrlHelper.AddHoverText(tooltip);
 
@@ -705,6 +709,28 @@ public class BoneEditorPanel
                 _ => BoneLockState.Unlocked
             };
         }
+
+        return output;
+    }
+
+    private bool PinAxisButton(EditRowParams bone, char axis, ref bool pinned, bool disableBecauseLocked)
+    {
+        if (pinned)
+            ImGui.PushStyleColor(ImGuiCol.Text, Constants.Colors.Info);
+
+        using var disabled = ImRaii.Disabled(disableBecauseLocked);
+        var output = ImGui.Button($"{axis}##Pin{axis}{bone.BoneCodeName}", new Vector2(CtrlHelper.IconButtonWidth * 0.8f, 0f));
+
+        if (pinned)
+            ImGui.PopStyleColor();
+
+        var tooltip = disableBecauseLocked
+            ? $"Pin {axis}: prevents automation from changing the {axis} scale axis on this bone.\r\nThe whole-row lock already blocks all automation here."
+            : $"Pin {axis}: prevents automation from changing the {axis} scale axis on this bone.\r\nManual edits are still allowed.\r\nLock protects the whole row; pins protect only selected axes.";
+        CtrlHelper.AddHoverText(tooltip);
+
+        if (output)
+            pinned = !pinned;
 
         return output;
     }
@@ -771,6 +797,9 @@ public class BoneEditorPanel
             _ => transform.PropagateScale
         };
         var lockState = transform.LockState;
+        var pinX = transform.PinX;
+        var pinY = transform.PinY;
+        var pinZ = transform.PinZ;
 
         bool valueChanged = false;
 
@@ -805,6 +834,35 @@ public class BoneEditorPanel
 
             ImGui.SameLine();
             isFavorite = FavoriteButton(bone);
+
+            if (_editingAttribute == BoneAttribute.Scale)
+            {
+                var pinsDisabled = lockState != BoneLockState.Unlocked;
+                bool pinsChanged = false;
+
+                ImGui.SameLine();
+                ImGui.Dummy(new Vector2(CtrlHelper.IconButtonWidth * 0.25f, 0f));
+                ImGui.SameLine();
+                if (PinAxisButton(bone, 'X', ref pinX, pinsDisabled))
+                    pinsChanged = true;
+
+                ImGui.SameLine();
+                if (PinAxisButton(bone, 'Y', ref pinY, pinsDisabled))
+                    pinsChanged = true;
+
+                ImGui.SameLine();
+                if (PinAxisButton(bone, 'Z', ref pinZ, pinsDisabled))
+                    pinsChanged = true;
+
+                if (pinsChanged)
+                {
+                    SaveStateForUndo(CaptureCurrentState());
+                    transform.PinX = pinX;
+                    transform.PinY = pinY;
+                    transform.PinZ = pinZ;
+                    valueChanged = true;
+                }
+            }
 
             // adjusted logic, should only snapshot if there is a change in the value.
             // change da X

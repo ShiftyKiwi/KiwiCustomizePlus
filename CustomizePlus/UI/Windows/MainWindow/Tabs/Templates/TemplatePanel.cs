@@ -397,7 +397,7 @@ public class TemplatePanel : IDisposable
                 ? new BoneTransform(existing)
                 : new BoneTransform();
 
-            transform.Scaling = kvp.Value.Scaling;
+            transform.Scaling = transform.ApplyScalePins(kvp.Value.Scaling);
             _manager.ModifyBoneTransform(template, kvp.Key, transform);
         }
 
@@ -487,7 +487,7 @@ public class TemplatePanel : IDisposable
                 ? new BoneTransform(existing)
                 : new BoneTransform();
 
-            transform.Scaling = kvp.Value.Scaling;
+            transform.Scaling = transform.ApplyScalePins(kvp.Value.Scaling);
             _manager.ModifyBoneTransform(template, kvp.Key, transform);
         }
 
