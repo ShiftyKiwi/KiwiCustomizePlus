@@ -79,6 +79,8 @@ public class PluginConfiguration : IPluginConfiguration, ISavable
         public float ProfileSelectorMaximumScale { get; set; } = 0.5f;
 
         public List<string> ViewedMessageWindows { get; set; } = new();
+
+        public bool FollowDetectedNeckPresetRace { get; set; } = false;
     }
 
     public UISettingsEntries UISettings { get; set; } = new();

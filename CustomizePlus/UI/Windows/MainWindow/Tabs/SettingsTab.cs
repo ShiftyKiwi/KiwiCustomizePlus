@@ -80,6 +80,7 @@ public class SettingsTab
         _supportLogBuilderService = supportLogBuilderService;
         _pcpService = pcpService;
         _gameObjectService = gameObjectService;
+        _followDetectedNeckPresetRace = configuration.UISettings.FollowDetectedNeckPresetRace;
     }
 
     public void Draw()
@@ -630,6 +631,9 @@ public class SettingsTab
         if (ImGui.Checkbox("Follow detected actor race", ref followDetectedRace))
         {
             _followDetectedNeckPresetRace = followDetectedRace;
+            _configuration.UISettings.FollowDetectedNeckPresetRace = _followDetectedNeckPresetRace;
+            _configuration.Save();
+
             if (_followDetectedNeckPresetRace && TrySetPresetEditorRace(detectedRace) && settings.UseRaceSpecificNeckCompensation)
                 _armatureManager.RebindAllArmatures();
         }
