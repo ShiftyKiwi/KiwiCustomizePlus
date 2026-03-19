@@ -272,18 +272,32 @@ public sealed class AdvancedBodyScalingNeckCompensationPreset
             ClavicleShoulderSmoothing = ClavicleShoulderSmoothing
         };
 
-    public static Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset> CreateDefaults()
-        => new()
+    public static AdvancedBodyScalingNeckCompensationPreset CreateDefault(Race race)
+        => race switch
         {
-            [Race.Elezen] = LongNeckStrong.DeepCopy(),
-            [Race.Viera] = ModerateLongNeck.DeepCopy(),
-            [Race.Miqote] = LightLongNeck.DeepCopy(),
-            [Race.Hyur] = Neutral.DeepCopy(),
-            [Race.AuRa] = Neutral.DeepCopy(),
-            [Race.Roegadyn] = Compact.DeepCopy(),
-            [Race.Hrothgar] = Compact.DeepCopy(),
-            [Race.Lalafell] = Compact.DeepCopy()
+            Race.Elezen => LongNeckStrong.DeepCopy(),
+            Race.Viera => ModerateLongNeck.DeepCopy(),
+            Race.Miqote => LightLongNeck.DeepCopy(),
+            Race.Hyur => Neutral.DeepCopy(),
+            Race.AuRa => Neutral.DeepCopy(),
+            Race.Roegadyn => Compact.DeepCopy(),
+            Race.Hrothgar => Compact.DeepCopy(),
+            Race.Lalafell => Compact.DeepCopy(),
+            _ => new AdvancedBodyScalingNeckCompensationPreset()
         };
+
+    public static Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset> CreateDefaults()
+        => new[]
+        {
+            Race.Elezen,
+            Race.Viera,
+            Race.Miqote,
+            Race.Hyur,
+            Race.AuRa,
+            Race.Roegadyn,
+            Race.Hrothgar,
+            Race.Lalafell
+        }.ToDictionary(race => race, CreateDefault);
 }
 
 [Serializable]

@@ -680,6 +680,35 @@ public class SettingsTab
 
         var working = hasPreset ? preset! : baseline;
 
+        if (ImGui.Button("Restore preset defaults"))
+        {
+            settings.RaceNeckPresets ??= new Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset>();
+            preset = AdvancedBodyScalingNeckCompensationPreset.CreateDefault(_neckPresetRace);
+            settings.RaceNeckPresets[_neckPresetRace] = preset;
+            hasPreset = true;
+            working = preset;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText(
+            "Restore preset defaults = restore the shipped/default preset values for the currently selected race, regardless of your current global settings.");
+
+        ImGui.SameLine();
+        using (var clearDisabled = ImRaii.Disabled(!hasPreset))
+        {
+            if (ImGui.Button("Clear race preset"))
+            {
+                presets?.Remove(_neckPresetRace);
+                hasPreset = false;
+                preset = null;
+                working = baseline;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+        }
+        CtrlHelper.AddHoverText(
+            "Clear race preset = remove the explicit preset entry for this race and fall back to the current global neck values in the editor/runtime.");
+
         var raceLength = working.NeckLengthCompensation;
         if (ImGui.SliderFloat("Race neck length compensation", ref raceLength, 0f, 1f, "%.2f"))
         {
@@ -707,15 +736,6 @@ public class SettingsTab
             _armatureManager.RebindAllArmatures();
         }
 
-        using (var clearDisabled = ImRaii.Disabled(!hasPreset))
-        {
-            if (ImGui.Button("Clear race preset"))
-            {
-                presets?.Remove(_neckPresetRace);
-                _configuration.Save();
-                _armatureManager.RebindAllArmatures();
-            }
-        }
     }
 
     private static AdvancedBodyScalingNeckCompensationPreset EnsureRacePreset(
