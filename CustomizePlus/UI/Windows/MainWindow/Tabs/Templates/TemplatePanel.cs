@@ -41,6 +41,8 @@ public class TemplatePanel : IDisposable
     private bool _showFixPreview;
     private Guid _lastAnalyzerFixTemplateId = Guid.Empty;
     private Dictionary<string, BoneTransform?>? _lastAnalyzerFixSnapshot;
+    private Guid _lastAppliedAdvancedPreviewTemplateId = Guid.Empty;
+    private Dictionary<string, BoneTransform?>? _lastAppliedAdvancedPreviewSnapshot;
     private IReadOnlyDictionary<string, BoneTransform>? _advancedPreview;
     private AdvancedBodyScalingDebugReport? _advancedDebug;
     private bool _showAdvancedPreview;
@@ -317,6 +319,14 @@ public class TemplatePanel : IDisposable
                 ApplyAdvancedScalingPreview(_selector.Selected!);
         }
 
+        ImGui.SameLine();
+        var canRevertAppliedPreview = CanRevertAppliedAdvancedPreview(_selector.Selected!);
+        using (ImRaii.Disabled(!canRevertAppliedPreview))
+        {
+            if (ImGui.Button("Revert Applied Preview"))
+                RevertAppliedAdvancedScalingPreview(_selector.Selected!);
+        }
+
         if (_advancedPreview == null)
             return;
 
@@ -391,6 +401,14 @@ public class TemplatePanel : IDisposable
         if (_advancedPreview == null)
             return;
 
+        _lastAppliedAdvancedPreviewTemplateId = template.UniqueId;
+        _lastAppliedAdvancedPreviewSnapshot = _advancedPreview.ToDictionary(
+            kvp => kvp.Key,
+            kvp => template.Bones.TryGetValue(kvp.Key, out var existing)
+                ? existing.DeepCopy()
+                : null,
+            StringComparer.Ordinal);
+
         foreach (var kvp in _advancedPreview)
         {
             var transform = template.Bones.TryGetValue(kvp.Key, out var existing)
@@ -412,6 +430,29 @@ public class TemplatePanel : IDisposable
         _advancedDebug = null;
         _showAdvancedPreview = false;
         _showAdvancedDebug = false;
+    }
+
+    private bool CanRevertAppliedAdvancedPreview(Template template)
+        => _lastAppliedAdvancedPreviewSnapshot != null
+            && _lastAppliedAdvancedPreviewTemplateId == template.UniqueId
+            && !_boneEditor.IsEditorActive
+            && !template.IsWriteProtected;
+
+    private void RevertAppliedAdvancedScalingPreview(Template template)
+    {
+        if (_lastAppliedAdvancedPreviewSnapshot == null || _lastAppliedAdvancedPreviewTemplateId != template.UniqueId)
+            return;
+
+        foreach (var kvp in _lastAppliedAdvancedPreviewSnapshot)
+        {
+            var transform = kvp.Value?.DeepCopy() ?? new BoneTransform();
+            _manager.ModifyBoneTransform(template, kvp.Key, transform);
+        }
+
+        _manager.QueueSave(template);
+        _lastAppliedAdvancedPreviewSnapshot = null;
+        _lastAppliedAdvancedPreviewTemplateId = Guid.Empty;
+        _messageService.NotificationMessage("Reverted the last applied advanced scaling preview.", NotificationType.Success, false);
     }
 
     private static void DrawAdvancedScalingDebug(AdvancedBodyScalingDebugReport debug)
