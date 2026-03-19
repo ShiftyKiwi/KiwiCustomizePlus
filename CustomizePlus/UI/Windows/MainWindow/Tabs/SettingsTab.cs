@@ -684,6 +684,33 @@ public class SettingsTab
 
         var working = hasPreset ? preset! : baseline;
 
+        var raceLength = working.NeckLengthCompensation;
+        if (ImGui.SliderFloat("Race neck length compensation", ref raceLength, 0f, 1f, "%.2f"))
+        {
+            preset = EnsureRacePreset(settings, _neckPresetRace, baseline);
+            preset.NeckLengthCompensation = raceLength;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+
+        var raceBlend = working.NeckShoulderBlendStrength;
+        if (ImGui.SliderFloat("Race neck-to-shoulder blend", ref raceBlend, 0f, 1f, "%.2f"))
+        {
+            preset = EnsureRacePreset(settings, _neckPresetRace, baseline);
+            preset.NeckShoulderBlendStrength = raceBlend;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+
+        var raceClavicle = working.ClavicleShoulderSmoothing;
+        if (ImGui.SliderFloat("Race clavicle/shoulder smoothing", ref raceClavicle, 0f, 1f, "%.2f"))
+        {
+            preset = EnsureRacePreset(settings, _neckPresetRace, baseline);
+            preset.ClavicleShoulderSmoothing = raceClavicle;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+
         if (ImGui.Button("Restore preset defaults"))
         {
             settings.RaceNeckPresets ??= new Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset>();
@@ -712,33 +739,6 @@ public class SettingsTab
         }
         CtrlHelper.AddHoverText(
             "Clear race preset = remove the explicit preset entry for this race and fall back to the current global neck values in the editor/runtime.");
-
-        var raceLength = working.NeckLengthCompensation;
-        if (ImGui.SliderFloat("Race neck length compensation", ref raceLength, 0f, 1f, "%.2f"))
-        {
-            preset = EnsureRacePreset(settings, _neckPresetRace, baseline);
-            preset.NeckLengthCompensation = raceLength;
-            _configuration.Save();
-            _armatureManager.RebindAllArmatures();
-        }
-
-        var raceBlend = working.NeckShoulderBlendStrength;
-        if (ImGui.SliderFloat("Race neck-to-shoulder blend", ref raceBlend, 0f, 1f, "%.2f"))
-        {
-            preset = EnsureRacePreset(settings, _neckPresetRace, baseline);
-            preset.NeckShoulderBlendStrength = raceBlend;
-            _configuration.Save();
-            _armatureManager.RebindAllArmatures();
-        }
-
-        var raceClavicle = working.ClavicleShoulderSmoothing;
-        if (ImGui.SliderFloat("Race clavicle/shoulder smoothing", ref raceClavicle, 0f, 1f, "%.2f"))
-        {
-            preset = EnsureRacePreset(settings, _neckPresetRace, baseline);
-            preset.ClavicleShoulderSmoothing = raceClavicle;
-            _configuration.Save();
-            _armatureManager.RebindAllArmatures();
-        }
 
     }
 
