@@ -378,6 +378,8 @@ public unsafe sealed class ArmatureManager : IDisposable
 
         if (cBase != null)
         {
+            armature.EvaluatePoseCorrectives(cBase);
+
             foreach (var mb in armature.ActiveBones)
             {
                 if (mb == armature.MainRootBone)

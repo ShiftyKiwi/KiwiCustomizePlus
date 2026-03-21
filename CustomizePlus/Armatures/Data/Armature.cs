@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using Penumbra.GameData.Actors;
 using CustomizePlus.Core.Data;
@@ -65,6 +66,12 @@ public unsafe class Armature
     /// Resolved target transforms for this armature after weighted profile evaluation.
     /// </summary>
     public Dictionary<string, BoneTransform> ResolvedBoneTransforms { get; init; }
+
+    public AdvancedBodyScalingSettings? ActiveAdvancedBodyScalingSettings { get; private set; }
+
+    internal AdvancedBodyScalingPoseCorrectiveDebugState PoseCorrectiveDebugState { get; } = new();
+
+    private readonly Dictionary<string, Vector3> _poseCorrectiveScaleMultipliers = new(StringComparer.Ordinal);
 
     private List<ModelBone> _activeBones;
     public IReadOnlyList<ModelBone> ActiveBones => _activeBones;
@@ -323,6 +330,10 @@ public unsafe class Armature
 
     public void RebuildBoneTemplateBinding(bool enableSoftScaleLimits = true, bool enableAutomaticChildCompensation = true, AdvancedBodyScalingSettings? advancedBodyScaling = null)
     {
+        ActiveAdvancedBodyScalingSettings = advancedBodyScaling?.DeepCopy();
+        if (ActiveAdvancedBodyScalingSettings == null)
+            ClearPoseCorrectives();
+
         var resolution = ProfileTransformResolver.Resolve(Profile);
         var effectiveTransforms = resolution.EffectiveTransforms;
 
@@ -364,6 +375,33 @@ public unsafe class Armature
             .ToList();
 
         Plugin.Logger.Debug($"Rebuilt template binding for armature {_localId}");
+    }
+
+    public unsafe void EvaluatePoseCorrectives(CharacterBase* cBase)
+    {
+        if (cBase == null || ActiveAdvancedBodyScalingSettings == null)
+        {
+            ClearPoseCorrectives();
+            return;
+        }
+
+        AdvancedBodyScalingPoseCorrectiveSystem.Evaluate(this, cBase, ActiveAdvancedBodyScalingSettings, _poseCorrectiveScaleMultipliers, PoseCorrectiveDebugState);
+    }
+
+    public bool TryGetPoseCorrectiveScale(string boneName, out Vector3 correctiveScale)
+    {
+        if (_poseCorrectiveScaleMultipliers.TryGetValue(boneName, out correctiveScale))
+            return true;
+
+        correctiveScale = Vector3.One;
+        return false;
+    }
+
+    public void ClearPoseCorrectives()
+    {
+        _poseCorrectiveScaleMultipliers.Clear();
+        var path = AdvancedBodyScalingPoseCorrectiveSystem.DetectSupportedPath();
+        PoseCorrectiveDebugState.Reset(path, AdvancedBodyScalingPoseCorrectiveSystem.GetPathDescription(path));
     }
 
     public void UpdateRuntimeTransforms(float deltaSeconds, float transitionSharpness)

@@ -1,6 +1,7 @@
 // Copyright (c) Customize+.
 // Licensed under the MIT license.
 
+using CustomizePlus.Armatures.Data;
 using CustomizePlus.Armatures.Services;
 using CustomizePlus.Configuration.Data;
 using CustomizePlus.Core.Data;
@@ -578,6 +579,9 @@ public class SettingsTab
             DrawNeckCompensationSettings(settings);
 
             ImGui.Spacing();
+            DrawPoseSpaceCorrectives(settings);
+
+            ImGui.Spacing();
             DrawAdvancedBodyScalingResets(settings);
 
             ImGui.Spacing();
@@ -853,6 +857,173 @@ public class SettingsTab
         return race != Race.Unknown;
     }
 
+
+    private void DrawPoseSpaceCorrectives(AdvancedBodyScalingSettings settings)
+    {
+        if (!ImGui.CollapsingHeader("Pose-space correctives"))
+            return;
+
+        var poseCorrectives = settings.PoseCorrectives;
+        var enabled = poseCorrectives.Enabled;
+        if (ImGui.Checkbox("Enable pose-space correctives", ref enabled))
+        {
+            poseCorrectives.Enabled = enabled;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Adds a limited pose-driven corrective layer for neck/shoulder, clavicle/upper chest, and hip/upper thigh using supported bones only. This does not depend on unsupported IVCS2 physics-bone control.");
+
+        using (var disabled = ImRaii.Disabled(!poseCorrectives.Enabled))
+        {
+            var strength = poseCorrectives.Strength;
+            if (ImGui.SliderFloat("Global corrective strength", ref strength, 0f, 1f, "%.2f"))
+            {
+                poseCorrectives.Strength = strength;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Scales the overall strength of pose-space corrective responses. Lower values keep the system lighter and more conservative.");
+
+            using var table = ImRaii.Table("PoseCorrectiveRegions", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp);
+            if (table)
+            {
+                ImGui.TableSetupColumn("Region", ImGuiTableColumnFlags.WidthFixed, 165 * ImGuiHelpers.GlobalScale);
+                ImGui.TableSetupColumn("Enable", ImGuiTableColumnFlags.WidthFixed, 70 * ImGuiHelpers.GlobalScale);
+                ImGui.TableSetupColumn("Strength", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Purpose", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableHeadersRow();
+
+                DrawPoseCorrectiveRegionRow(settings, AdvancedBodyScalingCorrectiveRegion.NeckShoulder, "Neck / Shoulder", "Reduces detached-shoulder and long-neck transition issues in stressed poses.");
+                DrawPoseCorrectiveRegionRow(settings, AdvancedBodyScalingCorrectiveRegion.ClavicleUpperChest, "Clavicle / Upper Chest", "Softens harsh clavicle/chest bridge transitions under shoulder spread and torso tension.");
+                DrawPoseCorrectiveRegionRow(settings, AdvancedBodyScalingCorrectiveRegion.HipUpperThigh, "Hip / Upper Thigh", "Reduces abrupt pelvis-to-thigh mass jumps when the upper legs flex or twist.");
+            }
+        }
+
+        ImGui.Spacing();
+        DrawPoseCorrectiveDebugReadout();
+    }
+
+    private void DrawPoseCorrectiveRegionRow(
+        AdvancedBodyScalingSettings settings,
+        AdvancedBodyScalingCorrectiveRegion region,
+        string label,
+        string description)
+    {
+        var regionSettings = settings.PoseCorrectives.GetRegionSettings(region);
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted(label);
+
+        ImGui.TableNextColumn();
+        var enabled = regionSettings.Enabled;
+        if (ImGui.Checkbox($"##PoseCorrectiveEnabled{region}", ref enabled))
+        {
+            regionSettings.Enabled = enabled;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+
+        ImGui.TableNextColumn();
+        var strength = regionSettings.Strength;
+        if (ImGui.SliderFloat($"##PoseCorrectiveStrength{region}", ref strength, 0f, 1f, "%.2f"))
+        {
+            regionSettings.Strength = strength;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+
+        ImGui.TableNextColumn();
+        ImGui.TextWrapped(description);
+    }
+
+    private void DrawPoseCorrectiveDebugReadout()
+    {
+        var path = AdvancedBodyScalingPoseCorrectiveSystem.DetectSupportedPath();
+        var pathDescription = AdvancedBodyScalingPoseCorrectiveSystem.GetPathDescription(path);
+        AdvancedBodyScalingPoseCorrectiveDebugState? debugState = null;
+
+        if (TryGetPoseCorrectiveDebugState(out var liveState) && liveState != null)
+        {
+            debugState = liveState;
+            path = liveState.Path;
+            pathDescription = liveState.PathDescription;
+        }
+
+        ImGui.TextDisabled($"Runtime path: {GetPoseCorrectivePathLabel(path)}");
+        CtrlHelper.AddHoverText(pathDescription);
+
+        if (debugState == null)
+        {
+            ImGui.TextDisabled("No live armature debug data yet. Activity appears while a supported actor is rendered.");
+            return;
+        }
+
+        if (debugState.ActiveRegions.Count == 0)
+        {
+            ImGui.TextDisabled("No corrective region is strongly active in the current pose.");
+            return;
+        }
+
+        ImGui.TextUnformatted("Currently active:");
+        foreach (var region in debugState.ActiveRegions)
+        {
+            ImGui.Bullet();
+            ImGui.SameLine();
+            ImGui.TextWrapped($"{region.Label} ({region.Strength:0.00}) - {region.DriverSummary}. {region.Description}");
+        }
+    }
+
+    private bool TryGetPoseCorrectiveDebugState(out AdvancedBodyScalingPoseCorrectiveDebugState? debugState)
+    {
+        if ((_templateEditorManager.IsEditorActive || _templateEditorManager.IsEditorPaused) &&
+            TryGetArmatureForCharacter(_templateEditorManager.Character, out var previewArmature))
+        {
+            debugState = previewArmature.PoseCorrectiveDebugState;
+            return true;
+        }
+
+        var currentPlayer = _gameObjectService.GetCurrentPlayerActorIdentifier().CreatePermanent();
+        if (TryGetArmatureForCharacter(currentPlayer, out var currentArmature))
+        {
+            debugState = currentArmature.PoseCorrectiveDebugState;
+            return true;
+        }
+
+        debugState = null;
+        return false;
+    }
+
+    private bool TryGetArmatureForCharacter(Penumbra.GameData.Actors.ActorIdentifier character, out Armature armature)
+    {
+        var permanentCharacter = character.CreatePermanent();
+        if (_armatureManager.Armatures.TryGetValue(permanentCharacter, out var foundArmature) && foundArmature != null)
+        {
+            armature = foundArmature;
+            return true;
+        }
+
+        foreach (var (identifier, _) in _gameObjectService.FindActorsByIdentifierIgnoringOwnership(character))
+        {
+            if (_armatureManager.Armatures.TryGetValue(identifier.CreatePermanent(), out foundArmature) && foundArmature != null)
+            {
+                armature = foundArmature;
+                return true;
+            }
+        }
+
+        armature = null!;
+        return false;
+    }
+
+    private static string GetPoseCorrectivePathLabel(AdvancedBodyScalingCorrectivePath path)
+        => path switch
+        {
+            AdvancedBodyScalingCorrectivePath.SupportedMorph => "Supported corrective morph path",
+            _ => "Limited corrective-transform fallback",
+        };
+
     private void DrawAdvancedBodyScalingResets(AdvancedBodyScalingSettings settings)
     {
         var defaults = new AdvancedBodyScalingSettings();
@@ -1051,6 +1222,13 @@ public class SettingsTab
             "Long-neck, detached-shoulder, and harsh neck-to-chest bridge shapes.",
             settings.NeckLengthCompensation > 0f || settings.UseRaceSpecificNeckCompensation ? "Active" : "Off",
             "Race presets can override these neck settings for supported races, but they stay on the normal supported scale path.");
+
+        DrawExplainabilityRow(
+            "Pose-space correctives",
+            "Neck/shoulder, clavicle/upper chest, and hip/upper thigh under stressful poses.",
+            "Detached transitions and harsh region bridges that become more visible when the body is bent, raised, or twisted.",
+            settings.PoseCorrectives.Enabled ? "Active" : "Off",
+            "This is a limited supported-bone corrective layer. It uses standard pose data and falls back safely when no supported corrective morph path exists.");
 
         DrawExplainabilityRow(
             "Animation-safe mode",

@@ -355,16 +355,27 @@ public unsafe class ModelBone
         if (cBase == null || !appliedTransform.IsEdited())
             return;
 
-        var doPropagate = appliedTransform.PropagateTranslation ||
-                          appliedTransform.PropagateRotation ||
-                          appliedTransform.PropagateScale;
+        var effectiveTransform = appliedTransform;
+        if (appliedTransform.LockState == BoneLockState.Unlocked &&
+            MasterArmature.TryGetPoseCorrectiveScale(BoneName, out var correctiveScale) &&
+            !correctiveScale.IsApproximately(Vector3.One, 0.0005f))
+        {
+            effectiveTransform = new BoneTransform(appliedTransform)
+            {
+                Scaling = appliedTransform.ApplyScalePins(appliedTransform.Scaling * correctiveScale),
+            };
+        }
+
+        var doPropagate = effectiveTransform.PropagateTranslation ||
+                          effectiveTransform.PropagateRotation ||
+                          effectiveTransform.PropagateScale;
 
         if (!doPropagate)
         {
             var gameTransform = GetGameTransform(cBase, PoseType.Model);
             if (!gameTransform.Equals(Constants.NullTransform))
             {
-                var modify_Transform = appliedTransform.ModifyExistingTransform(gameTransform);
+                var modify_Transform = effectiveTransform.ModifyExistingTransform(gameTransform);
                 if (!modify_Transform.Equals(Constants.NullTransform))
                 {
                     SetGameTransform(cBase, modify_Transform, PoseType.Model);
@@ -382,7 +393,7 @@ public unsafe class ModelBone
         var initialRot = gameTransformAccess->Rotation.ToQuaternion();
         var initialScale = gameTransformAccess->Scale.ToVector3();
 
-        var modTransform = appliedTransform.ModifyExistingTransform(*gameTransformAccess);
+        var modTransform = effectiveTransform.ModifyExistingTransform(*gameTransformAccess);
         SetGameTransform(cBase, modTransform, PoseType.Model);
 
         var pose = cBase->Skeleton->PartialSkeletons[PartialSkeletonIndex].GetHavokPose(Constants.TruePoseIndex);
@@ -395,22 +406,22 @@ public unsafe class ModelBone
 
         var childScaleToUse = access2->Scale.ToVector3();
 
-        if (appliedTransform.ChildScalingIndependent)
+        if (effectiveTransform.ChildScalingIndependent)
         {
             childScaleToUse = new Vector3(
-                initialScale.X * appliedTransform.ChildScaling.X,
-                initialScale.Y * appliedTransform.ChildScaling.Y,
-                initialScale.Z * appliedTransform.ChildScaling.Z
+                initialScale.X * effectiveTransform.ChildScaling.X,
+                initialScale.Y * effectiveTransform.ChildScaling.Y,
+                initialScale.Z * effectiveTransform.ChildScaling.Z
             );
         }
 
-        var shouldPropagateScale = appliedTransform.PropagateScale &&
-            (!appliedTransform.Scaling.Equals(Vector3.One) ||
-             (appliedTransform.ChildScalingIndependent && !appliedTransform.ChildScaling.Equals(Vector3.One)));
+        var shouldPropagateScale = effectiveTransform.PropagateScale &&
+            (!effectiveTransform.Scaling.Equals(Vector3.One) ||
+             (effectiveTransform.ChildScalingIndependent && !effectiveTransform.ChildScaling.Equals(Vector3.One)));
 
-        PropagateChildren(cBase, access2, appliedTransform, initialPos, initialRot, initialScale,
-            appliedTransform.PropagateTranslation && !appliedTransform.Translation.Equals(Vector3.Zero),
-            appliedTransform.PropagateRotation && appliedTransform.HasEffectiveRotation(),
+        PropagateChildren(cBase, access2, effectiveTransform, initialPos, initialRot, initialScale,
+            effectiveTransform.PropagateTranslation && !effectiveTransform.Translation.Equals(Vector3.Zero),
+            effectiveTransform.PropagateRotation && effectiveTransform.HasEffectiveRotation(),
             shouldPropagateScale,
             childScaleToUse);
     }

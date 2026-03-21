@@ -364,6 +364,8 @@ public sealed class AdvancedBodyScalingSettings
     public Dictionary<AdvancedBodyRegion, AdvancedBodyScalingRegionProfile> RegionProfiles { get; set; }
         = AdvancedBodyScalingRegionProfile.CreateDefaults();
 
+    public AdvancedBodyScalingPoseCorrectiveSettings PoseCorrectives { get; set; } = new();
+
     public AdvancedBodyScalingRegionProfile GetRegionProfile(AdvancedBodyRegion region)
     {
         if (!RegionProfiles.TryGetValue(region, out var profile))
@@ -421,6 +423,8 @@ public sealed class AdvancedBodyScalingSettings
 
         foreach (var (region, profile) in RegionProfiles)
             ApplyAnimationSafeRegionBias(region, profile);
+
+        PoseCorrectives.Strength = MathF.Min(PoseCorrectives.Strength, 0.85f);
     }
 
     private static void ApplyAnimationSafeRegionBias(AdvancedBodyRegion region, AdvancedBodyScalingRegionProfile profile)
@@ -491,6 +495,7 @@ public sealed class AdvancedBodyScalingSettings
         UseRaceSpecificNeckCompensation = defaults.UseRaceSpecificNeckCompensation;
         RaceNeckPresets = AdvancedBodyScalingNeckCompensationPreset.CreateDefaults();
         RegionProfiles = AdvancedBodyScalingRegionProfile.CreateDefaults();
+        PoseCorrectives = new AdvancedBodyScalingPoseCorrectiveSettings();
     }
 
     public AdvancedBodyScalingSettings DeepCopy()
@@ -511,6 +516,7 @@ public sealed class AdvancedBodyScalingSettings
             RaceNeckPresets = RaceNeckPresets == null
                 ? new Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset>()
                 : RaceNeckPresets.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
-            RegionProfiles = RegionProfiles.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy())
+            RegionProfiles = RegionProfiles.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
+            PoseCorrectives = PoseCorrectives.DeepCopy()
         };
 }
