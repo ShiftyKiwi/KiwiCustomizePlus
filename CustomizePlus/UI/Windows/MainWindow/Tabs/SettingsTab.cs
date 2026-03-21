@@ -574,7 +574,7 @@ public class SettingsTab
                 _configuration.Save();
                 _armatureManager.RebindAllArmatures();
             }
-            CtrlHelper.AddHoverText("Applies a conservative safety preset that reins in propagation, keeps extremities calmer, and strengthens smoothing/guardrails near joints without removing manual control.");
+            CtrlHelper.AddHoverText("Biases advanced scaling and pose-space correctives toward safer, more motion-friendly behavior. It increases smoothing near joints, keeps extremities calmer, and makes corrective behavior more conservative without removing manual control.");
 
             ImGui.Spacing();
             DrawNeckCompensationSettings(settings);
@@ -595,7 +595,8 @@ public class SettingsTab
 
     private void DrawNeckCompensationSettings(AdvancedBodyScalingSettings settings)
     {
-        ImGui.Text("Neck/Shoulder Compensation");
+        ImGui.Text("Global Neck/Shoulder Baseline");
+        ImGui.TextDisabled("These are the default neck/shoulder compensation values used when no race-specific preset overrides them.");
 
         var neckLength = settings.NeckLengthCompensation;
         if (ImGui.SliderFloat("Neck length compensation", ref neckLength, 0f, 1f, "%.2f"))
@@ -634,7 +635,8 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("When enabled, races with presets override the neck compensation values.");
+        CtrlHelper.AddHoverText("When enabled, race presets override the global neck/shoulder baseline for the detected actor race when a preset exists.");
+        ImGui.TextDisabled("Race-specific presets override the global neck/shoulder baseline for the selected or detected race.");
 
         using var disabled = ImRaii.Disabled(!settings.UseRaceSpecificNeckCompensation);
         var detectedRace = GetDetectedPresetEditorRace();
@@ -686,6 +688,9 @@ public class SettingsTab
             }
         }
 
+        ImGui.TextDisabled($"Editor target: {GetNeckPresetEditorTargetLabel(detectedRace)}");
+        ImGui.TextDisabled($"Effective source: {GetEffectiveNeckPresetSourceLabel(settings, detectedRace)}");
+
         var presets = settings.RaceNeckPresets;
         AdvancedBodyScalingNeckCompensationPreset? preset = null;
         if (presets != null)
@@ -709,6 +714,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
+        CtrlHelper.AddHoverText("Overrides the global neck length compensation baseline for this race preset.");
 
         var raceBlend = working.NeckShoulderBlendStrength;
         if (ImGui.SliderFloat("Race neck-to-shoulder blend", ref raceBlend, 0f, 1f, "%.2f"))
@@ -718,6 +724,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
+        CtrlHelper.AddHoverText("Overrides the global neck-to-shoulder blend baseline for this race preset.");
 
         var raceClavicle = working.ClavicleShoulderSmoothing;
         if (ImGui.SliderFloat("Race clavicle/shoulder smoothing", ref raceClavicle, 0f, 1f, "%.2f"))
@@ -727,6 +734,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
+        CtrlHelper.AddHoverText("Overrides the global clavicle/shoulder smoothing baseline for this race preset.");
 
         if (ImGui.Button("Restore preset defaults"))
         {
@@ -739,7 +747,7 @@ public class SettingsTab
             _armatureManager.RebindAllArmatures();
         }
         CtrlHelper.AddHoverText(
-            "Restore preset defaults = restore the shipped/default preset values for the currently selected race, regardless of your current global settings.");
+            "Restore preset defaults = restore this race preset to the plugin's shipped default values. This does not copy the current global baseline.");
 
         ImGui.SameLine();
         using (var clearDisabled = ImRaii.Disabled(!hasPreset))
@@ -755,7 +763,9 @@ public class SettingsTab
             }
         }
         CtrlHelper.AddHoverText(
-            "Clear race preset = remove the explicit preset entry for this race and fall back to the current global neck values in the editor/runtime.");
+            "Clear race preset = remove the custom override entry for this race. If no race preset remains, runtime falls back to the global neck/shoulder baseline for that race.");
+
+        ImGui.TextDisabled("Restore preset defaults writes the shipped race preset. Clear race preset removes the custom race entry and falls back to the global baseline.");
 
     }
 
@@ -785,6 +795,31 @@ public class SettingsTab
 
     private static string GetRaceLabelOrUnknown(Race race)
         => race == Race.Unknown ? "Unknown" : GetRaceLabel(race);
+
+    private string GetNeckPresetEditorTargetLabel(Race detectedRace)
+    {
+        if (_followDetectedNeckPresetRace)
+            return detectedRace == Race.Unknown ? "Follow detected actor race (waiting for actor)" : $"Follow detected actor race ({GetRaceLabel(detectedRace)})";
+
+        return $"Manual preset race ({GetRaceLabel(_neckPresetRace)})";
+    }
+
+    private string GetEffectiveNeckPresetSourceLabel(AdvancedBodyScalingSettings settings, Race detectedRace)
+    {
+        if (!settings.UseRaceSpecificNeckCompensation)
+            return "Global baseline";
+
+        if (detectedRace == Race.Unknown)
+            return "Waiting for detected actor race";
+
+        var hasPreset = settings.RaceNeckPresets != null && settings.RaceNeckPresets.ContainsKey(detectedRace);
+        if (hasPreset)
+            return _followDetectedNeckPresetRace
+                ? $"Detected actor race preset ({GetRaceLabel(detectedRace)})"
+                : $"{GetRaceLabel(detectedRace)} race preset";
+
+        return $"Global baseline ({GetRaceLabel(detectedRace)} has no preset override)";
+    }
 
     private void SyncDetectedPresetRace(AdvancedBodyScalingSettings settings, Race detectedRace)
     {
@@ -865,6 +900,8 @@ public class SettingsTab
             return;
 
         var poseCorrectives = settings.PoseCorrectives;
+        ImGui.TextDisabled("Pose-space correctives add small pose-driven corrections in common problem areas to improve transitions during stressed poses. They are conservative by default and do not replace manual control.");
+
         var enabled = poseCorrectives.Enabled;
         if (ImGui.Checkbox("Enable pose-space correctives", ref enabled))
         {
@@ -872,7 +909,17 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Adds a broader supported-bone pose-space corrective layer for the major problem regions without depending on unsupported IVCS2 physics-bone control.");
+        CtrlHelper.AddHoverText("Turns the pose-space corrective layer on or off. These corrections are small, pose-driven adjustments for common transition problems and do not replace manual control.");
+
+        ImGui.SameLine();
+        if (ImGui.Button("Restore corrective defaults"))
+        {
+            settings.PoseCorrectives = new AdvancedBodyScalingPoseCorrectiveSettings();
+            poseCorrectives = settings.PoseCorrectives;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Restores the shipped pose-space corrective defaults: global enable/strength plus every per-region enable, strength, threshold, deadzone, smoothing, falloff, max clamp, and blend priority value.");
 
         using (var disabled = ImRaii.Disabled(!poseCorrectives.Enabled))
         {
@@ -883,7 +930,7 @@ public class SettingsTab
                 _configuration.Save();
                 _armatureManager.RebindAllArmatures();
             }
-            CtrlHelper.AddHoverText("Scales the overall strength of pose-space correctives across all supported regions.");
+            CtrlHelper.AddHoverText("Scales how strongly pose-space correctives participate overall. Per-region strength is layered on top of this baseline.");
 
             foreach (var region in AdvancedBodyScalingPoseCorrectiveSystem.GetOrderedRegions())
             {
@@ -893,6 +940,17 @@ public class SettingsTab
                     continue;
 
                 var regionSettings = poseCorrectives.GetRegionSettings(region);
+                if (ImGui.SmallButton($"Restore region defaults##PoseCorrectiveRestore{region}"))
+                {
+                    poseCorrectives.Regions[region] = AdvancedBodyScalingCorrectiveRegionSettings.CreateDefault(region);
+                    regionSettings = poseCorrectives.GetRegionSettings(region);
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                }
+                CtrlHelper.AddHoverText($"Restore the shipped defaults for {label}, including enable, strength, threshold, deadzone, smoothing, falloff, max clamp, and blend priority.");
+
+                ImGui.TextDisabled(description);
+
                 var regionEnabled = regionSettings.Enabled;
                 if (ImGui.Checkbox($"Enable##PoseCorrectiveEnabled{region}", ref regionEnabled))
                 {
@@ -900,6 +958,7 @@ public class SettingsTab
                     _configuration.Save();
                     _armatureManager.RebindAllArmatures();
                 }
+                CtrlHelper.AddHoverText("Turns this corrective region on or off without changing the other corrective regions.");
 
                 var regionStrength = regionSettings.Strength;
                 if (ImGui.SliderFloat($"Strength##PoseCorrectiveStrength{region}", ref regionStrength, 0f, 1f, "%.2f"))
@@ -908,6 +967,7 @@ public class SettingsTab
                     _configuration.Save();
                     _armatureManager.RebindAllArmatures();
                 }
+                CtrlHelper.AddHoverText("Controls how strongly this corrective region responds compared with the global corrective strength.");
 
                 if (ImGui.TreeNode($"Advanced tuning##PoseCorrectiveAdvanced{region}"))
                 {
@@ -918,6 +978,7 @@ public class SettingsTab
                         _configuration.Save();
                         _armatureManager.RebindAllArmatures();
                     }
+                    CtrlHelper.AddHoverText("How much pose or continuity stress must be detected before this corrective starts activating.");
 
                     var deadzone = regionSettings.ActivationDeadzone;
                     if (ImGui.SliderFloat($"Activation deadzone##PoseCorrectiveDeadzone{region}", ref deadzone, 0f, 0.25f, "%.2f"))
@@ -926,6 +987,7 @@ public class SettingsTab
                         _configuration.Save();
                         _armatureManager.RebindAllArmatures();
                     }
+                    CtrlHelper.AddHoverText("Ignores tiny fluctuations so the corrective does not flicker on and off from very small pose changes.");
 
                     var smoothing = regionSettings.Smoothing;
                     if (ImGui.SliderFloat($"Smoothing##PoseCorrectiveSmoothing{region}", ref smoothing, 0f, 1f, "%.2f"))
@@ -934,6 +996,7 @@ public class SettingsTab
                         _configuration.Save();
                         _armatureManager.RebindAllArmatures();
                     }
+                    CtrlHelper.AddHoverText("How gradually the corrective ramps in and out instead of changing abruptly.");
 
                     var falloff = regionSettings.Falloff;
                     if (ImGui.SliderFloat($"Bridge falloff##PoseCorrectiveFalloff{region}", ref falloff, 0f, 1f, "%.2f"))
@@ -942,6 +1005,7 @@ public class SettingsTab
                         _configuration.Save();
                         _armatureManager.RebindAllArmatures();
                     }
+                    CtrlHelper.AddHoverText("How broadly the corrective spreads across the transition area instead of concentrating in one spot.");
 
                     var maxCorrection = regionSettings.MaxCorrection;
                     if (ImGui.SliderFloat($"Max correction clamp##PoseCorrectiveMax{region}", ref maxCorrection, 0f, 0.10f, "%.3f"))
@@ -950,6 +1014,7 @@ public class SettingsTab
                         _configuration.Save();
                         _armatureManager.RebindAllArmatures();
                     }
+                    CtrlHelper.AddHoverText("Hard cap on how strong this corrective is allowed to become.");
 
                     var priority = regionSettings.Priority;
                     if (ImGui.SliderFloat($"Blend priority##PoseCorrectivePriority{region}", ref priority, 0.1f, 1.5f, "%.2f"))
@@ -958,13 +1023,9 @@ public class SettingsTab
                         _configuration.Save();
                         _armatureManager.RebindAllArmatures();
                     }
+                    CtrlHelper.AddHoverText("How strongly this corrective participates when multiple corrective regions are active at once.");
 
-                    ImGui.TextWrapped(description);
                     ImGui.TreePop();
-                }
-                else
-                {
-                    ImGui.TextDisabled(description);
                 }
 
                 ImGui.TreePop();
@@ -1076,6 +1137,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
+        CtrlHelper.AddHoverText("Restores only Surface balancing strength. It does not touch pose-space correctives, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset Naturalization"))
@@ -1084,6 +1146,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
+        CtrlHelper.AddHoverText("Restores only Naturalization strength. It does not touch pose-space correctives, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset Pose-Aware"))
@@ -1092,6 +1155,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
+        CtrlHelper.AddHoverText("Restores only Pose-aware validation mode. It does not touch pose-space correctives, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset All Advanced Scaling"))
@@ -1100,6 +1164,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
+        CtrlHelper.AddHoverText("Restores all Advanced Body Scaling settings to shipped defaults, including pose-space correctives, the global neck/shoulder baseline, race-specific presets, animation-safe mode, and region tuning.");
     }
 
     private void DrawAdvancedBodyScalingRegionProfiles(AdvancedBodyScalingSettings settings)
