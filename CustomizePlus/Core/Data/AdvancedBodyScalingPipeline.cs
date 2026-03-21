@@ -66,14 +66,15 @@ internal static class AdvancedBodyScalingPipeline
         foreach (var kvp in userTransforms)
             output[kvp.Key] = kvp.Value.DeepCopy();
 
-        if (!settings.Enabled || settings.Mode == AdvancedBodyScalingMode.Manual)
+        var effectiveSettings = settings.CreateRuntimeResolvedSettings();
+        if (!effectiveSettings.Enabled || effectiveSettings.Mode == AdvancedBodyScalingMode.Manual)
             return output;
 
-        var tuning = GetTuning(settings.Mode);
-        var surfaceStrength = tuning.SurfaceSmoothing * settings.SurfaceBalancingStrength;
-        var massStrength = tuning.MassRedistribution * settings.MassRedistributionStrength;
-        var guardrailStrength = tuning.GuardrailStrength * GetGuardrailMultiplier(settings.GuardrailMode);
-        var poseValidationStrength = tuning.GuardrailStrength * GetPoseValidationMultiplier(settings.PoseValidationMode);
+        var tuning = GetTuning(effectiveSettings.Mode, effectiveSettings.AnimationSafeModeEnabled);
+        var surfaceStrength = tuning.SurfaceSmoothing * effectiveSettings.SurfaceBalancingStrength;
+        var massStrength = tuning.MassRedistribution * effectiveSettings.MassRedistributionStrength;
+        var guardrailStrength = tuning.GuardrailStrength * GetGuardrailMultiplier(effectiveSettings.GuardrailMode);
+        var poseValidationStrength = tuning.GuardrailStrength * GetPoseValidationMultiplier(effectiveSettings.PoseValidationMode);
         var sources = new HashSet<string>(StringComparer.Ordinal);
         var relevantBones = new HashSet<string>(StringComparer.Ordinal);
 
@@ -91,7 +92,7 @@ internal static class AdvancedBodyScalingPipeline
 
         if (sources.Count == 0)
         {
-            ApplyNeckCompensation(output, userTransforms, settings);
+            ApplyNeckCompensation(output, userTransforms, effectiveSettings);
             ApplyPinnedScaleSafety(output, userTransforms, debug);
             return output;
         }
@@ -125,7 +126,7 @@ internal static class AdvancedBodyScalingPipeline
                 lockStates[bone] = BoneLockState.Unlocked;
             }
 
-            regionProfiles[bone] = settings.GetRegionProfile(ResolveRegion(bone));
+            regionProfiles[bone] = effectiveSettings.GetRegionProfile(ResolveRegion(bone));
         }
 
         var originalScales = uniformScales.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.Ordinal);
@@ -163,7 +164,7 @@ internal static class AdvancedBodyScalingPipeline
             AdvancedBodyScalingDebugReport.CopyScales(uniformScales, debug.AfterPoseValidation);
 
         var naturalizationStrength = Math.Clamp(
-            settings.NaturalizationStrength * tuning.NaturalizationMultiplier,
+            effectiveSettings.NaturalizationStrength * tuning.NaturalizationMultiplier,
             0f,
             1f);
 
@@ -205,7 +206,7 @@ internal static class AdvancedBodyScalingPipeline
                 debug.FinalScales[bone] = finalUniform;
         }
 
-        ApplyNeckCompensation(output, userTransforms, settings);
+        ApplyNeckCompensation(output, userTransforms, effectiveSettings);
         ApplyPinnedScaleSafety(output, userTransforms, debug);
 
         return output;
@@ -236,24 +237,10 @@ internal static class AdvancedBodyScalingPipeline
         AddGuardrailIssues(uniformScales, issues);
         AddSymmetryIssues(uniformScales, issues);
 
-        var tunedSettings = new AdvancedBodyScalingSettings
-        {
-            Enabled = true,
-            Mode = settings.Mode == AdvancedBodyScalingMode.Manual ? AdvancedBodyScalingMode.Automatic : settings.Mode,
-            SurfaceBalancingStrength = settings.SurfaceBalancingStrength,
-            MassRedistributionStrength = settings.MassRedistributionStrength,
-            GuardrailMode = settings.GuardrailMode,
-            PoseValidationMode = settings.PoseValidationMode,
-            NaturalizationStrength = settings.NaturalizationStrength,
-            NeckLengthCompensation = settings.NeckLengthCompensation,
-            NeckShoulderBlendStrength = settings.NeckShoulderBlendStrength,
-            ClavicleShoulderSmoothing = settings.ClavicleShoulderSmoothing,
-            UseRaceSpecificNeckCompensation = settings.UseRaceSpecificNeckCompensation,
-            RaceNeckPresets = settings.RaceNeckPresets == null
-                ? new Dictionary<Penumbra.GameData.Enums.Race, AdvancedBodyScalingNeckCompensationPreset>()
-                : settings.RaceNeckPresets.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
-            RegionProfiles = settings.RegionProfiles.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy())
-        };
+        var tunedSettings = settings.DeepCopy();
+        tunedSettings.Enabled = true;
+        if (tunedSettings.Mode == AdvancedBodyScalingMode.Manual)
+            tunedSettings.Mode = AdvancedBodyScalingMode.Automatic;
 
         var suggested = Apply(userTransforms, tunedSettings);
         var suggestedFixes = new Dictionary<string, BoneTransform>(StringComparer.Ordinal);
@@ -274,14 +261,30 @@ internal static class AdvancedBodyScalingPipeline
         return new BodyAnalysisResult(surfaceSmoothness, proportionBalance, symmetry, issues, suggestedFixes);
     }
 
-    private static ModeTuning GetTuning(AdvancedBodyScalingMode mode)
-        => mode switch
+    private static ModeTuning GetTuning(AdvancedBodyScalingMode mode, bool animationSafeMode)
+    {
+        var tuning = mode switch
         {
             AdvancedBodyScalingMode.Assist => new ModeTuning(0.15f, 0.12f, 0.10f, 0.15f, 0.10f, 0.45f, DefaultPropagationDepth),
             AdvancedBodyScalingMode.Automatic => new ModeTuning(0.25f, 0.22f, 0.18f, 0.25f, 0.18f, 0.70f, DefaultPropagationDepth),
             AdvancedBodyScalingMode.Strong => new ModeTuning(0.40f, 0.35f, 0.28f, 0.40f, 0.28f, 0.90f, DefaultPropagationDepth + 1),
             _ => new ModeTuning(0f, 0f, 0f, 0f, 0f, 0f, 0)
         };
+
+        if (!animationSafeMode)
+            return tuning;
+
+        return tuning with
+        {
+            InfluenceStrength = tuning.InfluenceStrength * 0.78f,
+            SurfaceSmoothing = MathF.Min(0.45f, tuning.SurfaceSmoothing + 0.06f),
+            MassRedistribution = tuning.MassRedistribution * 0.75f,
+            GuardrailStrength = MathF.Min(0.5f, tuning.GuardrailStrength + 0.05f),
+            CurveStrength = MathF.Min(0.4f, tuning.CurveStrength + 0.05f),
+            NaturalizationMultiplier = tuning.NaturalizationMultiplier * 0.85f,
+            PropagationDepth = Math.Max(DefaultPropagationDepth, tuning.PropagationDepth - (mode == AdvancedBodyScalingMode.Strong ? 1 : 0))
+        };
+    }
 
     private static float GetGuardrailMultiplier(AdvancedBodyScalingGuardrailMode mode)
         => mode switch

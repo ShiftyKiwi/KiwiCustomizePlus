@@ -45,6 +45,7 @@ public class TemplatePanel : IDisposable
     private Dictionary<string, BoneTransform?>? _lastAppliedAdvancedPreviewSnapshot;
     private IReadOnlyDictionary<string, BoneTransform>? _advancedPreview;
     private AdvancedBodyScalingDebugReport? _advancedDebug;
+    private AdvancedBodyScalingStressTestReport? _stressTestReport;
     private bool _showAdvancedPreview;
     private bool _showAdvancedDebug;
 
@@ -186,6 +187,7 @@ public class TemplatePanel : IDisposable
 
         DrawBodyAnalyzer();
         DrawAdvancedScalingPreview();
+        DrawPoseStressTest();
 
         _boneEditor.Draw();
     }
@@ -372,8 +374,127 @@ public class TemplatePanel : IDisposable
             DrawAdvancedScalingDebug(_advancedDebug);
     }
 
+    private void DrawPoseStressTest()
+    {
+        if (_selector.Selected == null)
+            return;
+
+        if (!ImGui.CollapsingHeader("Pose Stress Test"))
+            return;
+
+        if (ImGui.Button("Run Stress Test"))
+            BuildPoseStressTest(_selector.Selected);
+
+        ImGui.SameLine();
+        using (ImRaii.Disabled(_stressTestReport == null))
+        {
+            if (ImGui.Button("Clear Stress Test"))
+                ClearPoseStressTest();
+        }
+
+        if (_stressTestReport == null)
+        {
+            ImGui.TextDisabled("Runs lightweight pose-risk checks against the current template, current automation output, or the active preview result.");
+            return;
+        }
+
+        ImGui.Spacing();
+        ImGui.Text($"Evaluation target: {_stressTestReport.SourceLabel}");
+        ImGui.TextUnformatted("Overall animation risk:");
+        ImGui.SameLine();
+        DrawRiskBadge(_stressTestReport.OverallRisk, _stressTestReport.OverallScore);
+        ImGui.TextWrapped(_stressTestReport.Summary);
+
+        if (_stressTestReport.RegionSummary.Count > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextUnformatted("Region hot spots:");
+            foreach (var region in _stressTestReport.RegionSummary.Take(3))
+            {
+                ImGui.Bullet();
+                ImGui.SameLine();
+                DrawRiskBadge(region.RiskLevel, region.Score);
+                ImGui.SameLine();
+                ImGui.TextWrapped($"{region.RegionName} - {region.Reasons.FirstOrDefault() ?? "No major issue detected."}");
+            }
+        }
+
+        ImGui.Spacing();
+        foreach (var pose in _stressTestReport.Poses)
+        {
+            if (!ImGui.TreeNode($"{pose.Name}##Stress{pose.Name}"))
+                continue;
+
+            DrawRiskBadge(pose.RiskLevel, pose.Score);
+            ImGui.TextWrapped(pose.Description);
+
+            foreach (var region in pose.Regions)
+            {
+                ImGui.Spacing();
+                ImGui.TextUnformatted(region.RegionName);
+                ImGui.SameLine();
+                DrawRiskBadge(region.RiskLevel, region.Score);
+
+                if (region.Reasons.Count == 0)
+                {
+                    ImGui.TextDisabled("No strong instability heuristic fired for this region in this pose.");
+                }
+                else
+                {
+                    foreach (var reason in region.Reasons)
+                        ImGui.BulletText(reason);
+                }
+            }
+
+            ImGui.TreePop();
+        }
+    }
+
+    private void BuildPoseStressTest(Template template)
+    {
+        var input = BuildStressTestInput(template, out var sourceLabel);
+        _stressTestReport = AdvancedBodyScalingStressTestHarness.Run(input, _configuration.AdvancedBodyScalingSettings, sourceLabel);
+    }
+
+    private IReadOnlyDictionary<string, BoneTransform> BuildStressTestInput(Template template, out string sourceLabel)
+    {
+        if (_advancedPreview != null && _advancedPreview.Count > 0)
+        {
+            var merged = template.Bones.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy(), StringComparer.Ordinal);
+            foreach (var kvp in _advancedPreview)
+            {
+                var transform = merged.TryGetValue(kvp.Key, out var existing)
+                    ? existing.DeepCopy()
+                    : new BoneTransform();
+
+                transform.Scaling = kvp.Value.Scaling;
+                merged[kvp.Key] = transform;
+            }
+
+            sourceLabel = "Current preview result (not yet applied)";
+            return merged;
+        }
+
+        var settings = _configuration.AdvancedBodyScalingSettings;
+        if (settings.Enabled && settings.Mode != AdvancedBodyScalingMode.Manual)
+        {
+            sourceLabel = settings.AnimationSafeModeEnabled
+                ? "Current advanced scaling output (animation-safe mode)"
+                : "Current advanced scaling output";
+            return AdvancedBodyScalingPipeline.Apply(template.Bones, settings);
+        }
+
+        sourceLabel = "Current template values";
+        return template.Bones.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy(), StringComparer.Ordinal);
+    }
+
+    private void ClearPoseStressTest()
+        => _stressTestReport = null;
+
     private void BuildAdvancedScalingPreview(Template template)
     {
+        ClearPoseStressTest();
+
         var debug = new AdvancedBodyScalingDebugReport();
         var preview = AdvancedBodyScalingPipeline.Apply(template.Bones, _configuration.AdvancedBodyScalingSettings, debug);
 
@@ -426,6 +547,7 @@ public class TemplatePanel : IDisposable
 
     private void ClearAdvancedScalingPreview()
     {
+        ClearPoseStressTest();
         _advancedPreview = null;
         _advancedDebug = null;
         _showAdvancedPreview = false;
@@ -442,6 +564,8 @@ public class TemplatePanel : IDisposable
     {
         if (_lastAppliedAdvancedPreviewSnapshot == null || _lastAppliedAdvancedPreviewTemplateId != template.UniqueId)
             return;
+
+        ClearPoseStressTest();
 
         foreach (var kvp in _lastAppliedAdvancedPreviewSnapshot)
         {
@@ -460,6 +584,14 @@ public class TemplatePanel : IDisposable
         ImGui.Spacing();
         if (ImGui.CollapsingHeader("Debug Details"))
         {
+            var poseAwareCorrections = debug.GuardrailCorrections.Count(entry => entry.Description.StartsWith("Pose-aware", StringComparison.Ordinal));
+            var guardrailCorrections = debug.GuardrailCorrections.Count - poseAwareCorrections;
+
+            ImGui.Text("Automation activity:");
+            ImGui.BulletText($"Guardrails triggered in last preview: {guardrailCorrections}");
+            ImGui.BulletText($"Pose-aware corrections triggered in last preview: {poseAwareCorrections}");
+
+            ImGui.Spacing();
             ImGui.Text("Active curve chains:");
             var chainCount = 0;
             foreach (var chain in debug.ActiveCurveChains)
@@ -514,6 +646,7 @@ public class TemplatePanel : IDisposable
 
     private void ApplyAnalyzerFixes(Template template, IReadOnlyDictionary<string, BoneTransform> fixes)
     {
+        ClearPoseStressTest();
         _lastAnalyzerFixTemplateId = template.UniqueId;
         _lastAnalyzerFixSnapshot = fixes.ToDictionary(
             kvp => kvp.Key,
@@ -546,6 +679,8 @@ public class TemplatePanel : IDisposable
     {
         if (_lastAnalyzerFixSnapshot == null || _lastAnalyzerFixTemplateId != template.UniqueId)
             return;
+
+        ClearPoseStressTest();
 
         foreach (var kvp in _lastAnalyzerFixSnapshot)
         {
@@ -637,11 +772,26 @@ public class TemplatePanel : IDisposable
     }
 
 
+    private static void DrawRiskBadge(AdvancedBodyScalingRiskLevel risk, int score)
+    {
+        using var color = ImRaii.PushColor(ImGuiCol.Text, GetRiskColor(risk));
+        ImGui.TextUnformatted($"{risk} ({score})");
+    }
+
+    private static uint GetRiskColor(AdvancedBodyScalingRiskLevel risk)
+        => risk switch
+        {
+            AdvancedBodyScalingRiskLevel.High => ImGui.GetColorU32(new Vector4(0.95f, 0.45f, 0.35f, 1f)),
+            AdvancedBodyScalingRiskLevel.Moderate => ImGui.GetColorU32(new Vector4(0.95f, 0.78f, 0.30f, 1f)),
+            _ => ImGui.GetColorU32(new Vector4(0.55f, 0.90f, 0.55f, 1f)),
+        };
+
     private void SelectorSelectionChanged(Template? oldSelection, Template? newSelection, in TemplateFileSystemSelector.TemplateState state)
     {
         _analysisResult = null;
         _showFixPreview = false;
         ClearAdvancedScalingPreview();
+        ClearPoseStressTest();
 
         if (!_isEditorEnablePending)
             return;

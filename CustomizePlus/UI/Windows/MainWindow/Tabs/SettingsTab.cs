@@ -565,6 +565,15 @@ public class SettingsTab
             }
             CtrlHelper.AddHoverText("Adds extra pose-aware guardrails to reduce deformation in extreme poses.");
 
+            var animationSafeMode = settings.AnimationSafeModeEnabled;
+            if (ImGui.Checkbox("Animation-safe mode", ref animationSafeMode))
+            {
+                settings.AnimationSafeModeEnabled = animationSafeMode;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Applies a conservative safety preset that reins in propagation, keeps extremities calmer, and strengthens smoothing/guardrails near joints without removing manual control.");
+
             ImGui.Spacing();
             DrawNeckCompensationSettings(settings);
 
@@ -573,6 +582,9 @@ public class SettingsTab
 
             ImGui.Spacing();
             DrawAdvancedBodyScalingRegionProfiles(settings);
+
+            ImGui.Spacing();
+            DrawAdvancedBodyScalingExplainability(settings);
         }
     }
 
@@ -973,6 +985,148 @@ public class SettingsTab
             ImGui.Spacing();
         }
     }
+
+    private void DrawAdvancedBodyScalingExplainability(AdvancedBodyScalingSettings settings)
+    {
+        if (!ImGui.CollapsingHeader("Guardrail & Automation Guide"))
+            return;
+
+        ImGui.TextWrapped("Lock excludes the whole row or group from automation. Pins protect only the selected scale axes. Guardrails and pose-aware corrections are automation helpers, not hard locks.");
+
+        using var table = ImRaii.Table("AdvancedBodyScalingGuide", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp);
+        if (!table)
+            return;
+
+        ImGui.TableSetupColumn("System", ImGuiTableColumnFlags.WidthFixed, 190 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Focus", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Prevents", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 140 * ImGuiHelpers.GlobalScale);
+        ImGui.TableHeadersRow();
+
+        DrawExplainabilityRow(
+            "Row/group lock",
+            "Whole bone row, group, or region when locked by the editor.",
+            "Stops all automation for that locked scope. Manual edits still decide the final values.",
+            "Editor-only",
+            "Use this when you want to fully exclude a row or group from advanced scaling.");
+
+        DrawExplainabilityRow(
+            "Per-axis pins",
+            "Individual X, Y, and Z scale axes on a bone row.",
+            "Keeps automation from moving that specific axis while still allowing manual edits and automation on the other axes.",
+            "Editor-only",
+            "Pins are finer-grained than locks: automation cannot move the pinned axis, but you still can.");
+
+        DrawExplainabilityRow(
+            "Surface balancing",
+            "Neighboring bones and curve chains in the active region.",
+            "Abrupt bone-to-bone scale jumps and harsh surface breaks.",
+            GetSliderStatus(settings.Enabled, settings.Mode, settings.SurfaceBalancingStrength),
+            "This is the main smoothing pass for adjacent body bones.");
+
+        DrawExplainabilityRow(
+            "Mass redistribution",
+            "Neighbor chains that share visible body mass.",
+            "Single-bone spikes that make one area look over-inflated compared to its neighbors.",
+            GetSliderStatus(settings.Enabled, settings.Mode, settings.MassRedistributionStrength),
+            "This spreads some scale pressure outward so one bone does not carry the whole silhouette change.");
+
+        DrawExplainabilityRow(
+            "Proportion guardrails",
+            "Shoulder/waist, hip/waist, thigh/calf, and upper-arm/forearm ratios.",
+            "Proportion jumps that start to look detached, abruptly tapered, or unstable in motion.",
+            GetModeStatus(settings.Enabled, settings.Mode, settings.GuardrailMode.ToString(), settings.GuardrailMode != AdvancedBodyScalingGuardrailMode.Off),
+            "Guardrails are soft correction helpers. They do not replace your edits, but they can pull extreme ratios back toward safer ranges.");
+
+        DrawExplainabilityRow(
+            "Pose-aware corrections",
+            "Upper-arm/forearm and thigh/calf transitions under stress.",
+            "Elbow, knee, and limb taper artifacts that tend to show up more in motion than in a neutral stance.",
+            GetModeStatus(settings.Enabled, settings.Mode, settings.PoseValidationMode.ToString(), settings.PoseValidationMode != AdvancedBodyScalingPoseValidationMode.Off),
+            "This is a lightweight motion-safety layer, not a full runtime pose solver.");
+
+        DrawExplainabilityRow(
+            "Neck/shoulder compensation",
+            "Upper spine, neck, clavicles, and shoulder roots.",
+            "Long-neck, detached-shoulder, and harsh neck-to-chest bridge shapes.",
+            settings.NeckLengthCompensation > 0f || settings.UseRaceSpecificNeckCompensation ? "Active" : "Off",
+            "Race presets can override these neck settings for supported races, but they stay on the normal supported scale path.");
+
+        DrawExplainabilityRow(
+            "Animation-safe mode",
+            "Whole advanced scaling stack with extra caution near joints and extremities.",
+            "Overly aggressive propagation, sharp extremity response, and brittle motion behavior.",
+            settings.AnimationSafeModeEnabled ? "On" : "Off",
+            "This is a coordinated conservative preset, not a separate scaling system.");
+
+        DrawExplainabilityRow(
+            "Region tuning",
+            "Per-region multipliers for propagation, smoothing, guardrails, pose validation, and naturalization.",
+            "One-size-fits-all behavior when different body regions need different safety or smoothing strengths.",
+            HasCustomizedRegionProfiles(settings) ? "Customized" : "Defaults",
+            "Region tuning changes how strongly each body area participates without depending on unsupported extra physics bones.");
+    }
+
+    private static void DrawExplainabilityRow(string system, string focus, string prevents, string status, string tooltip)
+    {
+        ImGui.TableNextRow();
+
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted(system);
+        CtrlHelper.AddHoverText(tooltip);
+
+        ImGui.TableNextColumn();
+        ImGui.TextWrapped(focus);
+
+        ImGui.TableNextColumn();
+        ImGui.TextWrapped(prevents);
+
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted(status);
+    }
+
+    private static string GetSliderStatus(bool enabled, AdvancedBodyScalingMode mode, float strength)
+    {
+        if (!enabled || mode == AdvancedBodyScalingMode.Manual || strength <= 0f)
+            return "Off";
+
+        return strength >= 0.75f ? "Active" : "Light";
+    }
+
+    private static string GetModeStatus(bool enabled, AdvancedBodyScalingMode mode, string label, bool active)
+    {
+        if (!enabled || mode == AdvancedBodyScalingMode.Manual || !active)
+            return "Off";
+
+        return label;
+    }
+
+    private static bool HasCustomizedRegionProfiles(AdvancedBodyScalingSettings settings)
+    {
+        var defaults = AdvancedBodyScalingRegionProfile.CreateDefaults();
+        foreach (var region in RegionOrder)
+        {
+            var profile = settings.GetRegionProfile(region);
+            var defaultProfile = defaults.TryGetValue(region, out var value) ? value : new AdvancedBodyScalingRegionProfile();
+            if (!MatchesRegionProfile(profile, defaultProfile))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool MatchesRegionProfile(AdvancedBodyScalingRegionProfile left, AdvancedBodyScalingRegionProfile right)
+        => Math.Abs(left.InfluenceMultiplier - right.InfluenceMultiplier) < 0.0001f
+           && Math.Abs(left.SmoothingMultiplier - right.SmoothingMultiplier) < 0.0001f
+           && Math.Abs(left.GuardrailMultiplier - right.GuardrailMultiplier) < 0.0001f
+           && Math.Abs(left.MassRedistributionMultiplier - right.MassRedistributionMultiplier) < 0.0001f
+           && Math.Abs(left.PoseValidationMultiplier - right.PoseValidationMultiplier) < 0.0001f
+           && Math.Abs(left.NaturalizationMultiplier - right.NaturalizationMultiplier) < 0.0001f
+           && left.AllowNaturalization == right.AllowNaturalization
+           && left.AllowGuardrails == right.AllowGuardrails
+           && left.AllowPoseValidation == right.AllowPoseValidation;
 
     #endregion
 

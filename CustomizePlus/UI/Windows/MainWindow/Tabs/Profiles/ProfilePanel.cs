@@ -408,6 +408,30 @@ public class ProfilePanel
             if (ImGui.Checkbox("##ProfileAdvScalingModeOverride", ref modeOverride))
                 ToggleOverride(o => o.Mode = modeOverride ? globalSettings.Mode : null);
 
+            // Animation-safe mode
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Animation-safe mode");
+            ImGui.TableNextColumn();
+            if (overrides.AnimationSafeModeEnabled.HasValue)
+            {
+                var enabled = overrides.AnimationSafeModeEnabled.Value;
+                if (ImGui.Checkbox("##ProfileAdvScalingAnimationSafe", ref enabled))
+                    ToggleOverride(o => o.AnimationSafeModeEnabled = enabled);
+            }
+            else
+            {
+                var enabled = globalSettings.AnimationSafeModeEnabled;
+                using (ImRaii.Disabled())
+                    ImGui.Checkbox("##ProfileAdvScalingAnimationSafe", ref enabled);
+            }
+            CtrlHelper.AddHoverText("Applies the conservative animation-safe preset for this profile without removing manual control.");
+            ImGui.TableNextColumn();
+            var animationSafeOverride = overrides.AnimationSafeModeEnabled.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingAnimationSafeOverride", ref animationSafeOverride))
+                ToggleOverride(o => o.AnimationSafeModeEnabled = animationSafeOverride ? globalSettings.AnimationSafeModeEnabled : null);
+
             // Surface balancing strength
             ImGui.TableNextRow();
             ImGui.TableNextColumn();

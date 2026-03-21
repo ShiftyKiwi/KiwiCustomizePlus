@@ -305,6 +305,7 @@ public sealed class AdvancedBodyScalingSettings
 {
     public bool Enabled { get; set; } = false;
     public AdvancedBodyScalingMode Mode { get; set; } = AdvancedBodyScalingMode.Manual;
+    public bool AnimationSafeModeEnabled { get; set; } = false;
 
     private float _surfaceBalancingStrength = 0.9f;
     public float SurfaceBalancingStrength
@@ -393,11 +394,92 @@ public sealed class AdvancedBodyScalingSettings
         return resolved;
     }
 
+    public AdvancedBodyScalingSettings CreateRuntimeResolvedSettings()
+    {
+        if (!AnimationSafeModeEnabled)
+            return this;
+
+        var resolved = DeepCopy();
+        resolved.ApplyAnimationSafeBias();
+        return resolved;
+    }
+
+    private void ApplyAnimationSafeBias()
+    {
+        SurfaceBalancingStrength = MathF.Max(SurfaceBalancingStrength, 0.65f);
+        MassRedistributionStrength = MathF.Min(MassRedistributionStrength, 0.70f);
+        NaturalizationStrength = MathF.Min(NaturalizationStrength, 0.55f);
+        NeckLengthCompensation = MathF.Min(NeckLengthCompensation, 0.75f);
+        NeckShoulderBlendStrength = MathF.Max(NeckShoulderBlendStrength, 0.45f);
+        ClavicleShoulderSmoothing = MathF.Max(ClavicleShoulderSmoothing, 0.35f);
+
+        if (GuardrailMode == AdvancedBodyScalingGuardrailMode.Off)
+            GuardrailMode = AdvancedBodyScalingGuardrailMode.Standard;
+
+        if (PoseValidationMode == AdvancedBodyScalingPoseValidationMode.Off)
+            PoseValidationMode = AdvancedBodyScalingPoseValidationMode.Standard;
+
+        foreach (var (region, profile) in RegionProfiles)
+            ApplyAnimationSafeRegionBias(region, profile);
+    }
+
+    private static void ApplyAnimationSafeRegionBias(AdvancedBodyRegion region, AdvancedBodyScalingRegionProfile profile)
+    {
+        switch (region)
+        {
+            case AdvancedBodyRegion.NeckShoulder:
+                profile.InfluenceMultiplier = MathF.Min(profile.InfluenceMultiplier, 0.75f);
+                profile.SmoothingMultiplier = MathF.Max(profile.SmoothingMultiplier, 0.95f);
+                profile.GuardrailMultiplier = MathF.Max(profile.GuardrailMultiplier, 0.95f);
+                profile.MassRedistributionMultiplier = MathF.Min(profile.MassRedistributionMultiplier, 0.75f);
+                profile.PoseValidationMultiplier = MathF.Max(profile.PoseValidationMultiplier, 0.95f);
+                break;
+            case AdvancedBodyRegion.Arms:
+                profile.InfluenceMultiplier = MathF.Min(profile.InfluenceMultiplier, 0.72f);
+                profile.SmoothingMultiplier = MathF.Max(profile.SmoothingMultiplier, 0.9f);
+                profile.GuardrailMultiplier = MathF.Max(profile.GuardrailMultiplier, 0.85f);
+                profile.MassRedistributionMultiplier = MathF.Min(profile.MassRedistributionMultiplier, 0.7f);
+                profile.PoseValidationMultiplier = MathF.Max(profile.PoseValidationMultiplier, 0.85f);
+                break;
+            case AdvancedBodyRegion.Hands:
+                profile.InfluenceMultiplier = MathF.Min(profile.InfluenceMultiplier, 0.2f);
+                profile.MassRedistributionMultiplier = MathF.Min(profile.MassRedistributionMultiplier, 0.2f);
+                profile.NaturalizationMultiplier = MathF.Min(profile.NaturalizationMultiplier, 0.35f);
+                break;
+            case AdvancedBodyRegion.Legs:
+                profile.InfluenceMultiplier = MathF.Min(profile.InfluenceMultiplier, 0.75f);
+                profile.SmoothingMultiplier = MathF.Max(profile.SmoothingMultiplier, 0.9f);
+                profile.GuardrailMultiplier = MathF.Max(profile.GuardrailMultiplier, 0.9f);
+                profile.MassRedistributionMultiplier = MathF.Min(profile.MassRedistributionMultiplier, 0.75f);
+                profile.PoseValidationMultiplier = MathF.Max(profile.PoseValidationMultiplier, 0.9f);
+                break;
+            case AdvancedBodyRegion.Feet:
+                profile.InfluenceMultiplier = MathF.Min(profile.InfluenceMultiplier, 0.3f);
+                profile.MassRedistributionMultiplier = MathF.Min(profile.MassRedistributionMultiplier, 0.3f);
+                profile.NaturalizationMultiplier = MathF.Min(profile.NaturalizationMultiplier, 0.35f);
+                break;
+            case AdvancedBodyRegion.Toes:
+                profile.InfluenceMultiplier = MathF.Min(profile.InfluenceMultiplier, 0.15f);
+                profile.MassRedistributionMultiplier = MathF.Min(profile.MassRedistributionMultiplier, 0.15f);
+                profile.NaturalizationMultiplier = MathF.Min(profile.NaturalizationMultiplier, 0.25f);
+                break;
+            case AdvancedBodyRegion.Tail:
+                profile.InfluenceMultiplier = MathF.Min(profile.InfluenceMultiplier, 0.2f);
+                profile.MassRedistributionMultiplier = MathF.Min(profile.MassRedistributionMultiplier, 0.2f);
+                profile.NaturalizationMultiplier = MathF.Min(profile.NaturalizationMultiplier, 0.25f);
+                break;
+            default:
+                profile.SmoothingMultiplier = MathF.Max(profile.SmoothingMultiplier, 0.85f);
+                break;
+        }
+    }
+
     public void ResetToDefaults()
     {
         var defaults = new AdvancedBodyScalingSettings();
         Enabled = defaults.Enabled;
         Mode = defaults.Mode;
+        AnimationSafeModeEnabled = defaults.AnimationSafeModeEnabled;
         SurfaceBalancingStrength = defaults.SurfaceBalancingStrength;
         MassRedistributionStrength = defaults.MassRedistributionStrength;
         GuardrailMode = defaults.GuardrailMode;
@@ -416,6 +498,7 @@ public sealed class AdvancedBodyScalingSettings
         {
             Enabled = Enabled,
             Mode = Mode,
+            AnimationSafeModeEnabled = AnimationSafeModeEnabled,
             SurfaceBalancingStrength = SurfaceBalancingStrength,
             MassRedistributionStrength = MassRedistributionStrength,
             GuardrailMode = GuardrailMode,

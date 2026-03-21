@@ -29,6 +29,7 @@ public sealed class AdvancedBodyScalingOverrides
 {
     public bool? Enabled { get; set; }
     public AdvancedBodyScalingMode? Mode { get; set; }
+    public bool? AnimationSafeModeEnabled { get; set; }
     public float? SurfaceBalancingStrength { get; set; }
     public float? MassRedistributionStrength { get; set; }
     public AdvancedBodyScalingGuardrailMode? GuardrailMode { get; set; }
@@ -48,6 +49,9 @@ public sealed class AdvancedBodyScalingOverrides
 
         if (Mode.HasValue)
             merged.Mode = Mode.Value;
+
+        if (AnimationSafeModeEnabled.HasValue)
+            merged.AnimationSafeModeEnabled = AnimationSafeModeEnabled.Value;
 
         if (SurfaceBalancingStrength.HasValue)
             merged.SurfaceBalancingStrength = SurfaceBalancingStrength.Value;
@@ -93,6 +97,7 @@ public sealed class AdvancedBodyScalingOverrides
         {
             Enabled = Enabled,
             Mode = Mode,
+            AnimationSafeModeEnabled = AnimationSafeModeEnabled,
             SurfaceBalancingStrength = SurfaceBalancingStrength,
             MassRedistributionStrength = MassRedistributionStrength,
             GuardrailMode = GuardrailMode,
