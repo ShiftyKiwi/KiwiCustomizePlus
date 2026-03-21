@@ -72,6 +72,7 @@ public unsafe class Armature
     internal AdvancedBodyScalingPoseCorrectiveDebugState PoseCorrectiveDebugState { get; } = new();
 
     private readonly Dictionary<string, Vector3> _poseCorrectiveScaleMultipliers = new(StringComparer.Ordinal);
+    private readonly Dictionary<AdvancedBodyScalingCorrectiveRegion, float> _poseCorrectiveActivationState = new();
 
     private List<ModelBone> _activeBones;
     public IReadOnlyList<ModelBone> ActiveBones => _activeBones;
@@ -385,7 +386,7 @@ public unsafe class Armature
             return;
         }
 
-        AdvancedBodyScalingPoseCorrectiveSystem.Evaluate(this, cBase, ActiveAdvancedBodyScalingSettings, _poseCorrectiveScaleMultipliers, PoseCorrectiveDebugState);
+        AdvancedBodyScalingPoseCorrectiveSystem.Evaluate(this, cBase, ActiveAdvancedBodyScalingSettings, Profile.AdvancedBodyScalingOverrides.UseProfileOverrides, _poseCorrectiveActivationState, _poseCorrectiveScaleMultipliers, PoseCorrectiveDebugState);
     }
 
     public bool TryGetPoseCorrectiveScale(string boneName, out Vector3 correctiveScale)
@@ -400,8 +401,9 @@ public unsafe class Armature
     public void ClearPoseCorrectives()
     {
         _poseCorrectiveScaleMultipliers.Clear();
+        _poseCorrectiveActivationState.Clear();
         var path = AdvancedBodyScalingPoseCorrectiveSystem.DetectSupportedPath();
-        PoseCorrectiveDebugState.Reset(path, AdvancedBodyScalingPoseCorrectiveSystem.GetPathDescription(path));
+        PoseCorrectiveDebugState.Reset(path, AdvancedBodyScalingPoseCorrectiveSystem.GetPathDescription(path), Profile.AdvancedBodyScalingOverrides.UseProfileOverrides);
     }
 
     public void UpdateRuntimeTransforms(float deltaSeconds, float transitionSharpness)

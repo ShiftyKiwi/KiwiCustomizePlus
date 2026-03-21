@@ -334,6 +334,22 @@ public class ProfilePanel
                     overrides.RegionOverrides.Remove(region);
             });
 
+        void UpdatePoseCorrectiveRegionOverride(AdvancedBodyScalingCorrectiveRegion region, Action<AdvancedBodyScalingCorrectiveRegionOverrides> update)
+            => _manager.UpdateAdvancedBodyScalingOverrides(profile, settings =>
+            {
+                var overrides = settings.Overrides;
+                if (!overrides.PoseCorrectiveRegionOverrides.TryGetValue(region, out var regionOverride))
+                {
+                    regionOverride = new AdvancedBodyScalingCorrectiveRegionOverrides();
+                    overrides.PoseCorrectiveRegionOverrides[region] = regionOverride;
+                }
+
+                update(regionOverride);
+
+                if (regionOverride.IsEmpty)
+                    overrides.PoseCorrectiveRegionOverrides.Remove(region);
+            });
+
         var overrides = profile.AdvancedBodyScalingOverrides.Overrides;
         using (var table = ImRaii.Table(
                    "ProfileAdvancedBodyScaling",
@@ -667,6 +683,160 @@ public class ProfilePanel
             var clavicleOverride = overrides.ClavicleShoulderSmoothing.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingClavicleSmoothingOverride", ref clavicleOverride))
                 ToggleOverride(o => o.ClavicleShoulderSmoothing = clavicleOverride ? globalSettings.ClavicleShoulderSmoothing : null);
+        }
+
+        ImGui.Spacing();
+        if (ImGui.CollapsingHeader("Pose-space Corrective Overrides"))
+        {
+            ImGui.TextDisabled("Override the pose-space corrective baseline for this profile. Disabled fields inherit the global corrective settings.");
+            var globalCorrectives = globalSettings.PoseCorrectives;
+
+            using (var correctiveTable = ImRaii.Table(
+                       "ProfilePoseCorrectives",
+                       3,
+                       ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp,
+                       overrideTableWidth))
+            {
+                if (correctiveTable)
+                {
+                    ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
+                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+                    ImGui.TableSetupScrollFreeze(0, 1);
+                    ImGui.TableHeadersRow();
+
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.TextUnformatted("Enable pose-space correctives");
+                    ImGui.TableNextColumn();
+                    if (overrides.PoseCorrectivesEnabled.HasValue)
+                    {
+                        var enabled = overrides.PoseCorrectivesEnabled.Value;
+                        if (ImGui.Checkbox("##ProfilePoseCorrectivesEnabled", ref enabled))
+                            ToggleOverride(o => o.PoseCorrectivesEnabled = enabled);
+                    }
+                    else
+                    {
+                        var enabled = globalCorrectives.Enabled;
+                        using (ImRaii.Disabled())
+                            ImGui.Checkbox("##ProfilePoseCorrectivesEnabled", ref enabled);
+                    }
+                    CtrlHelper.AddHoverText("Overrides whether the pose-space corrective layer is active for this profile.");
+                    ImGui.TableNextColumn();
+                    var poseCorrectivesEnabledOverride = overrides.PoseCorrectivesEnabled.HasValue;
+                    if (ImGui.Checkbox("##ProfilePoseCorrectivesEnabledOverride", ref poseCorrectivesEnabledOverride))
+                        ToggleOverride(o => o.PoseCorrectivesEnabled = poseCorrectivesEnabledOverride ? globalCorrectives.Enabled : null);
+
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.TextUnformatted("Global corrective strength");
+                    ImGui.TableNextColumn();
+                    if (overrides.PoseCorrectiveStrength.HasValue)
+                    {
+                        var value = overrides.PoseCorrectiveStrength.Value;
+                        ImGui.SetNextItemWidth(-1);
+                        if (ImGui.SliderFloat("##ProfilePoseCorrectiveStrength", ref value, 0f, 1f, "%.2f"))
+                            ToggleOverride(o => o.PoseCorrectiveStrength = value);
+                    }
+                    else
+                    {
+                        var value = globalCorrectives.Strength;
+                        using (ImRaii.Disabled())
+                        {
+                            ImGui.SetNextItemWidth(-1);
+                            ImGui.SliderFloat("##ProfilePoseCorrectiveStrength", ref value, 0f, 1f, "%.2f");
+                        }
+                    }
+                    CtrlHelper.AddHoverText("Overrides the overall corrective blend strength for this profile.");
+                    ImGui.TableNextColumn();
+                    var poseCorrectiveStrengthOverride = overrides.PoseCorrectiveStrength.HasValue;
+                    if (ImGui.Checkbox("##ProfilePoseCorrectiveStrengthOverride", ref poseCorrectiveStrengthOverride))
+                        ToggleOverride(o => o.PoseCorrectiveStrength = poseCorrectiveStrengthOverride ? globalCorrectives.Strength : null);
+                }
+            }
+
+            ImGui.Spacing();
+            ImGui.TextDisabled("Per-region corrective overrides let this profile bias specific problem areas without replacing the global tuning model.");
+            foreach (var region in AdvancedBodyScalingPoseCorrectiveSystem.GetOrderedRegions())
+            {
+                var label = AdvancedBodyScalingPoseCorrectiveSystem.GetRegionLabel(region);
+                var description = AdvancedBodyScalingPoseCorrectiveSystem.GetRegionDescription(region);
+                var globalRegion = globalCorrectives.GetRegionSettings(region);
+                overrides.PoseCorrectiveRegionOverrides.TryGetValue(region, out var regionOverride);
+
+                if (!ImGui.TreeNode($"{label}##ProfilePoseCorrectiveRegion{region}"))
+                    continue;
+
+                ImGui.TextDisabled(description);
+                using (var regionTable = ImRaii.Table(
+                           $"ProfilePoseCorrectiveOverrides_{region}",
+                           3,
+                           ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp,
+                           overrideTableWidth))
+                {
+                    if (regionTable)
+                    {
+                        ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
+                        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                        ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+                        ImGui.TableSetupScrollFreeze(0, 1);
+                        ImGui.TableHeadersRow();
+
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted("Enabled");
+                        ImGui.TableNextColumn();
+                        if (regionOverride?.Enabled.HasValue == true)
+                        {
+                            var enabled = regionOverride.Enabled.Value;
+                            if (ImGui.Checkbox($"##ProfilePoseCorrectiveRegionEnabled{region}", ref enabled))
+                                UpdatePoseCorrectiveRegionOverride(region, o => o.Enabled = enabled);
+                        }
+                        else
+                        {
+                            var enabled = globalRegion.Enabled;
+                            using (ImRaii.Disabled())
+                                ImGui.Checkbox($"##ProfilePoseCorrectiveRegionEnabled{region}", ref enabled);
+                        }
+                        ImGui.TableNextColumn();
+                        var enabledOverride = regionOverride?.Enabled.HasValue == true;
+                        if (ImGui.Checkbox($"##ProfilePoseCorrectiveRegionEnabledOverride{region}", ref enabledOverride))
+                            UpdatePoseCorrectiveRegionOverride(region, o => o.Enabled = enabledOverride ? globalRegion.Enabled : null);
+
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted("Strength");
+                        ImGui.TableNextColumn();
+                        if (regionOverride?.Strength.HasValue == true)
+                        {
+                            var value = regionOverride.Strength.Value;
+                            ImGui.SetNextItemWidth(-1);
+                            if (ImGui.SliderFloat($"##ProfilePoseCorrectiveRegionStrength{region}", ref value, 0f, 1f, "%.2f"))
+                                UpdatePoseCorrectiveRegionOverride(region, o => o.Strength = value);
+                        }
+                        else
+                        {
+                            var value = globalRegion.Strength;
+                            using (ImRaii.Disabled())
+                            {
+                                ImGui.SetNextItemWidth(-1);
+                                ImGui.SliderFloat($"##ProfilePoseCorrectiveRegionStrength{region}", ref value, 0f, 1f, "%.2f");
+                            }
+                        }
+                        ImGui.TableNextColumn();
+                        var strengthOverride = regionOverride?.Strength.HasValue == true;
+                        if (ImGui.Checkbox($"##ProfilePoseCorrectiveRegionStrengthOverride{region}", ref strengthOverride))
+                            UpdatePoseCorrectiveRegionOverride(region, o => o.Strength = strengthOverride ? globalRegion.Strength : null);
+                    }
+                }
+
+                ImGui.TreePop();
+                ImGui.Spacing();
+            }
         }
 
         ImGui.Spacing();

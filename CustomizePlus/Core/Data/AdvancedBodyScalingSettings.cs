@@ -425,6 +425,14 @@ public sealed class AdvancedBodyScalingSettings
             ApplyAnimationSafeRegionBias(region, profile);
 
         PoseCorrectives.Strength = MathF.Min(PoseCorrectives.Strength, 0.85f);
+        foreach (var region in AdvancedBodyScalingPoseCorrectiveSystem.GetOrderedRegions())
+        {
+            var corrective = PoseCorrectives.GetRegionSettings(region);
+            corrective.Strength = MathF.Min(corrective.Strength, 0.85f);
+            corrective.Smoothing = MathF.Max(corrective.Smoothing, 0.7f);
+            corrective.ActivationDeadzone = MathF.Max(corrective.ActivationDeadzone, 0.06f);
+            corrective.MaxCorrection = MathF.Min(corrective.MaxCorrection, 0.035f);
+        }
     }
 
     private static void ApplyAnimationSafeRegionBias(AdvancedBodyRegion region, AdvancedBodyScalingRegionProfile profile)

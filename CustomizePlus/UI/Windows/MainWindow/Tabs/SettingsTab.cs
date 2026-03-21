@@ -21,6 +21,7 @@ using OtterGui.Widgets;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Numerics;
 using Penumbra.GameData.Interop;
 using Penumbra.GameData.Enums;
@@ -871,7 +872,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Adds a limited pose-driven corrective layer for neck/shoulder, clavicle/upper chest, and hip/upper thigh using supported bones only. This does not depend on unsupported IVCS2 physics-bone control.");
+        CtrlHelper.AddHoverText("Adds a broader supported-bone pose-space corrective layer for the major problem regions without depending on unsupported IVCS2 physics-bone control.");
 
         using (var disabled = ImRaii.Disabled(!poseCorrectives.Enabled))
         {
@@ -882,60 +883,96 @@ public class SettingsTab
                 _configuration.Save();
                 _armatureManager.RebindAllArmatures();
             }
-            CtrlHelper.AddHoverText("Scales the overall strength of pose-space corrective responses. Lower values keep the system lighter and more conservative.");
+            CtrlHelper.AddHoverText("Scales the overall strength of pose-space correctives across all supported regions.");
 
-            using var table = ImRaii.Table("PoseCorrectiveRegions", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp);
-            if (table)
+            foreach (var region in AdvancedBodyScalingPoseCorrectiveSystem.GetOrderedRegions())
             {
-                ImGui.TableSetupColumn("Region", ImGuiTableColumnFlags.WidthFixed, 165 * ImGuiHelpers.GlobalScale);
-                ImGui.TableSetupColumn("Enable", ImGuiTableColumnFlags.WidthFixed, 70 * ImGuiHelpers.GlobalScale);
-                ImGui.TableSetupColumn("Strength", ImGuiTableColumnFlags.WidthStretch);
-                ImGui.TableSetupColumn("Purpose", ImGuiTableColumnFlags.WidthStretch);
-                ImGui.TableHeadersRow();
+                var label = AdvancedBodyScalingPoseCorrectiveSystem.GetRegionLabel(region);
+                var description = AdvancedBodyScalingPoseCorrectiveSystem.GetRegionDescription(region);
+                if (!ImGui.TreeNode($"{label}##PoseCorrectiveRegion{region}"))
+                    continue;
 
-                DrawPoseCorrectiveRegionRow(settings, AdvancedBodyScalingCorrectiveRegion.NeckShoulder, "Neck / Shoulder", "Reduces detached-shoulder and long-neck transition issues in stressed poses.");
-                DrawPoseCorrectiveRegionRow(settings, AdvancedBodyScalingCorrectiveRegion.ClavicleUpperChest, "Clavicle / Upper Chest", "Softens harsh clavicle/chest bridge transitions under shoulder spread and torso tension.");
-                DrawPoseCorrectiveRegionRow(settings, AdvancedBodyScalingCorrectiveRegion.HipUpperThigh, "Hip / Upper Thigh", "Reduces abrupt pelvis-to-thigh mass jumps when the upper legs flex or twist.");
+                var regionSettings = poseCorrectives.GetRegionSettings(region);
+                var regionEnabled = regionSettings.Enabled;
+                if (ImGui.Checkbox($"Enable##PoseCorrectiveEnabled{region}", ref regionEnabled))
+                {
+                    regionSettings.Enabled = regionEnabled;
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                }
+
+                var regionStrength = regionSettings.Strength;
+                if (ImGui.SliderFloat($"Strength##PoseCorrectiveStrength{region}", ref regionStrength, 0f, 1f, "%.2f"))
+                {
+                    regionSettings.Strength = regionStrength;
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                }
+
+                if (ImGui.TreeNode($"Advanced tuning##PoseCorrectiveAdvanced{region}"))
+                {
+                    var threshold = regionSettings.ActivationThreshold;
+                    if (ImGui.SliderFloat($"Activation threshold##PoseCorrectiveThreshold{region}", ref threshold, 0f, 1f, "%.2f"))
+                    {
+                        regionSettings.ActivationThreshold = threshold;
+                        _configuration.Save();
+                        _armatureManager.RebindAllArmatures();
+                    }
+
+                    var deadzone = regionSettings.ActivationDeadzone;
+                    if (ImGui.SliderFloat($"Activation deadzone##PoseCorrectiveDeadzone{region}", ref deadzone, 0f, 0.25f, "%.2f"))
+                    {
+                        regionSettings.ActivationDeadzone = deadzone;
+                        _configuration.Save();
+                        _armatureManager.RebindAllArmatures();
+                    }
+
+                    var smoothing = regionSettings.Smoothing;
+                    if (ImGui.SliderFloat($"Smoothing##PoseCorrectiveSmoothing{region}", ref smoothing, 0f, 1f, "%.2f"))
+                    {
+                        regionSettings.Smoothing = smoothing;
+                        _configuration.Save();
+                        _armatureManager.RebindAllArmatures();
+                    }
+
+                    var falloff = regionSettings.Falloff;
+                    if (ImGui.SliderFloat($"Bridge falloff##PoseCorrectiveFalloff{region}", ref falloff, 0f, 1f, "%.2f"))
+                    {
+                        regionSettings.Falloff = falloff;
+                        _configuration.Save();
+                        _armatureManager.RebindAllArmatures();
+                    }
+
+                    var maxCorrection = regionSettings.MaxCorrection;
+                    if (ImGui.SliderFloat($"Max correction clamp##PoseCorrectiveMax{region}", ref maxCorrection, 0f, 0.10f, "%.3f"))
+                    {
+                        regionSettings.MaxCorrection = maxCorrection;
+                        _configuration.Save();
+                        _armatureManager.RebindAllArmatures();
+                    }
+
+                    var priority = regionSettings.Priority;
+                    if (ImGui.SliderFloat($"Blend priority##PoseCorrectivePriority{region}", ref priority, 0.1f, 1.5f, "%.2f"))
+                    {
+                        regionSettings.Priority = priority;
+                        _configuration.Save();
+                        _armatureManager.RebindAllArmatures();
+                    }
+
+                    ImGui.TextWrapped(description);
+                    ImGui.TreePop();
+                }
+                else
+                {
+                    ImGui.TextDisabled(description);
+                }
+
+                ImGui.TreePop();
+                ImGui.Spacing();
             }
         }
 
-        ImGui.Spacing();
         DrawPoseCorrectiveDebugReadout();
-    }
-
-    private void DrawPoseCorrectiveRegionRow(
-        AdvancedBodyScalingSettings settings,
-        AdvancedBodyScalingCorrectiveRegion region,
-        string label,
-        string description)
-    {
-        var regionSettings = settings.PoseCorrectives.GetRegionSettings(region);
-
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted(label);
-
-        ImGui.TableNextColumn();
-        var enabled = regionSettings.Enabled;
-        if (ImGui.Checkbox($"##PoseCorrectiveEnabled{region}", ref enabled))
-        {
-            regionSettings.Enabled = enabled;
-            _configuration.Save();
-            _armatureManager.RebindAllArmatures();
-        }
-
-        ImGui.TableNextColumn();
-        var strength = regionSettings.Strength;
-        if (ImGui.SliderFloat($"##PoseCorrectiveStrength{region}", ref strength, 0f, 1f, "%.2f"))
-        {
-            regionSettings.Strength = strength;
-            _configuration.Save();
-            _armatureManager.RebindAllArmatures();
-        }
-
-        ImGui.TableNextColumn();
-        ImGui.TextWrapped(description);
     }
 
     private void DrawPoseCorrectiveDebugReadout()
@@ -953,6 +990,7 @@ public class SettingsTab
 
         ImGui.TextDisabled($"Runtime path: {GetPoseCorrectivePathLabel(path)}");
         CtrlHelper.AddHoverText(pathDescription);
+        ImGui.TextDisabled($"Settings source: {(debugState?.SettingsSourceLabel ?? "Global settings")}");
 
         if (debugState == null)
         {
@@ -967,11 +1005,14 @@ public class SettingsTab
         }
 
         ImGui.TextUnformatted("Currently active:");
-        foreach (var region in debugState.ActiveRegions)
+        foreach (var region in debugState.ActiveRegions.OrderByDescending(entry => entry.Strength))
         {
             ImGui.Bullet();
             ImGui.SameLine();
-            ImGui.TextWrapped($"{region.Label} ({region.Strength:0.00}) - {region.DriverSummary}. {region.Description}");
+            ImGui.TextWrapped($"{region.Label}: driver {region.DriverStrength:0.00}, activation {region.Activation:0.00}, corrective {region.Strength:0.00}. {region.DriverSummary}.");
+            ImGui.Indent();
+            ImGui.TextDisabled(region.Description);
+            ImGui.Unindent();
         }
     }
 

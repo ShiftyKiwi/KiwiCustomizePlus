@@ -30,6 +30,8 @@ public sealed class AdvancedBodyScalingOverrides
     public bool? Enabled { get; set; }
     public AdvancedBodyScalingMode? Mode { get; set; }
     public bool? AnimationSafeModeEnabled { get; set; }
+    public bool? PoseCorrectivesEnabled { get; set; }
+    public float? PoseCorrectiveStrength { get; set; }
     public float? SurfaceBalancingStrength { get; set; }
     public float? MassRedistributionStrength { get; set; }
     public AdvancedBodyScalingGuardrailMode? GuardrailMode { get; set; }
@@ -39,6 +41,7 @@ public sealed class AdvancedBodyScalingOverrides
     public float? NeckShoulderBlendStrength { get; set; }
     public float? ClavicleShoulderSmoothing { get; set; }
     public Dictionary<AdvancedBodyRegion, AdvancedBodyScalingRegionProfileOverrides> RegionOverrides { get; set; } = new();
+    public Dictionary<AdvancedBodyScalingCorrectiveRegion, AdvancedBodyScalingCorrectiveRegionOverrides> PoseCorrectiveRegionOverrides { get; set; } = new();
 
     public AdvancedBodyScalingSettings MergeOnto(AdvancedBodyScalingSettings baseline)
     {
@@ -52,6 +55,12 @@ public sealed class AdvancedBodyScalingOverrides
 
         if (AnimationSafeModeEnabled.HasValue)
             merged.AnimationSafeModeEnabled = AnimationSafeModeEnabled.Value;
+
+        if (PoseCorrectivesEnabled.HasValue)
+            merged.PoseCorrectives.Enabled = PoseCorrectivesEnabled.Value;
+
+        if (PoseCorrectiveStrength.HasValue)
+            merged.PoseCorrectives.Strength = PoseCorrectiveStrength.Value;
 
         if (SurfaceBalancingStrength.HasValue)
             merged.SurfaceBalancingStrength = SurfaceBalancingStrength.Value;
@@ -89,6 +98,18 @@ public sealed class AdvancedBodyScalingOverrides
             }
         }
 
+        if (PoseCorrectiveRegionOverrides.Count > 0)
+        {
+            foreach (var (region, overrides) in PoseCorrectiveRegionOverrides)
+            {
+                if (overrides == null)
+                    continue;
+
+                var profile = merged.PoseCorrectives.GetRegionSettings(region);
+                overrides.ApplyTo(profile);
+            }
+        }
+
         return merged;
     }
 
@@ -98,6 +119,8 @@ public sealed class AdvancedBodyScalingOverrides
             Enabled = Enabled,
             Mode = Mode,
             AnimationSafeModeEnabled = AnimationSafeModeEnabled,
+            PoseCorrectivesEnabled = PoseCorrectivesEnabled,
+            PoseCorrectiveStrength = PoseCorrectiveStrength,
             SurfaceBalancingStrength = SurfaceBalancingStrength,
             MassRedistributionStrength = MassRedistributionStrength,
             GuardrailMode = GuardrailMode,
@@ -106,7 +129,8 @@ public sealed class AdvancedBodyScalingOverrides
             NeckLengthCompensation = NeckLengthCompensation,
             NeckShoulderBlendStrength = NeckShoulderBlendStrength,
             ClavicleShoulderSmoothing = ClavicleShoulderSmoothing,
-            RegionOverrides = RegionOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy())
+            RegionOverrides = RegionOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
+            PoseCorrectiveRegionOverrides = PoseCorrectiveRegionOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy())
         };
 }
 
@@ -176,5 +200,30 @@ public sealed class AdvancedBodyScalingRegionProfileOverrides
             AllowNaturalization = AllowNaturalization,
             AllowGuardrails = AllowGuardrails,
             AllowPoseValidation = AllowPoseValidation
+        };
+}
+
+[Serializable]
+public sealed class AdvancedBodyScalingCorrectiveRegionOverrides
+{
+    public bool? Enabled { get; set; }
+    public float? Strength { get; set; }
+
+    public bool IsEmpty => !Enabled.HasValue && !Strength.HasValue;
+
+    public void ApplyTo(AdvancedBodyScalingCorrectiveRegionSettings profile)
+    {
+        if (Enabled.HasValue)
+            profile.Enabled = Enabled.Value;
+
+        if (Strength.HasValue)
+            profile.Strength = Strength.Value;
+    }
+
+    public AdvancedBodyScalingCorrectiveRegionOverrides DeepCopy()
+        => new()
+        {
+            Enabled = Enabled,
+            Strength = Strength,
         };
 }

@@ -19,6 +19,7 @@ internal sealed class AdvancedBodyScalingDebugReport
     public Dictionary<string, float> FinalScales { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, float> PropagationDeltas { get; } = new(StringComparer.Ordinal);
     public List<GuardrailCorrection> GuardrailCorrections { get; } = new();
+    public List<AdvancedBodyScalingCorrectiveDebugRegionState> EstimatedPoseCorrectives { get; } = new();
 
     public sealed class GuardrailCorrection
     {

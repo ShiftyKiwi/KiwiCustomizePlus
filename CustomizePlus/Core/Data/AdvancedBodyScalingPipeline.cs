@@ -94,6 +94,7 @@ internal static class AdvancedBodyScalingPipeline
         {
             ApplyNeckCompensation(output, userTransforms, effectiveSettings);
             ApplyPinnedScaleSafety(output, userTransforms, debug);
+            PopulateEstimatedPoseCorrectives(debug, output, effectiveSettings);
             return output;
         }
 
@@ -208,8 +209,21 @@ internal static class AdvancedBodyScalingPipeline
 
         ApplyNeckCompensation(output, userTransforms, effectiveSettings);
         ApplyPinnedScaleSafety(output, userTransforms, debug);
+        PopulateEstimatedPoseCorrectives(debug, output, effectiveSettings);
 
         return output;
+    }
+
+    private static void PopulateEstimatedPoseCorrectives(
+        AdvancedBodyScalingDebugReport? debug,
+        IReadOnlyDictionary<string, BoneTransform> transforms,
+        AdvancedBodyScalingSettings settings)
+    {
+        if (debug == null)
+            return;
+
+        debug.EstimatedPoseCorrectives.Clear();
+        debug.EstimatedPoseCorrectives.AddRange(AdvancedBodyScalingPoseCorrectiveSystem.EstimateStaticSupport(transforms, settings));
     }
 
     internal static BodyAnalysisResult Analyze(
@@ -258,8 +272,48 @@ internal static class AdvancedBodyScalingPipeline
                 suggestedFixes[kvp.Key] = kvp.Value.DeepCopy();
         }
 
-        return new BodyAnalysisResult(surfaceSmoothness, proportionBalance, symmetry, issues, suggestedFixes);
+        var correctiveStressReport = AdvancedBodyScalingStressTestHarness.Run(
+            suggestedFixes.Count > 0 ? suggested : userTransforms,
+            tunedSettings,
+            "Body analyzer");
+
+        return new BodyAnalysisResult(
+            surfaceSmoothness,
+            proportionBalance,
+            symmetry,
+            issues,
+            suggestedFixes,
+            BuildPoseCorrectiveSummary(correctiveStressReport),
+            BuildPoseCorrectiveHints(correctiveStressReport));
     }
+
+
+    private static string BuildPoseCorrectiveSummary(AdvancedBodyScalingStressTestReport report)
+    {
+        var active = report.RegionSummary
+            .Where(region => region.CorrectiveIntensity > 0.05f)
+            .Take(2)
+            .ToList();
+
+        if (active.Count == 0)
+            return report.BaseOverallScore == report.OverallScore
+                ? "Pose-space correctives are available, but they are not strongly engaged for this setup right now."
+                : $"Pose-space correctives are lightly active and trim the estimated overall animation risk from {report.BaseOverallScore} to {report.OverallScore}.";
+
+        var focus = string.Join(" and ", active.Select(region => region.RegionName));
+        return report.BaseOverallScore == report.OverallScore
+            ? $"Pose-space correctives are most likely to engage around {focus}, but the current heuristics expect only a modest change in overall risk."
+            : $"Pose-space correctives are most likely to help around {focus}, trimming the estimated overall animation risk from {report.BaseOverallScore} to {report.OverallScore}.";
+    }
+
+    private static IReadOnlyList<string> BuildPoseCorrectiveHints(AdvancedBodyScalingStressTestReport report)
+        => report.RegionSummary
+            .Where(region => region.CorrectiveIntensity > 0.05f)
+            .OrderByDescending(region => region.CorrectiveReductionScore)
+            .Take(3)
+            .Select(region =>
+                $"{region.RegionName}: {region.CorrectiveSummary}")
+            .ToList();
 
     private static ModeTuning GetTuning(AdvancedBodyScalingMode mode, bool animationSafeMode)
     {
@@ -1062,19 +1116,25 @@ internal sealed class BodyAnalysisResult
     public int Symmetry { get; }
     public IReadOnlyList<string> Issues { get; }
     public IReadOnlyDictionary<string, BoneTransform> SuggestedFixes { get; }
+    public string PoseCorrectiveSummary { get; }
+    public IReadOnlyList<string> PoseCorrectiveHints { get; }
 
     public BodyAnalysisResult(
         int surfaceSmoothness,
         int proportionBalance,
         int symmetry,
         IReadOnlyList<string> issues,
-        IReadOnlyDictionary<string, BoneTransform> suggestedFixes)
+        IReadOnlyDictionary<string, BoneTransform> suggestedFixes,
+        string poseCorrectiveSummary,
+        IReadOnlyList<string> poseCorrectiveHints)
     {
         SurfaceSmoothness = surfaceSmoothness;
         ProportionBalance = proportionBalance;
         Symmetry = symmetry;
         Issues = issues;
         SuggestedFixes = suggestedFixes;
+        PoseCorrectiveSummary = poseCorrectiveSummary;
+        PoseCorrectiveHints = poseCorrectiveHints;
     }
 }
 

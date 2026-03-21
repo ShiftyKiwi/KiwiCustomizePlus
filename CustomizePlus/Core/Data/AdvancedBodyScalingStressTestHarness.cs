@@ -11,33 +11,31 @@ internal enum AdvancedBodyScalingRiskLevel
 {
     Low = 0,
     Moderate = 1,
-    High = 2
-}
-
-internal enum AdvancedBodyScalingStressRegion
-{
-    NeckShoulder = 0,
-    ClavicleUpperChest = 1,
-    ElbowForearm = 2,
-    WaistHips = 3,
-    ThighKneeCalf = 4
+    High = 2,
 }
 
 internal sealed class AdvancedBodyScalingRegionStressResult
 {
-    public required AdvancedBodyScalingStressRegion Region { get; init; }
+    public required AdvancedBodyScalingCorrectiveRegion Region { get; init; }
     public required string RegionName { get; init; }
+    public required int BaseScore { get; init; }
     public required int Score { get; init; }
+    public required int CorrectiveReductionScore { get; init; }
+    public required float CorrectiveIntensity { get; init; }
+    public required AdvancedBodyScalingRiskLevel BaseRiskLevel { get; init; }
     public required AdvancedBodyScalingRiskLevel RiskLevel { get; init; }
     public required IReadOnlyList<string> Reasons { get; init; }
     public required IReadOnlyList<string> Bones { get; init; }
+    public string CorrectiveSummary { get; init; } = string.Empty;
 }
 
 internal sealed class AdvancedBodyScalingPoseStressResult
 {
     public required string Name { get; init; }
     public required string Description { get; init; }
+    public required int BaseScore { get; init; }
     public required int Score { get; init; }
+    public required AdvancedBodyScalingRiskLevel BaseRiskLevel { get; init; }
     public required AdvancedBodyScalingRiskLevel RiskLevel { get; init; }
     public required IReadOnlyList<AdvancedBodyScalingRegionStressResult> Regions { get; init; }
 }
@@ -45,7 +43,9 @@ internal sealed class AdvancedBodyScalingPoseStressResult
 internal sealed class AdvancedBodyScalingStressTestReport
 {
     public required string SourceLabel { get; init; }
+    public required int BaseOverallScore { get; init; }
     public required int OverallScore { get; init; }
+    public required AdvancedBodyScalingRiskLevel BaseOverallRisk { get; init; }
     public required AdvancedBodyScalingRiskLevel OverallRisk { get; init; }
     public required string Summary { get; init; }
     public required IReadOnlyList<AdvancedBodyScalingPoseStressResult> Poses { get; init; }
@@ -62,8 +62,8 @@ internal static class AdvancedBodyScalingStressTestHarness
     private static readonly string[] UpperArmBones = { "j_ude_a_l", "j_ude_a_r" };
     private static readonly string[] ForearmBones = { "j_ude_b_l", "j_ude_b_r" };
     private static readonly string[] HandBones = { "n_hte_l", "n_hte_r", "j_te_l", "j_te_r" };
-    private static readonly string[] WaistBones = { "j_kosi", "n_hara" };
-    private static readonly string[] HipBones = { "iv_shiri_l", "iv_shiri_r", "ya_shiri_phys_l", "ya_shiri_phys_r" };
+    private static readonly string[] WaistBones = { "j_sebo_a", "j_kosi", "n_hara" };
+    private static readonly string[] HipBones = { "j_kosi", "n_hara" };
     private static readonly string[] ThighBones = { "j_asi_a_l", "j_asi_a_r", "j_asi_b_l", "j_asi_b_r" };
     private static readonly string[] CalfBones = { "j_asi_c_l", "j_asi_c_r" };
     private static readonly string[] FootBones = { "j_asi_d_l", "j_asi_d_r" };
@@ -71,7 +71,7 @@ internal static class AdvancedBodyScalingStressTestHarness
     private sealed record PoseDefinition(
         string Name,
         string Description,
-        IReadOnlyDictionary<AdvancedBodyScalingStressRegion, float> RegionWeights);
+        IReadOnlyDictionary<AdvancedBodyScalingCorrectiveRegion, float> RegionWeights);
 
     private sealed record RegionEvaluation(float Score, IReadOnlyList<string> Reasons, IReadOnlyList<string> Bones);
 
@@ -79,53 +79,60 @@ internal static class AdvancedBodyScalingStressTestHarness
     {
         new PoseDefinition(
             "Arms raised",
-            "Checks neck/shoulder lift, clavicle continuity, and elbow taper under overhead motion.",
-            new Dictionary<AdvancedBodyScalingStressRegion, float>
+            "Checks neck and shoulder continuity, clavicle/chest bridging, and elbow taper under overhead motion.",
+            new Dictionary<AdvancedBodyScalingCorrectiveRegion, float>
             {
-                [AdvancedBodyScalingStressRegion.NeckShoulder] = 1.00f,
-                [AdvancedBodyScalingStressRegion.ClavicleUpperChest] = 0.95f,
-                [AdvancedBodyScalingStressRegion.ElbowForearm] = 0.85f,
+                [AdvancedBodyScalingCorrectiveRegion.NeckShoulder] = 0.95f,
+                [AdvancedBodyScalingCorrectiveRegion.ClavicleUpperChest] = 0.95f,
+                [AdvancedBodyScalingCorrectiveRegion.ShoulderUpperArm] = 1.00f,
+                [AdvancedBodyScalingCorrectiveRegion.ElbowForearm] = 0.82f,
             }),
         new PoseDefinition(
             "Wide arm spread",
-            "Checks detached-shoulder risk and forearm taper when arms are pulled away from the torso.",
-            new Dictionary<AdvancedBodyScalingStressRegion, float>
+            "Checks detached-shoulder risk and upper-arm / forearm continuity when arms are pulled away from the torso.",
+            new Dictionary<AdvancedBodyScalingCorrectiveRegion, float>
             {
-                [AdvancedBodyScalingStressRegion.NeckShoulder] = 0.90f,
-                [AdvancedBodyScalingStressRegion.ClavicleUpperChest] = 1.00f,
-                [AdvancedBodyScalingStressRegion.ElbowForearm] = 0.80f,
+                [AdvancedBodyScalingCorrectiveRegion.NeckShoulder] = 0.80f,
+                [AdvancedBodyScalingCorrectiveRegion.ClavicleUpperChest] = 1.00f,
+                [AdvancedBodyScalingCorrectiveRegion.ShoulderUpperArm] = 0.95f,
+                [AdvancedBodyScalingCorrectiveRegion.ElbowForearm] = 0.78f,
             }),
         new PoseDefinition(
             "Torso twist",
-            "Checks chest-to-shoulder continuity and waist-to-hip proportion stability in rotation.",
-            new Dictionary<AdvancedBodyScalingStressRegion, float>
+            "Checks upper torso bridge quality and how well the waist/hip chain stays continuous under rotation.",
+            new Dictionary<AdvancedBodyScalingCorrectiveRegion, float>
             {
-                [AdvancedBodyScalingStressRegion.ClavicleUpperChest] = 0.75f,
-                [AdvancedBodyScalingStressRegion.WaistHips] = 1.00f,
+                [AdvancedBodyScalingCorrectiveRegion.NeckShoulder] = 0.45f,
+                [AdvancedBodyScalingCorrectiveRegion.ClavicleUpperChest] = 0.72f,
+                [AdvancedBodyScalingCorrectiveRegion.WaistHips] = 1.00f,
+                [AdvancedBodyScalingCorrectiveRegion.HipUpperThigh] = 0.62f,
             }),
         new PoseDefinition(
             "Forward bend / squat",
-            "Checks waist compression and thigh/calf transitions in heavy bend poses.",
-            new Dictionary<AdvancedBodyScalingStressRegion, float>
+            "Checks waist compression plus hip/thigh and knee/calf continuity under heavy bend stress.",
+            new Dictionary<AdvancedBodyScalingCorrectiveRegion, float>
             {
-                [AdvancedBodyScalingStressRegion.WaistHips] = 0.95f,
-                [AdvancedBodyScalingStressRegion.ThighKneeCalf] = 1.00f,
+                [AdvancedBodyScalingCorrectiveRegion.WaistHips] = 0.90f,
+                [AdvancedBodyScalingCorrectiveRegion.HipUpperThigh] = 1.00f,
+                [AdvancedBodyScalingCorrectiveRegion.ThighKneeCalf] = 0.92f,
             }),
         new PoseDefinition(
             "Stride / extended leg",
-            "Checks pelvis-to-thigh balance and knee/calf stability in leg extension.",
-            new Dictionary<AdvancedBodyScalingStressRegion, float>
+            "Checks pelvis-to-thigh balance and thigh/knee/calf continuity in leg extension.",
+            new Dictionary<AdvancedBodyScalingCorrectiveRegion, float>
             {
-                [AdvancedBodyScalingStressRegion.WaistHips] = 0.70f,
-                [AdvancedBodyScalingStressRegion.ThighKneeCalf] = 1.00f,
+                [AdvancedBodyScalingCorrectiveRegion.WaistHips] = 0.65f,
+                [AdvancedBodyScalingCorrectiveRegion.HipUpperThigh] = 1.00f,
+                [AdvancedBodyScalingCorrectiveRegion.ThighKneeCalf] = 0.95f,
             }),
         new PoseDefinition(
             "Head tilt / neck stress",
-            "Checks long-neck and neck-to-shoulder bridge risk under head tilt and head turn motion.",
-            new Dictionary<AdvancedBodyScalingStressRegion, float>
+            "Checks long-neck, clavicle bridge, and upper shoulder continuity when the head and upper torso are stressed.",
+            new Dictionary<AdvancedBodyScalingCorrectiveRegion, float>
             {
-                [AdvancedBodyScalingStressRegion.NeckShoulder] = 1.00f,
-                [AdvancedBodyScalingStressRegion.ClavicleUpperChest] = 0.80f,
+                [AdvancedBodyScalingCorrectiveRegion.NeckShoulder] = 1.00f,
+                [AdvancedBodyScalingCorrectiveRegion.ClavicleUpperChest] = 0.76f,
+                [AdvancedBodyScalingCorrectiveRegion.ShoulderUpperArm] = 0.45f,
             }),
     };
 
@@ -136,68 +143,92 @@ internal static class AdvancedBodyScalingStressTestHarness
     {
         var effectiveSettings = settings.CreateRuntimeResolvedSettings();
         var baseEvaluations = EvaluateBaseRegions(transforms, effectiveSettings);
-        var poses = PoseDefinitions.Select(definition => BuildPoseResult(definition, baseEvaluations, effectiveSettings)).ToList();
+        var poses = PoseDefinitions.Select(definition => BuildPoseResult(definition, transforms, baseEvaluations, effectiveSettings)).ToList();
         var regionSummary = BuildRegionSummary(poses);
-        var overallScore = ComputeOverallScore(poses, regionSummary);
-        var overallRisk = ToRiskLevel(overallScore);
+        var baseOverallScore = ComputeOverallScore(poses, regionSummary, static pose => pose.BaseScore, static region => region.BaseScore);
+        var overallScore = ComputeOverallScore(poses, regionSummary, static pose => pose.Score, static region => region.Score);
 
         return new AdvancedBodyScalingStressTestReport
         {
             SourceLabel = sourceLabel,
+            BaseOverallScore = baseOverallScore,
             OverallScore = overallScore,
-            OverallRisk = overallRisk,
-            Summary = BuildSummary(overallRisk, poses, regionSummary),
+            BaseOverallRisk = ToRiskLevel(baseOverallScore),
+            OverallRisk = ToRiskLevel(overallScore),
+            Summary = BuildSummary(baseOverallScore, overallScore, ToRiskLevel(overallScore), poses, regionSummary),
             Poses = poses,
             RegionSummary = regionSummary,
         };
     }
 
-    private static Dictionary<AdvancedBodyScalingStressRegion, RegionEvaluation> EvaluateBaseRegions(
+    private static Dictionary<AdvancedBodyScalingCorrectiveRegion, RegionEvaluation> EvaluateBaseRegions(
         IReadOnlyDictionary<string, BoneTransform> transforms,
         AdvancedBodyScalingSettings settings)
         => new()
         {
-            [AdvancedBodyScalingStressRegion.NeckShoulder] = EvaluateNeckShoulder(transforms, settings),
-            [AdvancedBodyScalingStressRegion.ClavicleUpperChest] = EvaluateClavicleChest(transforms, settings),
-            [AdvancedBodyScalingStressRegion.ElbowForearm] = EvaluateElbowForearm(transforms, settings),
-            [AdvancedBodyScalingStressRegion.WaistHips] = EvaluateWaistHips(transforms, settings),
-            [AdvancedBodyScalingStressRegion.ThighKneeCalf] = EvaluateLegs(transforms, settings),
+            [AdvancedBodyScalingCorrectiveRegion.NeckShoulder] = EvaluateNeckShoulder(transforms, settings),
+            [AdvancedBodyScalingCorrectiveRegion.ClavicleUpperChest] = EvaluateClavicleChest(transforms, settings),
+            [AdvancedBodyScalingCorrectiveRegion.ShoulderUpperArm] = EvaluateShoulderUpperArm(transforms, settings),
+            [AdvancedBodyScalingCorrectiveRegion.ElbowForearm] = EvaluateElbowForearm(transforms, settings),
+            [AdvancedBodyScalingCorrectiveRegion.WaistHips] = EvaluateWaistHips(transforms, settings),
+            [AdvancedBodyScalingCorrectiveRegion.HipUpperThigh] = EvaluateHipUpperThigh(transforms, settings),
+            [AdvancedBodyScalingCorrectiveRegion.ThighKneeCalf] = EvaluateLegs(transforms, settings),
         };
 
     private static AdvancedBodyScalingPoseStressResult BuildPoseResult(
         PoseDefinition definition,
-        IReadOnlyDictionary<AdvancedBodyScalingStressRegion, RegionEvaluation> baseEvaluations,
+        IReadOnlyDictionary<string, BoneTransform> transforms,
+        IReadOnlyDictionary<AdvancedBodyScalingCorrectiveRegion, RegionEvaluation> baseEvaluations,
         AdvancedBodyScalingSettings settings)
     {
+        var estimates = AdvancedBodyScalingPoseCorrectiveSystem
+            .EstimateStaticSupport(transforms, settings, definition.RegionWeights)
+            .ToDictionary(entry => entry.Region, entry => entry);
+
         var regions = new List<AdvancedBodyScalingRegionStressResult>();
         foreach (var (region, weight) in definition.RegionWeights)
         {
             var evaluation = baseEvaluations[region];
-            var score = ApplyPoseWeight(region, evaluation.Score, weight, definition.Name, settings);
+            var baseScore = ApplyPoseWeight(region, evaluation.Score, weight, definition.Name, settings);
             var reasons = evaluation.Reasons.Count == 0
                 ? new[] { "No strong instability heuristic fired for this region in this pose." }
                 : evaluation.Reasons;
 
+            estimates.TryGetValue(region, out var estimate);
+            var correctiveIntensity = estimate?.Strength ?? 0f;
+            var reductionFraction = estimate?.EstimatedRiskReduction ?? 0f;
+            var correctiveReduction = ClampScore(baseScore * reductionFraction);
+            var finalScore = ClampScore(baseScore - correctiveReduction);
+            var correctiveSummary = estimate == null || correctiveIntensity <= 0.005f
+                ? "No strong pose-space corrective response is expected for this region in this pose."
+                : $"Estimated corrective activity {correctiveIntensity:0.00} via {estimate.DriverSummary}, trimming about {correctiveReduction} risk points.";
+
             regions.Add(new AdvancedBodyScalingRegionStressResult
             {
                 Region = region,
-                RegionName = GetRegionName(region),
-                Score = score,
-                RiskLevel = ToRiskLevel(score),
+                RegionName = AdvancedBodyScalingPoseCorrectiveSystem.GetRegionLabel(region),
+                BaseScore = baseScore,
+                Score = finalScore,
+                CorrectiveReductionScore = correctiveReduction,
+                CorrectiveIntensity = correctiveIntensity,
+                BaseRiskLevel = ToRiskLevel(baseScore),
+                RiskLevel = ToRiskLevel(finalScore),
                 Reasons = reasons,
                 Bones = evaluation.Bones,
+                CorrectiveSummary = correctiveSummary,
             });
         }
 
-        var maxScore = regions.Count == 0 ? 0 : regions.Max(r => r.Score);
-        var avgScore = regions.Count == 0 ? 0 : (int)MathF.Round((float)regions.Average(r => r.Score));
-        var overallScore = ClampScore((maxScore * 0.65f) + (avgScore * 0.35f));
+        var basePoseScore = ComputePoseScore(regions, static region => region.BaseScore);
+        var finalPoseScore = ComputePoseScore(regions, static region => region.Score);
         return new AdvancedBodyScalingPoseStressResult
         {
             Name = definition.Name,
             Description = definition.Description,
-            Score = overallScore,
-            RiskLevel = ToRiskLevel(overallScore),
+            BaseScore = basePoseScore,
+            Score = finalPoseScore,
+            BaseRiskLevel = ToRiskLevel(basePoseScore),
+            RiskLevel = ToRiskLevel(finalPoseScore),
             Regions = regions.OrderByDescending(r => r.Score).ToList(),
         };
     }
@@ -209,21 +240,28 @@ internal static class AdvancedBodyScalingStressTestHarness
             .GroupBy(region => region.Region)
             .Select(group =>
             {
-                var highest = group.OrderByDescending(entry => entry.Score).First();
+                var highestAfter = group.OrderByDescending(entry => entry.Score).First();
+                var highestReduction = group.OrderByDescending(entry => entry.CorrectiveReductionScore).First();
                 var reasons = group
                     .SelectMany(entry => entry.Reasons)
                     .Distinct(StringComparer.Ordinal)
                     .Take(3)
                     .ToList();
+                var baseScore = group.Max(entry => entry.BaseScore);
 
                 return new AdvancedBodyScalingRegionStressResult
                 {
-                    Region = highest.Region,
-                    RegionName = highest.RegionName,
-                    Score = highest.Score,
-                    RiskLevel = highest.RiskLevel,
+                    Region = highestAfter.Region,
+                    RegionName = highestAfter.RegionName,
+                    BaseScore = baseScore,
+                    Score = highestAfter.Score,
+                    CorrectiveReductionScore = group.Max(entry => entry.CorrectiveReductionScore),
+                    CorrectiveIntensity = group.Max(entry => entry.CorrectiveIntensity),
+                    BaseRiskLevel = ToRiskLevel(baseScore),
+                    RiskLevel = highestAfter.RiskLevel,
                     Reasons = reasons,
-                    Bones = highest.Bones,
+                    Bones = highestAfter.Bones,
+                    CorrectiveSummary = highestReduction.CorrectiveSummary,
                 };
             })
             .OrderByDescending(result => result.Score)
@@ -231,32 +269,53 @@ internal static class AdvancedBodyScalingStressTestHarness
 
     private static int ComputeOverallScore(
         IReadOnlyList<AdvancedBodyScalingPoseStressResult> poses,
-        IReadOnlyList<AdvancedBodyScalingRegionStressResult> regionSummary)
+        IReadOnlyList<AdvancedBodyScalingRegionStressResult> regionSummary,
+        Func<AdvancedBodyScalingPoseStressResult, int> poseScoreSelector,
+        Func<AdvancedBodyScalingRegionStressResult, int> regionScoreSelector)
     {
         if (poses.Count == 0)
             return 0;
 
-        var poseMax = poses.Max(pose => pose.Score);
-        var poseAverage = (int)MathF.Round((float)poses.Average(pose => pose.Score));
-        var regionPressure = regionSummary.Take(2).Sum(region => region.Score) / Math.Max(1, Math.Min(regionSummary.Count, 2));
+        var poseMax = poses.Max(poseScoreSelector);
+        var poseAverage = (int)MathF.Round((float)poses.Average(poseScoreSelector));
+        var topRegions = regionSummary.Take(2).Select(regionScoreSelector).ToList();
+        var regionPressure = topRegions.Count == 0 ? 0 : topRegions.Sum() / topRegions.Count;
         return ClampScore((poseMax * 0.45f) + (poseAverage * 0.35f) + (regionPressure * 0.20f));
     }
 
+    private static int ComputePoseScore(
+        IReadOnlyList<AdvancedBodyScalingRegionStressResult> regions,
+        Func<AdvancedBodyScalingRegionStressResult, int> selector)
+    {
+        if (regions.Count == 0)
+            return 0;
+
+        var maxScore = regions.Max(selector);
+        var averageScore = (int)MathF.Round((float)regions.Average(selector));
+        return ClampScore((maxScore * 0.65f) + (averageScore * 0.35f));
+    }
+
     private static string BuildSummary(
+        int baseOverallScore,
+        int overallScore,
         AdvancedBodyScalingRiskLevel overallRisk,
         IReadOnlyList<AdvancedBodyScalingPoseStressResult> poses,
         IReadOnlyList<AdvancedBodyScalingRegionStressResult> regionSummary)
     {
         var hottest = regionSummary.Take(2).Select(region => region.RegionName).ToList();
         var stressedPose = poses.OrderByDescending(pose => pose.Score).FirstOrDefault();
-        var hotSpotText = hottest.Count == 0 ? "No clear hot spots" : string.Join(" and ", hottest);
+        var hotSpotText = hottest.Count == 0 ? "no clear hot spots" : string.Join(" and ", hottest);
         var poseText = stressedPose == null ? "No pose data" : stressedPose.Name;
+        var reduction = Math.Max(0, baseOverallScore - overallScore);
+        var correctiveText = reduction > 0
+            ? $" Active pose-space correctives trim about {reduction} overall risk points in the current tuning."
+            : " Pose-space correctives are either off or not strongly engaged for this setup.";
 
         return overallRisk switch
         {
-            AdvancedBodyScalingRiskLevel.High => $"High animation risk. {hotSpotText} look most fragile, with '{poseText}' being the most stress-prone test.",
-            AdvancedBodyScalingRiskLevel.Moderate => $"Moderate animation risk. {hotSpotText} should be checked first, especially under '{poseText}'.",
-            _ => $"Low animation risk. The current setup stays fairly stable across the built-in pose checks, with '{poseText}' being the most demanding test.",
+            AdvancedBodyScalingRiskLevel.High => $"High animation risk. {hotSpotText} look most fragile, with '{poseText}' being the most stress-prone test.{correctiveText}",
+            AdvancedBodyScalingRiskLevel.Moderate => $"Moderate animation risk. {hotSpotText} should be checked first, especially under '{poseText}'.{correctiveText}",
+            _ => $"Low animation risk. The current setup stays fairly stable across the built-in pose checks, with '{poseText}' being the most demanding test.{correctiveText}",
         };
     }
 
@@ -350,9 +409,51 @@ internal static class AdvancedBodyScalingStressTestHarness
         }
 
         if (settings.AnimationSafeModeEnabled)
-            score *= 0.9f;
+            score *= 0.90f;
 
         return new RegionEvaluation(ClampScore(score), TrimReasons(reasons), ClavicleBones.Concat(ShoulderRootBones).Concat(ChestBridgeBones).ToArray());
+    }
+
+    private static RegionEvaluation EvaluateShoulderUpperArm(
+        IReadOnlyDictionary<string, BoneTransform> transforms,
+        AdvancedBodyScalingSettings settings)
+    {
+        var reasons = new List<string>();
+        var shoulderFrame = AverageUniformScale(transforms, ClavicleBones.Concat(ShoulderRootBones));
+        var upperArm = AverageUniformScale(transforms, UpperArmBones);
+        var ratio = upperArm <= 0.0001f ? 1f : shoulderFrame / upperArm;
+        var score = 0f;
+
+        if (ratio > 1.24f)
+        {
+            score += (ratio - 1.24f) * 120f;
+            reasons.Add("Shoulder frame mass is running ahead of the upper arm and can create a detached-shoulder look.");
+        }
+        else if (ratio < 0.84f)
+        {
+            score += (0.84f - ratio) * 120f;
+            reasons.Add("Upper arm mass is outpacing the shoulder bridge and can make the join look abrupt.");
+        }
+
+        var leftRight = MathF.Abs(
+            AverageUniformScale(transforms, new[] { "j_sako_l", "n_hkata_l", "j_ude_a_l" }) -
+            AverageUniformScale(transforms, new[] { "j_sako_r", "n_hkata_r", "j_ude_a_r" }));
+        if (leftRight > 0.16f)
+        {
+            score += (leftRight - 0.16f) * 115f;
+            reasons.Add("Left-right shoulder/upper-arm asymmetry may become obvious in mirrored arm poses.");
+        }
+
+        if (settings.PoseValidationMode == AdvancedBodyScalingPoseValidationMode.Off)
+        {
+            score += 6f;
+            reasons.Add("Pose-aware correction is off, so shoulder-to-arm continuity has less safety coverage.");
+        }
+
+        if (settings.AnimationSafeModeEnabled)
+            score *= 0.90f;
+
+        return new RegionEvaluation(ClampScore(score), TrimReasons(reasons), ClavicleBones.Concat(ShoulderRootBones).Concat(UpperArmBones).ToArray());
     }
 
     private static RegionEvaluation EvaluateElbowForearm(
@@ -410,26 +511,18 @@ internal static class AdvancedBodyScalingStressTestHarness
         var reasons = new List<string>();
         var waist = AverageUniformScale(transforms, WaistBones);
         var hips = AverageUniformScale(transforms, HipBones);
-        var thighs = AverageUniformScale(transforms, ThighBones);
         var ratio = waist <= 0.0001f ? 1f : hips / waist;
         var score = 0f;
 
-        if (ratio > 1.55f)
+        if (ratio > 1.42f)
         {
-            score += (ratio - 1.55f) * 120f;
-            reasons.Add("Hip mass is running far ahead of the waist and can clip or fold awkwardly in twists.");
+            score += (ratio - 1.42f) * 125f;
+            reasons.Add("Hip mass is running far ahead of the waist and can fold awkwardly in twists or bends.");
         }
-        else if (ratio < 1.05f)
+        else if (ratio < 0.92f)
         {
-            score += (1.05f - ratio) * 120f;
-            reasons.Add("Hip support is light relative to the waist and can look thin in bends or squats.");
-        }
-
-        var thighJump = MathF.Abs(hips - thighs);
-        if (thighJump > 0.18f)
-        {
-            score += (thighJump - 0.18f) * 155f;
-            reasons.Add("Pelvis-to-thigh mass changes too abruptly for stable leg articulation.");
+            score += (0.92f - ratio) * 120f;
+            reasons.Add("Waist support is outpacing the hips and can make the lower torso bridge look abrupt.");
         }
 
         if (settings.GuardrailMode == AdvancedBodyScalingGuardrailMode.Off)
@@ -439,9 +532,51 @@ internal static class AdvancedBodyScalingStressTestHarness
         }
 
         if (settings.AnimationSafeModeEnabled)
-            score *= 0.9f;
+            score *= 0.90f;
 
-        return new RegionEvaluation(ClampScore(score), TrimReasons(reasons), WaistBones.Concat(HipBones).Concat(ThighBones).ToArray());
+        return new RegionEvaluation(ClampScore(score), TrimReasons(reasons), WaistBones.Concat(HipBones).ToArray());
+    }
+
+    private static RegionEvaluation EvaluateHipUpperThigh(
+        IReadOnlyDictionary<string, BoneTransform> transforms,
+        AdvancedBodyScalingSettings settings)
+    {
+        var reasons = new List<string>();
+        var hips = AverageUniformScale(transforms, HipBones);
+        var thighs = AverageUniformScale(transforms, ThighBones);
+        var ratio = thighs <= 0.0001f ? 1f : hips / thighs;
+        var score = 0f;
+
+        if (ratio > 1.34f)
+        {
+            score += (ratio - 1.34f) * 130f;
+            reasons.Add("Pelvis support is outpacing the upper thigh and can create a hard mass jump at the leg root.");
+        }
+        else if (ratio < 0.88f)
+        {
+            score += (0.88f - ratio) * 125f;
+            reasons.Add("Upper thigh mass is running ahead of the hip anchor and can destabilize the bridge in stride poses.");
+        }
+
+        var leftRight = MathF.Abs(
+            AverageUniformScale(transforms, new[] { "j_kosi", "j_asi_a_l", "j_asi_b_l" }) -
+            AverageUniformScale(transforms, new[] { "j_kosi", "j_asi_a_r", "j_asi_b_r" }));
+        if (leftRight > 0.18f)
+        {
+            score += (leftRight - 0.18f) * 110f;
+            reasons.Add("Hip-to-thigh asymmetry may stand out when both legs share a strong stride or squat.");
+        }
+
+        if (settings.PoseValidationMode == AdvancedBodyScalingPoseValidationMode.Off)
+        {
+            score += 7f;
+            reasons.Add("Pose-aware correction is off, so hip-to-thigh continuity has less safety coverage.");
+        }
+
+        if (settings.AnimationSafeModeEnabled)
+            score *= 0.90f;
+
+        return new RegionEvaluation(ClampScore(score), TrimReasons(reasons), HipBones.Concat(ThighBones).ToArray());
     }
 
     private static RegionEvaluation EvaluateLegs(
@@ -493,7 +628,7 @@ internal static class AdvancedBodyScalingStressTestHarness
     }
 
     private static int ApplyPoseWeight(
-        AdvancedBodyScalingStressRegion region,
+        AdvancedBodyScalingCorrectiveRegion region,
         float baseScore,
         float weight,
         string poseName,
@@ -503,26 +638,29 @@ internal static class AdvancedBodyScalingStressTestHarness
 
         if (poseName is "Arms raised" or "Wide arm spread")
         {
-            if (region == AdvancedBodyScalingStressRegion.ElbowForearm && settings.PoseValidationMode == AdvancedBodyScalingPoseValidationMode.Off)
+            if (region == AdvancedBodyScalingCorrectiveRegion.ShoulderUpperArm && settings.PoseValidationMode == AdvancedBodyScalingPoseValidationMode.Off)
                 score += 6f;
 
-            if (region == AdvancedBodyScalingStressRegion.NeckShoulder && settings.NeckShoulderBlendStrength < 0.35f)
+            if (region == AdvancedBodyScalingCorrectiveRegion.NeckShoulder && settings.NeckShoulderBlendStrength < 0.35f)
                 score += 5f;
         }
 
         if (poseName is "Torso twist" or "Forward bend / squat")
         {
-            if (region == AdvancedBodyScalingStressRegion.WaistHips && settings.GuardrailMode == AdvancedBodyScalingGuardrailMode.Off)
+            if (region == AdvancedBodyScalingCorrectiveRegion.WaistHips && settings.GuardrailMode == AdvancedBodyScalingGuardrailMode.Off)
                 score += 6f;
         }
 
         if (poseName is "Stride / extended leg" or "Forward bend / squat")
         {
-            if (region == AdvancedBodyScalingStressRegion.ThighKneeCalf && settings.PoseValidationMode == AdvancedBodyScalingPoseValidationMode.Off)
+            if ((region == AdvancedBodyScalingCorrectiveRegion.HipUpperThigh || region == AdvancedBodyScalingCorrectiveRegion.ThighKneeCalf) &&
+                settings.PoseValidationMode == AdvancedBodyScalingPoseValidationMode.Off)
+            {
                 score += 6f;
+            }
         }
 
-        if (poseName == "Head tilt / neck stress" && region == AdvancedBodyScalingStressRegion.NeckShoulder)
+        if (poseName == "Head tilt / neck stress" && region == AdvancedBodyScalingCorrectiveRegion.NeckShoulder)
         {
             if (settings.NeckLengthCompensation <= 0.05f)
                 score += 8f;
@@ -543,17 +681,6 @@ internal static class AdvancedBodyScalingStressTestHarness
             >= 67 => AdvancedBodyScalingRiskLevel.High,
             >= 34 => AdvancedBodyScalingRiskLevel.Moderate,
             _ => AdvancedBodyScalingRiskLevel.Low,
-        };
-
-    private static string GetRegionName(AdvancedBodyScalingStressRegion region)
-        => region switch
-        {
-            AdvancedBodyScalingStressRegion.NeckShoulder => "Neck / Shoulder",
-            AdvancedBodyScalingStressRegion.ClavicleUpperChest => "Clavicle / Upper Chest",
-            AdvancedBodyScalingStressRegion.ElbowForearm => "Elbow / Forearm",
-            AdvancedBodyScalingStressRegion.WaistHips => "Waist / Hips",
-            AdvancedBodyScalingStressRegion.ThighKneeCalf => "Thigh / Knee / Calf",
-            _ => region.ToString(),
         };
 
     private static IReadOnlyList<string> TrimReasons(IReadOnlyList<string> reasons)
@@ -601,7 +728,7 @@ internal static class AdvancedBodyScalingStressTestHarness
     {
         X,
         Y,
-        Z
+        Z,
     }
 
     // TODO Phase 4: augment these heuristics with supported mesh/skin-weight-derived bone importance data when available.

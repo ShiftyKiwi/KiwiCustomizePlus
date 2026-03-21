@@ -228,6 +228,15 @@ public class TemplatePanel : IDisposable
                 ImGui.Text($"- {issue}");
         }
 
+        if (!string.IsNullOrWhiteSpace(analysisResult.PoseCorrectiveSummary))
+        {
+            ImGui.Spacing();
+            ImGui.TextUnformatted("Pose corrective outlook:");
+            ImGui.TextWrapped(analysisResult.PoseCorrectiveSummary);
+            foreach (var hint in analysisResult.PoseCorrectiveHints)
+                ImGui.BulletText(hint);
+        }
+
         ImGui.Spacing();
         var hasFixes = analysisResult.SuggestedFixes.Count > 0;
         using (var disabled = ImRaii.Disabled(!hasFixes))
@@ -401,8 +410,7 @@ public class TemplatePanel : IDisposable
         ImGui.Spacing();
         ImGui.Text($"Evaluation target: {_stressTestReport.SourceLabel}");
         ImGui.TextUnformatted("Overall animation risk:");
-        ImGui.SameLine();
-        DrawRiskBadge(_stressTestReport.OverallRisk, _stressTestReport.OverallScore);
+        DrawRiskTransition(_stressTestReport.BaseOverallRisk, _stressTestReport.BaseOverallScore, _stressTestReport.OverallRisk, _stressTestReport.OverallScore);
         ImGui.TextWrapped(_stressTestReport.Summary);
 
         if (_stressTestReport.RegionSummary.Count > 0)
@@ -413,9 +421,12 @@ public class TemplatePanel : IDisposable
             {
                 ImGui.Bullet();
                 ImGui.SameLine();
-                DrawRiskBadge(region.RiskLevel, region.Score);
+                ImGui.TextUnformatted(region.RegionName);
                 ImGui.SameLine();
-                ImGui.TextWrapped($"{region.RegionName} - {region.Reasons.FirstOrDefault() ?? "No major issue detected."}");
+                DrawRiskTransition(region.BaseRiskLevel, region.BaseScore, region.RiskLevel, region.Score);
+                ImGui.TextWrapped(region.Reasons.FirstOrDefault() ?? "No major issue detected.");
+                if (region.CorrectiveIntensity > 0.05f)
+                    ImGui.TextDisabled(region.CorrectiveSummary);
             }
         }
 
@@ -425,7 +436,7 @@ public class TemplatePanel : IDisposable
             if (!ImGui.TreeNode($"{pose.Name}##Stress{pose.Name}"))
                 continue;
 
-            DrawRiskBadge(pose.RiskLevel, pose.Score);
+            DrawRiskTransition(pose.BaseRiskLevel, pose.BaseScore, pose.RiskLevel, pose.Score);
             ImGui.TextWrapped(pose.Description);
 
             foreach (var region in pose.Regions)
@@ -433,7 +444,7 @@ public class TemplatePanel : IDisposable
                 ImGui.Spacing();
                 ImGui.TextUnformatted(region.RegionName);
                 ImGui.SameLine();
-                DrawRiskBadge(region.RiskLevel, region.Score);
+                DrawRiskTransition(region.BaseRiskLevel, region.BaseScore, region.RiskLevel, region.Score);
 
                 if (region.Reasons.Count == 0)
                 {
@@ -444,6 +455,9 @@ public class TemplatePanel : IDisposable
                     foreach (var reason in region.Reasons)
                         ImGui.BulletText(reason);
                 }
+
+                if (region.CorrectiveIntensity > 0.05f)
+                    ImGui.TextDisabled(region.CorrectiveSummary);
             }
 
             ImGui.TreePop();
@@ -592,6 +606,25 @@ public class TemplatePanel : IDisposable
             ImGui.BulletText($"Pose-aware corrections triggered in last preview: {poseAwareCorrections}");
 
             ImGui.Spacing();
+            ImGui.Text("Estimated pose-space correctives:");
+            if (debug.EstimatedPoseCorrectives.Count == 0)
+            {
+                ImGui.Text("None");
+            }
+            else
+            {
+                foreach (var entry in debug.EstimatedPoseCorrectives.Take(8))
+                {
+                    ImGui.Bullet();
+                    ImGui.SameLine();
+                    ImGui.TextWrapped($"{entry.Label}: driver {entry.DriverStrength:0.00}, activation {entry.Activation:0.00}, corrective {entry.Strength:0.00}, est. risk reduction {entry.EstimatedRiskReduction * 100f:0}%.");
+                    ImGui.Indent();
+                    ImGui.TextDisabled($"{entry.DriverSummary}. {entry.Description}");
+                    ImGui.Unindent();
+                }
+            }
+
+            ImGui.Spacing();
             ImGui.Text("Active curve chains:");
             var chainCount = 0;
             foreach (var chain in debug.ActiveCurveChains)
@@ -637,11 +670,25 @@ public class TemplatePanel : IDisposable
             else
             {
                 foreach (var entry in debug.GuardrailCorrections.Take(20))
-                {
                     ImGui.Text($"{entry.Description}: {entry.BeforeRatio:0.##} -> {entry.AfterRatio:0.##}");
-                }
             }
         }
+    }
+
+    private static void DrawRiskTransition(
+        AdvancedBodyScalingRiskLevel beforeRisk,
+        int beforeScore,
+        AdvancedBodyScalingRiskLevel afterRisk,
+        int afterScore)
+    {
+        DrawRiskBadge(beforeRisk, beforeScore);
+        if (beforeRisk == afterRisk && beforeScore == afterScore)
+            return;
+
+        ImGui.SameLine();
+        ImGui.TextUnformatted("->");
+        ImGui.SameLine();
+        DrawRiskBadge(afterRisk, afterScore);
     }
 
     private void ApplyAnalyzerFixes(Template template, IReadOnlyDictionary<string, BoneTransform> fixes)
