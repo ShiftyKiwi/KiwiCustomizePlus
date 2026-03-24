@@ -141,10 +141,14 @@ public class BoneEditorPanel
             ImGuiUtil.PrintIcon(FontAwesomeIcon.User);
             ImGui.SameLine();
             ImGui.Text(characterText);
+            ImGui.SameLine();
+            ImGuiComponents.HelpMarker("The selected preview character can affect live bone visualization, race-preset evaluation, debug output, and stress-test context.");
 
             ImGui.Separator();
 
             var isShouldDraw = ImGui.CollapsingHeader("Change preview character");
+            ImGui.SameLine();
+            ImGuiComponents.HelpMarker("Choose which character provides context for live bone visualization, race presets, debug output, and stress tests.");
 
             if (isShouldDraw)
             {

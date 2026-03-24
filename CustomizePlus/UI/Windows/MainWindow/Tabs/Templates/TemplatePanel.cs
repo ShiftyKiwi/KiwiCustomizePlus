@@ -20,6 +20,7 @@ using CustomizePlus.Templates.Events;
 using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Extensions;
 using Dalamud.Interface.ImGuiNotification;
+using Dalamud.Interface.Components;
 
 namespace CustomizePlus.UI.Windows.MainWindow.Tabs.Templates;
 
@@ -201,11 +202,15 @@ public class TemplatePanel : IDisposable
         if (!show)
             return;
 
+        ImGui.TextDisabled("Analyzes the current template for smoothing, proportional balance, symmetry, and common transition issues. These scores are guidance, not hard quality rules.");
+        ImGui.Spacing();
+
         if (ImGui.Button("Analyze Template"))
         {
             _analysisResult = AdvancedBodyScalingPipeline.Analyze(_selector.Selected.Bones, _configuration.AdvancedBodyScalingSettings);
             _showFixPreview = false;
         }
+        ImGuiUtil.HoverTooltip("Run a heuristic analysis of the current template and list suggested smoothing, balance, symmetry, and transition fixes.");
 
         var analysisResult = _analysisResult;
         if (analysisResult == null)
@@ -215,6 +220,7 @@ public class TemplatePanel : IDisposable
         ImGui.Text($"Surface Smoothness: {analysisResult.SurfaceSmoothness}%");
         ImGui.Text($"Proportion Balance: {analysisResult.ProportionBalance}%");
         ImGui.Text($"Symmetry: {analysisResult.Symmetry}%");
+        ImGui.TextDisabled("Heuristic guidance metrics, not absolute quality grades.");
 
         ImGui.Spacing();
         if (analysisResult.Issues.Count == 0)
@@ -232,6 +238,8 @@ public class TemplatePanel : IDisposable
         {
             ImGui.Spacing();
             ImGui.TextUnformatted("Pose corrective outlook:");
+            ImGui.SameLine();
+            ImGuiComponents.HelpMarker("Estimate based on the current advanced-scaling settings and detected risk patterns.");
             ImGui.TextWrapped(analysisResult.PoseCorrectiveSummary);
             foreach (var hint in analysisResult.PoseCorrectiveHints)
                 ImGui.BulletText(hint);
@@ -244,6 +252,11 @@ public class TemplatePanel : IDisposable
             if (ImGui.Button(_showFixPreview ? "Hide Fix Preview" : "Preview Fix"))
                 _showFixPreview = !_showFixPreview;
         }
+        ImGuiUtil.HoverTooltip(
+            _showFixPreview
+                ? "Hide the temporary suggested-fix preview without changing the template."
+                : "Show the suggested analyzer changes without committing them to the template.",
+            ImGuiHoveredFlags.AllowWhenDisabled);
 
         ImGui.SameLine();
         var canApplyFix = hasFixes && !_boneEditor.IsEditorActive && !(_selector.Selected?.IsWriteProtected ?? true);
@@ -256,6 +269,7 @@ public class TemplatePanel : IDisposable
                 _showFixPreview = false;
             }
         }
+        ImGuiUtil.HoverTooltip("Commit the suggested analyzer fixes into the template.", ImGuiHoveredFlags.AllowWhenDisabled);
 
         ImGui.SameLine();
         var canRevertFix = CanRevertAnalyzerFix(_selector.Selected!);
@@ -264,6 +278,7 @@ public class TemplatePanel : IDisposable
             if (ImGui.Button("Revert Fix"))
                 RevertAnalyzerFixes(_selector.Selected!);
         }
+        ImGuiUtil.HoverTooltip("Restore the last pre-fix template state, if available.", ImGuiHoveredFlags.AllowWhenDisabled);
 
         ImGui.SameLine();
         if (ImGui.Button("Ignore"))
@@ -271,6 +286,7 @@ public class TemplatePanel : IDisposable
             _analysisResult = null;
             _showFixPreview = false;
         }
+        ImGuiUtil.HoverTooltip("Dismiss this analysis result without applying its suggested fixes.");
 
         if (_showFixPreview && hasFixes)
         {
@@ -308,12 +324,16 @@ public class TemplatePanel : IDisposable
         if (!ImGui.CollapsingHeader("Advanced Scaling Preview"))
             return;
 
+        ImGui.TextDisabled("Previews the current advanced-scaling result on this template without saving until Apply Preview is used.");
+        ImGui.Spacing();
+
         var settings = _configuration.AdvancedBodyScalingSettings;
         if (!settings.Enabled || settings.Mode == AdvancedBodyScalingMode.Manual)
-            ImGui.TextDisabled("Advanced scaling is disabled or in Manual mode. Preview will be a no-op.");
+            ImGui.TextDisabled("Advanced scaling is disabled or in Manual mode, so previewing will not change this template.");
 
         if (ImGui.Button("Preview Advanced Scaling"))
             BuildAdvancedScalingPreview(_selector.Selected);
+        ImGuiUtil.HoverTooltip("Generate a temporary advanced-scaling preview for this template without saving it.");
 
         ImGui.SameLine();
         using (ImRaii.Disabled(_advancedPreview == null))
@@ -321,6 +341,7 @@ public class TemplatePanel : IDisposable
             if (ImGui.Button("Clear Preview"))
                 ClearAdvancedScalingPreview();
         }
+        ImGuiUtil.HoverTooltip("Discard the current temporary preview.", ImGuiHoveredFlags.AllowWhenDisabled);
 
         ImGui.SameLine();
         var canApplyPreview = _advancedPreview != null && !_boneEditor.IsEditorActive && !(_selector.Selected?.IsWriteProtected ?? true);
@@ -329,6 +350,7 @@ public class TemplatePanel : IDisposable
             if (ImGui.Button("Apply Preview"))
                 ApplyAdvancedScalingPreview(_selector.Selected!);
         }
+        ImGuiUtil.HoverTooltip("Commit the current preview result into the template.", ImGuiHoveredFlags.AllowWhenDisabled);
 
         ImGui.SameLine();
         var canRevertAppliedPreview = CanRevertAppliedAdvancedPreview(_selector.Selected!);
@@ -337,6 +359,7 @@ public class TemplatePanel : IDisposable
             if (ImGui.Button("Revert Applied Preview"))
                 RevertAppliedAdvancedScalingPreview(_selector.Selected!);
         }
+        ImGuiUtil.HoverTooltip("Restore the template to the last pre-apply state, if available.", ImGuiHoveredFlags.AllowWhenDisabled);
 
         if (_advancedPreview == null)
             return;
@@ -346,6 +369,10 @@ public class TemplatePanel : IDisposable
 
         if (ImGui.Button(_showAdvancedPreview ? "Hide Preview Details" : "Show Preview Details"))
             _showAdvancedPreview = !_showAdvancedPreview;
+        ImGuiUtil.HoverTooltip(
+            _showAdvancedPreview
+                ? "Hide the list of temporary per-bone preview changes."
+                : "Show the temporary per-bone changes in this preview.");
 
         ImGui.SameLine();
         if (ImGui.Checkbox("Show Debug Details", ref _showAdvancedDebug))
@@ -353,6 +380,7 @@ public class TemplatePanel : IDisposable
             if (!_showAdvancedDebug)
                 _advancedDebug = null;
         }
+        ImGuiUtil.HoverTooltip("Show debug output for this preview, including guardrails and pose-corrective estimates.");
 
         if (_showAdvancedPreview)
         {

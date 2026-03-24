@@ -306,12 +306,15 @@ public class ProfilePanel
             _manager.UpdateAdvancedBodyScalingOverrides(profile, settings => settings.UseProfileOverrides = false);
 
         ImGui.SameLine();
+        ImGuiComponents.HelpMarker("Uses the Settings-tab Advanced Body Scaling configuration for this profile, including automation, neck and shoulder baselines, race presets, pose-space correctives, and region tuning, until profile overrides are enabled.");
+
+        ImGui.SameLine();
         if (ImGui.RadioButton("Use Profile Overrides", useOverrides))
             _manager.UpdateAdvancedBodyScalingOverrides(profile, settings => settings.UseProfileOverrides = true);
 
         if (!profile.AdvancedBodyScalingOverrides.UseProfileOverrides)
         {
-            ImGui.TextDisabled("Inheriting global advanced body scaling settings.");
+            ImGui.TextDisabled("Using the Settings-tab Advanced Body Scaling config, including automation, neck and shoulder baselines, race presets, pose-space correctives, and region tuning, until overrides are enabled.");
             return;
         }
 
@@ -1154,6 +1157,9 @@ public class ProfilePanel
 
     private void DrawTemplateArea()
     {
+        if (_selector.Selected!.Templates.Count > 1)
+            ImGui.TextDisabled("Template weight only matters when multiple enabled templates affect the same bone.");
+
         using var table = ImRaii.Table("TemplateTable", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX | ImGuiTableFlags.ScrollY);
         if (!table)
             return;
