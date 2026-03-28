@@ -65,6 +65,23 @@ public class SupportLogBuilderService
         GatherRelevantPlugins(sb);
         sb.AppendLine("**Integrations**");
         sb.Append($"> **`Penumbra (PCP):                 `** {_configuration.IntegrationSettings.PenumbraPCPIntegrationEnabled} (Penumbra is{(!_pcpService.IsPenumbraAvailable ? " NOT " : " ")}available)\n");
+        sb.AppendLine("**Settings -> Advanced Body Scaling**");
+        var advanced = _configuration.AdvancedBodyScalingSettings;
+        var retarget = advanced.FullIkRetargeting;
+        var ik = advanced.FullBodyIk;
+        sb.Append($"> **`Enabled:                        `** {advanced.Enabled}\n");
+        sb.Append($"> **`Automation mode:                `** {advanced.Mode}\n");
+        sb.Append($"> **`Animation-safe mode:            `** {advanced.AnimationSafeModeEnabled}\n");
+        sb.Append($"> **`Pose-space correctives:         `** {advanced.PoseCorrectives.Enabled} (strength {advanced.PoseCorrectives.Strength:0.00})\n");
+        sb.Append($"> **`Full IK Retargeting:            `** {retarget.Enabled} (strength {retarget.GlobalStrength:0.00}, blend {retarget.BlendBias:0.00})\n");
+        sb.Append($"> **`Retarget pelvis/spine:          `** {retarget.PelvisStrength:0.00} / {retarget.SpineStrength:0.00}\n");
+        sb.Append($"> **`Retarget arms/legs/head:        `** {retarget.ArmStrength:0.00} / {retarget.LegStrength:0.00} / {retarget.HeadStrength:0.00}\n");
+        sb.Append($"> **`Retarget reach/stride/posture:  `** {retarget.ReachAdaptationStrength:0.00} / {retarget.StrideAdaptationStrength:0.00} / {retarget.PosturePreservationStrength:0.00}\n");
+        sb.Append($"> **`Retarget safety/clamp:          `** {retarget.MotionSafetyBias:0.00} / {retarget.MaxCorrectionClamp:0.00}\n");
+        sb.Append($"> **`Full-Body IK:                   `** {ik.Enabled} (strength {ik.GlobalStrength:0.00}, iterations {ik.IterationCount}, tolerance {ik.ConvergenceTolerance:0.000})\n");
+        sb.Append($"> **`IK pelvis/spine:                `** {ik.PelvisCompensationStrength:0.00} / {ik.SpineRedistributionStrength:0.00}\n");
+        sb.Append($"> **`IK arms/legs/head:              `** {ik.ArmStrength:0.00} / {ik.LegStrength:0.00} / {ik.HeadAlignmentStrength:0.00}\n");
+        sb.Append($"> **`IK grounding/safety/clamp:      `** {ik.GroundingBias:0.00} / {ik.MotionSafetyBias:0.00} / {ik.MaxCorrectionClamp:0.00}\n");
         sb.AppendLine("**Templates**");
         sb.Append($"> **`Count:                          `** {_templateManager.Templates.Count}\n");
         foreach (var template in _templateManager.Templates)

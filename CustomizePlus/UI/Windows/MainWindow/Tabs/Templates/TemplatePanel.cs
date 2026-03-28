@@ -245,6 +245,28 @@ public class TemplatePanel : IDisposable
                 ImGui.BulletText(hint);
         }
 
+        if (!string.IsNullOrWhiteSpace(analysisResult.RetargetingSummary))
+        {
+            ImGui.Spacing();
+            ImGui.TextUnformatted("Full IK retargeting outlook:");
+            ImGui.SameLine();
+            ImGuiComponents.HelpMarker("Estimate based on the current advanced-scaling settings, supported major chains, and detected proportion drift before the final Full-Body IK solve.");
+            ImGui.TextWrapped(analysisResult.RetargetingSummary);
+            foreach (var hint in analysisResult.RetargetingHints)
+                ImGui.BulletText(hint);
+        }
+
+        if (!string.IsNullOrWhiteSpace(analysisResult.FullBodyIkSummary))
+        {
+            ImGui.Spacing();
+            ImGui.TextUnformatted("Full-body IK outlook:");
+            ImGui.SameLine();
+            ImGuiComponents.HelpMarker("Estimate based on the current advanced-scaling settings, supported major chains, and detected risk patterns after retargeting.");
+            ImGui.TextWrapped(analysisResult.FullBodyIkSummary);
+            foreach (var hint in analysisResult.FullBodyIkHints)
+                ImGui.BulletText(hint);
+        }
+
         ImGui.Spacing();
         var hasFixes = analysisResult.SuggestedFixes.Count > 0;
         using (var disabled = ImRaii.Disabled(!hasFixes))
@@ -380,7 +402,7 @@ public class TemplatePanel : IDisposable
             if (!_showAdvancedDebug)
                 _advancedDebug = null;
         }
-        ImGuiUtil.HoverTooltip("Show debug output for this preview, including guardrails and pose-corrective estimates.");
+        ImGuiUtil.HoverTooltip("Show debug output for this preview, including guardrails plus estimated pose corrective, retargeting, and Full-Body IK activity.");
 
         if (_showAdvancedPreview)
         {
@@ -408,7 +430,7 @@ public class TemplatePanel : IDisposable
         }
 
         if (_showAdvancedDebug && _advancedDebug != null)
-            DrawAdvancedScalingDebug(_advancedDebug);
+            DrawAdvancedScalingDebug(_advancedDebug, _configuration.AdvancedBodyScalingSettings);
     }
 
     private void DrawPoseStressTest()
@@ -438,8 +460,29 @@ public class TemplatePanel : IDisposable
         ImGui.Spacing();
         ImGui.Text($"Evaluation target: {_stressTestReport.SourceLabel}");
         ImGui.TextUnformatted("Overall animation risk:");
-        DrawRiskTransition(_stressTestReport.BaseOverallRisk, _stressTestReport.BaseOverallScore, _stressTestReport.OverallRisk, _stressTestReport.OverallScore);
+        DrawRiskProgression(
+            _stressTestReport.BaseOverallRisk,
+            _stressTestReport.BaseOverallScore,
+            _stressTestReport.CorrectiveOverallRisk,
+            _stressTestReport.CorrectiveOverallScore,
+            _stressTestReport.RetargetingOverallRisk,
+            _stressTestReport.RetargetingOverallScore,
+            _stressTestReport.OverallRisk,
+            _stressTestReport.OverallScore);
+        ImGui.TextDisabled("Base -> after pose-space correctives -> after full IK retargeting -> after full-body IK");
         ImGui.TextWrapped(_stressTestReport.Summary);
+        if (_stressTestReport.RetargetingAdvisories.Count > 0)
+        {
+            ImGui.TextUnformatted("Retargeting advisories:");
+            foreach (var advisory in _stressTestReport.RetargetingAdvisories.Take(4))
+                ImGui.BulletText(advisory);
+        }
+        if (_stressTestReport.FullBodyIkAdvisories.Count > 0)
+        {
+            ImGui.TextUnformatted("IK tuning advisories:");
+            foreach (var advisory in _stressTestReport.FullBodyIkAdvisories.Take(4))
+                ImGui.BulletText(advisory);
+        }
 
         if (_stressTestReport.RegionSummary.Count > 0)
         {
@@ -451,10 +494,22 @@ public class TemplatePanel : IDisposable
                 ImGui.SameLine();
                 ImGui.TextUnformatted(region.RegionName);
                 ImGui.SameLine();
-                DrawRiskTransition(region.BaseRiskLevel, region.BaseScore, region.RiskLevel, region.Score);
+                DrawRiskProgression(
+                    region.BaseRiskLevel,
+                    region.BaseScore,
+                    region.CorrectiveOnlyRiskLevel,
+                    region.CorrectiveOnlyScore,
+                    region.RetargetingRiskLevel,
+                    region.RetargetingScore,
+                    region.RiskLevel,
+                    region.Score);
                 ImGui.TextWrapped(region.Reasons.FirstOrDefault() ?? "No major issue detected.");
                 if (region.CorrectiveIntensity > 0.05f)
                     ImGui.TextDisabled(region.CorrectiveSummary);
+                if (region.RetargetingIntensity > 0.05f)
+                    ImGui.TextDisabled(region.RetargetingSummary);
+                if (region.FullBodyIkIntensity > 0.05f)
+                    ImGui.TextDisabled(region.FullBodyIkSummary);
             }
         }
 
@@ -464,7 +519,16 @@ public class TemplatePanel : IDisposable
             if (!ImGui.TreeNode($"{pose.Name}##Stress{pose.Name}"))
                 continue;
 
-            DrawRiskTransition(pose.BaseRiskLevel, pose.BaseScore, pose.RiskLevel, pose.Score);
+            DrawRiskProgression(
+                pose.BaseRiskLevel,
+                pose.BaseScore,
+                pose.CorrectiveOnlyRiskLevel,
+                pose.CorrectiveOnlyScore,
+                pose.RetargetingRiskLevel,
+                pose.RetargetingScore,
+                pose.RiskLevel,
+                pose.Score);
+            ImGui.TextDisabled("Base -> after pose-space correctives -> after full IK retargeting -> after full-body IK");
             ImGui.TextWrapped(pose.Description);
 
             foreach (var region in pose.Regions)
@@ -472,7 +536,15 @@ public class TemplatePanel : IDisposable
                 ImGui.Spacing();
                 ImGui.TextUnformatted(region.RegionName);
                 ImGui.SameLine();
-                DrawRiskTransition(region.BaseRiskLevel, region.BaseScore, region.RiskLevel, region.Score);
+                DrawRiskProgression(
+                    region.BaseRiskLevel,
+                    region.BaseScore,
+                    region.CorrectiveOnlyRiskLevel,
+                    region.CorrectiveOnlyScore,
+                    region.RetargetingRiskLevel,
+                    region.RetargetingScore,
+                    region.RiskLevel,
+                    region.Score);
 
                 if (region.Reasons.Count == 0)
                 {
@@ -486,6 +558,12 @@ public class TemplatePanel : IDisposable
 
                 if (region.CorrectiveIntensity > 0.05f)
                     ImGui.TextDisabled(region.CorrectiveSummary);
+
+                if (region.RetargetingIntensity > 0.05f)
+                    ImGui.TextDisabled(region.RetargetingSummary);
+
+                if (region.FullBodyIkIntensity > 0.05f)
+                    ImGui.TextDisabled(region.FullBodyIkSummary);
             }
 
             ImGui.TreePop();
@@ -621,7 +699,7 @@ public class TemplatePanel : IDisposable
         _messageService.NotificationMessage("Reverted the last applied advanced scaling preview.", NotificationType.Success, false);
     }
 
-    private static void DrawAdvancedScalingDebug(AdvancedBodyScalingDebugReport debug)
+    private static void DrawAdvancedScalingDebug(AdvancedBodyScalingDebugReport debug, AdvancedBodyScalingSettings settings)
     {
         ImGui.Spacing();
         if (ImGui.CollapsingHeader("Debug Details"))
@@ -650,6 +728,80 @@ public class TemplatePanel : IDisposable
                     ImGui.TextDisabled($"{entry.DriverSummary}. {entry.Description}");
                     ImGui.Unindent();
                 }
+            }
+
+            ImGui.Spacing();
+            ImGui.Text("Estimated full-body IK:");
+            if (debug.EstimatedFullBodyIk.Count == 0)
+            {
+                ImGui.Text("None");
+            }
+            else
+            {
+                foreach (var entry in debug.EstimatedFullBodyIk.Take(8))
+                {
+                    ImGui.Bullet();
+                    ImGui.SameLine();
+                    if (!entry.IsValid)
+                    {
+                        var reason = string.IsNullOrWhiteSpace(entry.SkipReason) ? "Chain unavailable." : entry.SkipReason;
+                        ImGui.TextWrapped($"{entry.Label}: {reason}");
+                    }
+                    else
+                    {
+                        ImGui.TextWrapped($"{entry.Label}: activation {entry.Activation:0.00}, solve {entry.Strength:0.00}, est. risk {entry.EstimatedBeforeRisk:0.#} -> {entry.EstimatedAfterRisk:0.#}.");
+                    }
+
+                    ImGui.Indent();
+                    ImGui.TextDisabled($"{entry.DriverSummary}. {entry.Description}");
+                    ImGui.Unindent();
+                }
+            }
+
+            ImGui.Spacing();
+            ImGui.Text("Estimated full IK retargeting:");
+            if (debug.EstimatedRetargeting.Count == 0)
+            {
+                ImGui.Text("None");
+            }
+            else
+            {
+                foreach (var entry in debug.EstimatedRetargeting.Take(8))
+                {
+                    ImGui.Bullet();
+                    ImGui.SameLine();
+                    if (!entry.IsValid)
+                    {
+                        var reason = string.IsNullOrWhiteSpace(entry.SkipReason) ? "Chain unavailable." : entry.SkipReason;
+                        ImGui.TextWrapped($"{entry.Label}: {reason}");
+                    }
+                    else
+                    {
+                        ImGui.TextWrapped($"{entry.Label}: blend {entry.BlendAmount:0.00}, strength {entry.Strength:0.00}, est. risk {entry.EstimatedBeforeRisk:0.#} -> {entry.EstimatedAfterRisk:0.#}.");
+                    }
+
+                    ImGui.Indent();
+                    ImGui.TextDisabled($"{entry.DriverSummary}. {entry.Description}");
+                    ImGui.Unindent();
+                }
+            }
+
+            var retargetAdvisories = AdvancedBodyScalingFullIkRetargetingSystem.GetTuningAdvisories(settings);
+            if (retargetAdvisories.Count > 0)
+            {
+                ImGui.Spacing();
+                ImGui.Text("Retargeting advisories:");
+                foreach (var advisory in retargetAdvisories.Take(4))
+                    ImGui.BulletText(advisory);
+            }
+
+            var advisories = AdvancedBodyScalingFullBodyIkSystem.GetTuningAdvisories(settings);
+            if (advisories.Count > 0)
+            {
+                ImGui.Spacing();
+                ImGui.Text("IK tuning advisories:");
+                foreach (var advisory in advisories.Take(4))
+                    ImGui.BulletText(advisory);
             }
 
             ImGui.Spacing();
@@ -717,6 +869,40 @@ public class TemplatePanel : IDisposable
         ImGui.TextUnformatted("->");
         ImGui.SameLine();
         DrawRiskBadge(afterRisk, afterScore);
+    }
+
+    private static void DrawRiskProgression(
+        AdvancedBodyScalingRiskLevel baseRisk,
+        int baseScore,
+        AdvancedBodyScalingRiskLevel correctiveRisk,
+        int correctiveScore,
+        AdvancedBodyScalingRiskLevel retargetingRisk,
+        int retargetingScore,
+        AdvancedBodyScalingRiskLevel finalRisk,
+        int finalScore)
+    {
+        DrawRiskBadge(baseRisk, baseScore);
+
+        ImGui.SameLine();
+        ImGui.TextUnformatted("->");
+        ImGui.SameLine();
+        DrawRiskBadge(correctiveRisk, correctiveScore);
+
+        if (correctiveRisk != retargetingRisk || correctiveScore != retargetingScore)
+        {
+            ImGui.SameLine();
+            ImGui.TextUnformatted("->");
+            ImGui.SameLine();
+            DrawRiskBadge(retargetingRisk, retargetingScore);
+        }
+
+        if (retargetingRisk == finalRisk && retargetingScore == finalScore)
+            return;
+
+        ImGui.SameLine();
+        ImGui.TextUnformatted("->");
+        ImGui.SameLine();
+        DrawRiskBadge(finalRisk, finalScore);
     }
 
     private void ApplyAnalyzerFixes(Template template, IReadOnlyDictionary<string, BoneTransform> fixes)

@@ -19,14 +19,26 @@ internal sealed class AdvancedBodyScalingRegionStressResult
     public required AdvancedBodyScalingCorrectiveRegion Region { get; init; }
     public required string RegionName { get; init; }
     public required int BaseScore { get; init; }
+    public required int CorrectiveOnlyScore { get; init; }
+    public required int RetargetingScore { get; init; }
     public required int Score { get; init; }
     public required int CorrectiveReductionScore { get; init; }
+    public required int RetargetingReductionScore { get; init; }
+    public required int FullBodyIkReductionScore { get; init; }
     public required float CorrectiveIntensity { get; init; }
+    public required float RetargetingIntensity { get; init; }
+    public required float FullBodyIkIntensity { get; init; }
     public required AdvancedBodyScalingRiskLevel BaseRiskLevel { get; init; }
+    public required AdvancedBodyScalingRiskLevel CorrectiveOnlyRiskLevel { get; init; }
+    public required AdvancedBodyScalingRiskLevel RetargetingRiskLevel { get; init; }
     public required AdvancedBodyScalingRiskLevel RiskLevel { get; init; }
     public required IReadOnlyList<string> Reasons { get; init; }
     public required IReadOnlyList<string> Bones { get; init; }
+    public IReadOnlyList<string> RetargetingChains { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> FullBodyIkChains { get; init; } = Array.Empty<string>();
     public string CorrectiveSummary { get; init; } = string.Empty;
+    public string RetargetingSummary { get; init; } = string.Empty;
+    public string FullBodyIkSummary { get; init; } = string.Empty;
 }
 
 internal sealed class AdvancedBodyScalingPoseStressResult
@@ -34,8 +46,12 @@ internal sealed class AdvancedBodyScalingPoseStressResult
     public required string Name { get; init; }
     public required string Description { get; init; }
     public required int BaseScore { get; init; }
+    public required int CorrectiveOnlyScore { get; init; }
+    public required int RetargetingScore { get; init; }
     public required int Score { get; init; }
     public required AdvancedBodyScalingRiskLevel BaseRiskLevel { get; init; }
+    public required AdvancedBodyScalingRiskLevel CorrectiveOnlyRiskLevel { get; init; }
+    public required AdvancedBodyScalingRiskLevel RetargetingRiskLevel { get; init; }
     public required AdvancedBodyScalingRiskLevel RiskLevel { get; init; }
     public required IReadOnlyList<AdvancedBodyScalingRegionStressResult> Regions { get; init; }
 }
@@ -44,10 +60,18 @@ internal sealed class AdvancedBodyScalingStressTestReport
 {
     public required string SourceLabel { get; init; }
     public required int BaseOverallScore { get; init; }
+    public required int CorrectiveOverallScore { get; init; }
+    public required int RetargetingOverallScore { get; init; }
     public required int OverallScore { get; init; }
     public required AdvancedBodyScalingRiskLevel BaseOverallRisk { get; init; }
+    public required AdvancedBodyScalingRiskLevel CorrectiveOverallRisk { get; init; }
+    public required AdvancedBodyScalingRiskLevel RetargetingOverallRisk { get; init; }
     public required AdvancedBodyScalingRiskLevel OverallRisk { get; init; }
     public required string Summary { get; init; }
+    public required IReadOnlyList<string> RetargetingAdvisories { get; init; }
+    public required IReadOnlyList<string> RetargetingHotChains { get; init; }
+    public required IReadOnlyList<string> FullBodyIkAdvisories { get; init; }
+    public required IReadOnlyList<string> FullBodyIkHotChains { get; init; }
     public required IReadOnlyList<AdvancedBodyScalingPoseStressResult> Poses { get; init; }
     public required IReadOnlyList<AdvancedBodyScalingRegionStressResult> RegionSummary { get; init; }
 }
@@ -146,16 +170,44 @@ internal static class AdvancedBodyScalingStressTestHarness
         var poses = PoseDefinitions.Select(definition => BuildPoseResult(definition, transforms, baseEvaluations, effectiveSettings)).ToList();
         var regionSummary = BuildRegionSummary(poses);
         var baseOverallScore = ComputeOverallScore(poses, regionSummary, static pose => pose.BaseScore, static region => region.BaseScore);
+        var correctiveOverallScore = ComputeOverallScore(poses, regionSummary, static pose => pose.CorrectiveOnlyScore, static region => region.CorrectiveOnlyScore);
+        var retargetingOverallScore = ComputeOverallScore(poses, regionSummary, static pose => pose.RetargetingScore, static region => region.RetargetingScore);
         var overallScore = ComputeOverallScore(poses, regionSummary, static pose => pose.Score, static region => region.Score);
+        var retargetAdvisories = AdvancedBodyScalingFullIkRetargetingSystem.GetTuningAdvisories(effectiveSettings).ToList();
+        var ikAdvisories = AdvancedBodyScalingFullBodyIkSystem.GetTuningAdvisories(effectiveSettings).ToList();
+        var retargetHotChains = regionSummary
+            .SelectMany(region => region.RetargetingChains)
+            .GroupBy(chain => chain, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Take(3)
+            .Select(group => group.Key)
+            .ToList();
+        var ikHotChains = regionSummary
+            .SelectMany(region => region.FullBodyIkChains)
+            .GroupBy(chain => chain, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Take(3)
+            .Select(group => group.Key)
+            .ToList();
 
         return new AdvancedBodyScalingStressTestReport
         {
             SourceLabel = sourceLabel,
             BaseOverallScore = baseOverallScore,
+            CorrectiveOverallScore = correctiveOverallScore,
+            RetargetingOverallScore = retargetingOverallScore,
             OverallScore = overallScore,
             BaseOverallRisk = ToRiskLevel(baseOverallScore),
+            CorrectiveOverallRisk = ToRiskLevel(correctiveOverallScore),
+            RetargetingOverallRisk = ToRiskLevel(retargetingOverallScore),
             OverallRisk = ToRiskLevel(overallScore),
-            Summary = BuildSummary(baseOverallScore, overallScore, ToRiskLevel(overallScore), poses, regionSummary),
+            Summary = BuildSummary(baseOverallScore, correctiveOverallScore, retargetingOverallScore, overallScore, ToRiskLevel(overallScore), poses, regionSummary, retargetHotChains, retargetAdvisories, ikHotChains, ikAdvisories),
+            RetargetingAdvisories = retargetAdvisories,
+            RetargetingHotChains = retargetHotChains,
+            FullBodyIkAdvisories = ikAdvisories,
+            FullBodyIkHotChains = ikHotChains,
             Poses = poses,
             RegionSummary = regionSummary,
         };
@@ -198,36 +250,60 @@ internal static class AdvancedBodyScalingStressTestHarness
             var correctiveIntensity = estimate?.Strength ?? 0f;
             var reductionFraction = estimate?.EstimatedRiskReduction ?? 0f;
             var correctiveReduction = ClampScore(baseScore * reductionFraction);
-            var finalScore = ClampScore(baseScore - correctiveReduction);
+            var correctiveOnlyScore = ClampScore(baseScore - correctiveReduction);
             var correctiveSummary = estimate == null || correctiveIntensity <= 0.005f
                 ? "No strong pose-space corrective response is expected for this region in this pose."
                 : $"Estimated corrective activity {correctiveIntensity:0.00} via {estimate.DriverSummary}, trimming about {correctiveReduction} risk points.";
+            var retargetEstimate = AdvancedBodyScalingFullIkRetargetingSystem.EstimateRegionRiskReduction(transforms, settings, region, weight);
+            var retargetReduction = ClampScore(correctiveOnlyScore * retargetEstimate.EstimatedRiskReduction);
+            var retargetingScore = ClampScore(correctiveOnlyScore - retargetReduction);
+            var ikEstimate = AdvancedBodyScalingFullBodyIkSystem.EstimateRegionRiskReduction(transforms, settings, region, weight);
+            var ikReduction = ClampScore(retargetingScore * ikEstimate.EstimatedRiskReduction);
+            var finalScore = ClampScore(retargetingScore - ikReduction);
 
             regions.Add(new AdvancedBodyScalingRegionStressResult
             {
                 Region = region,
                 RegionName = AdvancedBodyScalingPoseCorrectiveSystem.GetRegionLabel(region),
                 BaseScore = baseScore,
+                CorrectiveOnlyScore = correctiveOnlyScore,
+                RetargetingScore = retargetingScore,
                 Score = finalScore,
                 CorrectiveReductionScore = correctiveReduction,
+                RetargetingReductionScore = retargetReduction,
+                FullBodyIkReductionScore = ikReduction,
                 CorrectiveIntensity = correctiveIntensity,
+                RetargetingIntensity = retargetEstimate.Strength,
+                FullBodyIkIntensity = ikEstimate.Strength,
                 BaseRiskLevel = ToRiskLevel(baseScore),
+                CorrectiveOnlyRiskLevel = ToRiskLevel(correctiveOnlyScore),
+                RetargetingRiskLevel = ToRiskLevel(retargetingScore),
                 RiskLevel = ToRiskLevel(finalScore),
                 Reasons = reasons,
                 Bones = evaluation.Bones,
+                RetargetingChains = retargetEstimate.ChainLabels,
+                FullBodyIkChains = ikEstimate.ChainLabels,
                 CorrectiveSummary = correctiveSummary,
+                RetargetingSummary = retargetEstimate.Summary,
+                FullBodyIkSummary = ikEstimate.Summary,
             });
         }
 
         var basePoseScore = ComputePoseScore(regions, static region => region.BaseScore);
+        var correctivePoseScore = ComputePoseScore(regions, static region => region.CorrectiveOnlyScore);
+        var retargetingPoseScore = ComputePoseScore(regions, static region => region.RetargetingScore);
         var finalPoseScore = ComputePoseScore(regions, static region => region.Score);
         return new AdvancedBodyScalingPoseStressResult
         {
             Name = definition.Name,
             Description = definition.Description,
             BaseScore = basePoseScore,
+            CorrectiveOnlyScore = correctivePoseScore,
+            RetargetingScore = retargetingPoseScore,
             Score = finalPoseScore,
             BaseRiskLevel = ToRiskLevel(basePoseScore),
+            CorrectiveOnlyRiskLevel = ToRiskLevel(correctivePoseScore),
+            RetargetingRiskLevel = ToRiskLevel(retargetingPoseScore),
             RiskLevel = ToRiskLevel(finalPoseScore),
             Regions = regions.OrderByDescending(r => r.Score).ToList(),
         };
@@ -242,26 +318,52 @@ internal static class AdvancedBodyScalingStressTestHarness
             {
                 var highestAfter = group.OrderByDescending(entry => entry.Score).First();
                 var highestReduction = group.OrderByDescending(entry => entry.CorrectiveReductionScore).First();
+                var highestRetargetReduction = group.OrderByDescending(entry => entry.RetargetingReductionScore).First();
+                var highestIkReduction = group.OrderByDescending(entry => entry.FullBodyIkReductionScore).First();
                 var reasons = group
                     .SelectMany(entry => entry.Reasons)
                     .Distinct(StringComparer.Ordinal)
                     .Take(3)
                     .ToList();
                 var baseScore = group.Max(entry => entry.BaseScore);
+                var correctiveOnlyScore = group.Max(entry => entry.CorrectiveOnlyScore);
+                var retargetingScore = group.Max(entry => entry.RetargetingScore);
+                var retargetChains = group
+                    .SelectMany(entry => entry.RetargetingChains)
+                    .Distinct(StringComparer.Ordinal)
+                    .Take(3)
+                    .ToList();
+                var ikChains = group
+                    .SelectMany(entry => entry.FullBodyIkChains)
+                    .Distinct(StringComparer.Ordinal)
+                    .Take(3)
+                    .ToList();
 
                 return new AdvancedBodyScalingRegionStressResult
                 {
                     Region = highestAfter.Region,
                     RegionName = highestAfter.RegionName,
                     BaseScore = baseScore,
+                    CorrectiveOnlyScore = correctiveOnlyScore,
+                    RetargetingScore = retargetingScore,
                     Score = highestAfter.Score,
                     CorrectiveReductionScore = group.Max(entry => entry.CorrectiveReductionScore),
+                    RetargetingReductionScore = group.Max(entry => entry.RetargetingReductionScore),
+                    FullBodyIkReductionScore = group.Max(entry => entry.FullBodyIkReductionScore),
                     CorrectiveIntensity = group.Max(entry => entry.CorrectiveIntensity),
+                    RetargetingIntensity = group.Max(entry => entry.RetargetingIntensity),
+                    FullBodyIkIntensity = group.Max(entry => entry.FullBodyIkIntensity),
                     BaseRiskLevel = ToRiskLevel(baseScore),
+                    CorrectiveOnlyRiskLevel = ToRiskLevel(correctiveOnlyScore),
+                    RetargetingRiskLevel = ToRiskLevel(retargetingScore),
                     RiskLevel = highestAfter.RiskLevel,
                     Reasons = reasons,
                     Bones = highestAfter.Bones,
+                    RetargetingChains = retargetChains,
+                    FullBodyIkChains = ikChains,
                     CorrectiveSummary = highestReduction.CorrectiveSummary,
+                    RetargetingSummary = highestRetargetReduction.RetargetingSummary,
+                    FullBodyIkSummary = highestIkReduction.FullBodyIkSummary,
                 };
             })
             .OrderByDescending(result => result.Score)
@@ -297,25 +399,42 @@ internal static class AdvancedBodyScalingStressTestHarness
 
     private static string BuildSummary(
         int baseOverallScore,
+        int correctiveOverallScore,
+        int retargetingOverallScore,
         int overallScore,
         AdvancedBodyScalingRiskLevel overallRisk,
         IReadOnlyList<AdvancedBodyScalingPoseStressResult> poses,
-        IReadOnlyList<AdvancedBodyScalingRegionStressResult> regionSummary)
+        IReadOnlyList<AdvancedBodyScalingRegionStressResult> regionSummary,
+        IReadOnlyList<string> retargetHotChains,
+        IReadOnlyList<string> retargetAdvisories,
+        IReadOnlyList<string> ikHotChains,
+        IReadOnlyList<string> ikAdvisories)
     {
         var hottest = regionSummary.Take(2).Select(region => region.RegionName).ToList();
         var stressedPose = poses.OrderByDescending(pose => pose.Score).FirstOrDefault();
         var hotSpotText = hottest.Count == 0 ? "no clear hot spots" : string.Join(" and ", hottest);
         var poseText = stressedPose == null ? "No pose data" : stressedPose.Name;
-        var reduction = Math.Max(0, baseOverallScore - overallScore);
-        var correctiveText = reduction > 0
-            ? $" Active pose-space correctives trim about {reduction} overall risk points in the current tuning."
+        var correctiveReduction = Math.Max(0, baseOverallScore - correctiveOverallScore);
+        var retargetReduction = Math.Max(0, correctiveOverallScore - retargetingOverallScore);
+        var ikReduction = Math.Max(0, retargetingOverallScore - overallScore);
+        var correctiveText = correctiveReduction > 0
+            ? $" Pose-space correctives trim about {correctiveReduction} overall risk points before the final IK pass."
             : " Pose-space correctives are either off or not strongly engaged for this setup.";
+        var retargetText = retargetReduction > 0
+            ? $" Full IK retargeting trims about {retargetReduction} more points after correctives, led by {(retargetHotChains.Count == 0 ? "the supported major chains" : string.Join(", ", retargetHotChains))}."
+            : " Full IK retargeting is either off or not strongly engaged for this setup.";
+        var ikText = ikReduction > 0
+            ? $" Full-body IK trims about {ikReduction} more points after retargeting, led by {(ikHotChains.Count == 0 ? "the supported major chains" : string.Join(", ", ikHotChains))}."
+            : " Full-body IK is either off or not strongly engaged for this setup.";
+        var advisoryText = retargetAdvisories.Concat(ikAdvisories).FirstOrDefault() is { Length: > 0 } advisory
+            ? $" Advisory: {advisory}"
+            : string.Empty;
 
         return overallRisk switch
         {
-            AdvancedBodyScalingRiskLevel.High => $"High animation risk. {hotSpotText} look most fragile, with '{poseText}' being the most stress-prone test.{correctiveText}",
-            AdvancedBodyScalingRiskLevel.Moderate => $"Moderate animation risk. {hotSpotText} should be checked first, especially under '{poseText}'.{correctiveText}",
-            _ => $"Low animation risk. The current setup stays fairly stable across the built-in pose checks, with '{poseText}' being the most demanding test.{correctiveText}",
+            AdvancedBodyScalingRiskLevel.High => $"High animation risk. {hotSpotText} look most fragile, with '{poseText}' being the most stress-prone test.{correctiveText}{retargetText}{ikText}{advisoryText}",
+            AdvancedBodyScalingRiskLevel.Moderate => $"Moderate animation risk. {hotSpotText} should be checked first, especially under '{poseText}'.{correctiveText}{retargetText}{ikText}{advisoryText}",
+            _ => $"Low animation risk. The current setup stays fairly stable across the built-in pose checks, with '{poseText}' being the most demanding test.{correctiveText}{retargetText}{ikText}{advisoryText}",
         };
     }
 

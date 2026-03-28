@@ -583,6 +583,12 @@ public class SettingsTab
             DrawPoseSpaceCorrectives(settings);
 
             ImGui.Spacing();
+            DrawFullIkRetargetingSettings(settings);
+
+            ImGui.Spacing();
+            DrawFullBodyIkSettings(settings);
+
+            ImGui.Spacing();
             DrawAdvancedBodyScalingResets(settings);
 
             ImGui.Spacing();
@@ -1036,6 +1042,385 @@ public class SettingsTab
         DrawPoseCorrectiveDebugReadout();
     }
 
+    private void DrawFullIkRetargetingSettings(AdvancedBodyScalingSettings settings)
+    {
+        if (!ImGui.CollapsingHeader("Full IK Retargeting"))
+            return;
+
+        var retarget = settings.FullIkRetargeting;
+        ImGui.TextDisabled("Full IK Retargeting adapts animation pose output to changed body proportions before the final Full-Body IK solve. It helps preserve animation intent on scaled bodies and is conservative by default.");
+
+        var enabled = retarget.Enabled;
+        if (ImGui.Checkbox("Enable Full IK Retargeting", ref enabled))
+        {
+            retarget.Enabled = enabled;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Turns the supported-bone retargeting layer on or off. It runs after pose-space correctives and before the final Full-Body IK pass.");
+
+        ImGui.SameLine();
+        if (ImGui.Button("Restore retargeting defaults"))
+        {
+            settings.FullIkRetargeting = new AdvancedBodyScalingFullIkRetargetingSettings();
+            retarget = settings.FullIkRetargeting;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Restores the shipped Full IK Retargeting defaults, including global enable/strength, blend and safety values, and every per-chain enable and strength setting.");
+
+        using (var disabled = ImRaii.Disabled(!retarget.Enabled))
+        {
+            var globalStrength = retarget.GlobalStrength;
+            if (ImGui.SliderFloat("Global retargeting strength", ref globalStrength, 0f, AdvancedBodyScalingFullIkRetargetingTuning.UiMaxGlobalStrength, "%.2f"))
+            {
+                retarget.GlobalStrength = globalStrength;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Scales how strongly retargeting is allowed to adapt the current animation pose overall. Conservative values are recommended; stronger is not always better.");
+
+            var pelvis = retarget.PelvisStrength;
+            if (ImGui.SliderFloat("Pelvis / root strength", ref pelvis, 0f, AdvancedBodyScalingFullIkRetargetingTuning.UiMaxPelvisStrength, "%.2f"))
+            {
+                retarget.PelvisStrength = pelvis;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly retargeting can bias pelvis and root response when leg length and lower-body proportions drift from the authored animation.");
+
+            var spine = retarget.SpineStrength;
+            if (ImGui.SliderFloat("Spine strength", ref spine, 0f, AdvancedBodyScalingFullIkRetargetingTuning.UiMaxSpineStrength, "%.2f"))
+            {
+                retarget.SpineStrength = spine;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly retargeting redistributes torso posture across the supported spine chain.");
+
+            var arm = retarget.ArmStrength;
+            if (ImGui.SliderFloat("Arm strength", ref arm, 0f, AdvancedBodyScalingFullIkRetargetingTuning.UiMaxArmStrength, "%.2f"))
+            {
+                retarget.ArmStrength = arm;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly the supported arm chains are allowed to adapt reach and posture before the final IK pass.");
+
+            var leg = retarget.LegStrength;
+            if (ImGui.SliderFloat("Leg strength", ref leg, 0f, AdvancedBodyScalingFullIkRetargetingTuning.UiMaxLegStrength, "%.2f"))
+            {
+                retarget.LegStrength = leg;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly the supported leg chains are allowed to adapt stride and lower-body posture. Legs are intentionally safer at lower values.");
+
+            var head = retarget.HeadStrength;
+            if (ImGui.SliderFloat("Head / neck strength", ref head, 0f, AdvancedBodyScalingFullIkRetargetingTuning.UiMaxHeadStrength, "%.2f"))
+            {
+                retarget.HeadStrength = head;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly the supported neck/head chain is allowed to preserve head readability after torso and shoulder proportion changes.");
+
+            var reach = retarget.ReachAdaptationStrength;
+            if (ImGui.SliderFloat("Reach adaptation strength", ref reach, 0f, AdvancedBodyScalingFullIkRetargetingTuning.UiMaxReachAdaptation, "%.2f"))
+            {
+                retarget.ReachAdaptationStrength = reach;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly arm-chain reach should adapt to changed shoulder and arm proportions. Stronger values are not always better.");
+
+            var stride = retarget.StrideAdaptationStrength;
+            if (ImGui.SliderFloat("Stride adaptation strength", ref stride, 0f, AdvancedBodyScalingFullIkRetargetingTuning.UiMaxStrideAdaptation, "%.2f"))
+            {
+                retarget.StrideAdaptationStrength = stride;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly leg-chain stride and extension should adapt to changed lower-body proportions.");
+
+            var posture = retarget.PosturePreservationStrength;
+            if (ImGui.SliderFloat("Posture preservation strength", ref posture, 0f, AdvancedBodyScalingFullIkRetargetingTuning.UiMaxPosturePreservation, "%.2f"))
+            {
+                retarget.PosturePreservationStrength = posture;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly spine, pelvis, and head posture should adapt to preserve the original animation read on scaled proportions.");
+
+            var motionSafety = retarget.MotionSafetyBias;
+            if (ImGui.SliderFloat("Motion-safety / damping", ref motionSafety, 0.30f, 1f, "%.2f"))
+            {
+                retarget.MotionSafetyBias = motionSafety;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Adds damping, deadzone, and smoothing pressure so retargeting stays calmer and does not flicker or visibly fight the animation.");
+
+            var blendBias = retarget.BlendBias;
+            if (ImGui.SliderFloat("Retargeting blend bias", ref blendBias, 0f, AdvancedBodyScalingFullIkRetargetingTuning.UiMaxBlendBias, "%.2f"))
+            {
+                retarget.BlendBias = blendBias;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Controls how much the runtime output is allowed to lean toward the retargeted pose instead of the original animation pose.");
+
+            var maxCorrection = retarget.MaxCorrectionClamp;
+            if (ImGui.SliderFloat("Max retargeting correction clamp", ref maxCorrection, 0f, AdvancedBodyScalingFullIkRetargetingTuning.UiMaxCorrectionClamp, "%.2f"))
+            {
+                retarget.MaxCorrectionClamp = maxCorrection;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Hard cap on how much local rotation and translation the retargeting pass is allowed to add before the final IK solve.");
+
+            var advisories = AdvancedBodyScalingFullIkRetargetingSystem.GetTuningAdvisories(settings);
+            if (advisories.Count == 0)
+            {
+                ImGui.TextDisabled("Recommended range: conservative values usually preserve animation intent more cleanly than stronger ones.");
+            }
+            else
+            {
+                ImGui.TextColored(new Vector4(0.95f, 0.80f, 0.38f, 1f), "Retargeting advisories:");
+                foreach (var advisory in advisories.Take(4))
+                    ImGui.BulletText(advisory);
+            }
+
+            foreach (var chain in AdvancedBodyScalingFullIkRetargetingSystem.GetOrderedChains())
+            {
+                var label = AdvancedBodyScalingFullIkRetargetingSystem.GetChainLabel(chain);
+                var description = AdvancedBodyScalingFullIkRetargetingSystem.GetChainDescription(chain);
+                if (!ImGui.TreeNode($"{label}##FullIkRetargetChain{chain}"))
+                    continue;
+
+                var chainSettings = retarget.GetChainSettings(chain);
+                if (ImGui.SmallButton($"Restore chain defaults##FullIkRetargetRestore{chain}"))
+                {
+                    retarget.Chains[chain] = AdvancedBodyScalingFullIkRetargetingChainSettings.CreateDefault(chain);
+                    chainSettings = retarget.GetChainSettings(chain);
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                }
+                CtrlHelper.AddHoverText($"Restore the shipped defaults for the {label} retargeting chain without changing the rest of the retargeting tuning.");
+
+                ImGui.TextDisabled(description);
+
+                var chainEnabled = chainSettings.Enabled;
+                if (ImGui.Checkbox($"Enable##FullIkRetargetEnabled{chain}", ref chainEnabled))
+                {
+                    chainSettings.Enabled = chainEnabled;
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                }
+                CtrlHelper.AddHoverText("Turns this supported retargeting chain on or off without changing the rest of the retargeting system.");
+
+                var chainStrength = chainSettings.Strength;
+                if (ImGui.SliderFloat($"Strength##FullIkRetargetStrength{chain}", ref chainStrength, 0f, AdvancedBodyScalingFullIkRetargetingTuning.GetUiMaxChainStrength(chain), "%.2f"))
+                {
+                    chainSettings.Strength = chainStrength;
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                }
+                CtrlHelper.AddHoverText("Scales how strongly this chain participates relative to the global retargeting strength and the matching chain-group strength. Conservative values are recommended.");
+
+                ImGui.TreePop();
+                ImGui.Spacing();
+            }
+        }
+
+        DrawFullIkRetargetingDebugReadout();
+    }
+
+    private void DrawFullBodyIkSettings(AdvancedBodyScalingSettings settings)
+    {
+        if (!ImGui.CollapsingHeader("Full-Body IK"))
+            return;
+
+        var fullBodyIk = settings.FullBodyIk;
+        ImGui.TextDisabled("Full-Body IK adds a final whole-body pose solve after scaling and correctives so the body can adapt more coherently to changed proportions. It is conservative by default and works only on supported bone chains.");
+
+        var enabled = fullBodyIk.Enabled;
+        if (ImGui.Checkbox("Enable Full-Body IK", ref enabled))
+        {
+            fullBodyIk.Enabled = enabled;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Turns the final supported-bone full-body IK layer on or off. It runs after Advanced Body Scaling and pose-space correctives, then yields back to locks and pinned axes when they limit the solve.");
+
+        ImGui.SameLine();
+        if (ImGui.Button("Restore IK defaults"))
+        {
+            settings.FullBodyIk = new AdvancedBodyScalingFullBodyIkSettings();
+            fullBodyIk = settings.FullBodyIk;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Restores the shipped Full-Body IK defaults, including global enable/strength, solver safety values, and every per-chain enable and strength setting.");
+
+        using (var disabled = ImRaii.Disabled(!fullBodyIk.Enabled))
+        {
+            var globalStrength = fullBodyIk.GlobalStrength;
+            if (ImGui.SliderFloat("Global IK strength", ref globalStrength, 0f, AdvancedBodyScalingFullBodyIkTuning.UiMaxGlobalStrength, "%.2f"))
+            {
+                fullBodyIk.GlobalStrength = globalStrength;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Scales how strongly the final Full-Body IK layer is allowed to adapt the current pose overall. Conservative values are recommended; stronger values are not always better and can make the solve noisier.");
+
+            var iterations = fullBodyIk.IterationCount;
+            if (ImGui.SliderInt("Iteration count", ref iterations, 1, 12))
+            {
+                fullBodyIk.IterationCount = iterations;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Maximum solver iterations for the coordinated chain pass. Higher values can fit the pose more closely, but lower values are usually steadier and cheaper.");
+
+            var tolerance = fullBodyIk.ConvergenceTolerance;
+            if (ImGui.SliderFloat("Convergence tolerance", ref tolerance, 0.001f, 0.050f, "%.3f"))
+            {
+                fullBodyIk.ConvergenceTolerance = tolerance;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How much residual chain error is tolerated before the solve is considered converged. Lower values chase the target longer; higher values stay more conservative.");
+
+            var pelvis = fullBodyIk.PelvisCompensationStrength;
+            if (ImGui.SliderFloat("Pelvis compensation strength", ref pelvis, 0f, AdvancedBodyScalingFullBodyIkTuning.UiMaxPelvisStrength, "%.2f"))
+            {
+                fullBodyIk.PelvisCompensationStrength = pelvis;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly the solver shares leg reach pressure back into the pelvis so planted and extended lower-body poses stay more coherent after scaling. Higher values can overdrive the whole body, so conservative tuning is recommended.");
+
+            var spine = fullBodyIk.SpineRedistributionStrength;
+            if (ImGui.SliderFloat("Spine redistribution strength", ref spine, 0f, AdvancedBodyScalingFullBodyIkTuning.UiMaxSpineStrength, "%.2f"))
+            {
+                fullBodyIk.SpineRedistributionStrength = spine;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly pelvis and limb pressure is redistributed through the supported spine chain instead of collapsing into one joint. Stronger values can amplify torso jitter.");
+
+            var arm = fullBodyIk.ArmStrength;
+            if (ImGui.SliderFloat("Arm strength", ref arm, 0f, AdvancedBodyScalingFullBodyIkTuning.UiMaxArmStrength, "%.2f"))
+            {
+                fullBodyIk.ArmStrength = arm;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly the supported arm chains try to preserve shoulder, elbow, and hand continuity relative to the chest and clavicles. Arms are safer than legs, but stronger is still not always better.");
+
+            var leg = fullBodyIk.LegStrength;
+            if (ImGui.SliderFloat("Leg strength", ref leg, 0f, AdvancedBodyScalingFullBodyIkTuning.UiMaxLegStrength, "%.2f"))
+            {
+                fullBodyIk.LegStrength = leg;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly the supported leg chains try to preserve pelvis-to-foot continuity and planted-feet behavior where practical. Legs are intentionally safer at lower strengths because aggressive values destabilize first here.");
+
+            var head = fullBodyIk.HeadAlignmentStrength;
+            if (ImGui.SliderFloat("Head / neck alignment strength", ref head, 0f, AdvancedBodyScalingFullBodyIkTuning.UiMaxHeadStrength, "%.2f"))
+            {
+                fullBodyIk.HeadAlignmentStrength = head;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("How strongly the neck and head are allowed to realign after pelvis, spine, and shoulder compensation.");
+
+            var grounding = fullBodyIk.GroundingBias;
+            if (ImGui.SliderFloat("Grounding bias", ref grounding, 0f, AdvancedBodyScalingFullBodyIkTuning.UiMaxGroundingBias, "%.2f"))
+            {
+                fullBodyIk.GroundingBias = grounding;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Biases leg and pelvis behavior toward planted-feet stability where the supported pose data suggests that is practical. Excessive grounding bias can force unstable leg behavior.");
+
+            var motionSafety = fullBodyIk.MotionSafetyBias;
+            if (ImGui.SliderFloat("Motion-safety bias / damping", ref motionSafety, 0.30f, 1f, "%.2f"))
+            {
+                fullBodyIk.MotionSafetyBias = motionSafety;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Adds damping, deadzone, and smoothing pressure so the solve stays calmer and is less likely to jitter or visibly fight the animation. Lower values are riskier; conservative setups usually keep this fairly high.");
+
+            var maxCorrection = fullBodyIk.MaxCorrectionClamp;
+            if (ImGui.SliderFloat("Max IK correction clamp", ref maxCorrection, 0f, AdvancedBodyScalingFullBodyIkTuning.UiMaxCorrectionClamp, "%.2f"))
+            {
+                fullBodyIk.MaxCorrectionClamp = maxCorrection;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Hard cap on how much local rotation and translation the final Full-Body IK solve is allowed to add on supported chains. Larger clamps can make unsafe corrections much more visible.");
+
+            var advisories = AdvancedBodyScalingFullBodyIkSystem.GetTuningAdvisories(settings);
+            if (advisories.Count == 0)
+            {
+                ImGui.TextDisabled("Recommended range: conservative values usually solve more cleanly than stronger ones.");
+            }
+            else
+            {
+                ImGui.TextColored(new Vector4(0.95f, 0.80f, 0.38f, 1f), "Stability advisories:");
+                foreach (var advisory in advisories.Take(4))
+                    ImGui.BulletText(advisory);
+            }
+
+            foreach (var chain in AdvancedBodyScalingFullBodyIkSystem.GetOrderedChains())
+            {
+                var label = AdvancedBodyScalingFullBodyIkSystem.GetChainLabel(chain);
+                var description = AdvancedBodyScalingFullBodyIkSystem.GetChainDescription(chain);
+                if (!ImGui.TreeNode($"{label}##FullBodyIkChain{chain}"))
+                    continue;
+
+                var chainSettings = fullBodyIk.GetChainSettings(chain);
+                if (ImGui.SmallButton($"Restore chain defaults##FullBodyIkRestore{chain}"))
+                {
+                    fullBodyIk.Chains[chain] = AdvancedBodyScalingFullBodyIkChainSettings.CreateDefault(chain);
+                    chainSettings = fullBodyIk.GetChainSettings(chain);
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                }
+                CtrlHelper.AddHoverText($"Restore the shipped defaults for the {label} chain without changing the rest of the Full-Body IK tuning.");
+
+                ImGui.TextDisabled(description);
+
+                var chainEnabled = chainSettings.Enabled;
+                if (ImGui.Checkbox($"Enable##FullBodyIkEnabled{chain}", ref chainEnabled))
+                {
+                    chainSettings.Enabled = chainEnabled;
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                }
+                CtrlHelper.AddHoverText("Turns this supported chain on or off without changing the rest of the Full-Body IK system.");
+
+                var chainStrength = chainSettings.Strength;
+                if (ImGui.SliderFloat($"Strength##FullBodyIkStrength{chain}", ref chainStrength, 0f, AdvancedBodyScalingFullBodyIkTuning.GetUiMaxChainStrength(chain), "%.2f"))
+                {
+                    chainSettings.Strength = chainStrength;
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                }
+                CtrlHelper.AddHoverText("Scales how strongly this chain participates relative to the global Full-Body IK strength and the regional chain group strength. Conservative chain values are recommended; legs and pelvis are deliberately safer at lower strengths.");
+
+                ImGui.TreePop();
+                ImGui.Spacing();
+            }
+        }
+
+        DrawFullBodyIkDebugReadout();
+    }
+
     private void DrawPoseCorrectiveDebugReadout()
     {
         var path = AdvancedBodyScalingPoseCorrectiveSystem.DetectSupportedPath();
@@ -1077,6 +1462,169 @@ public class SettingsTab
         }
     }
 
+    private void DrawFullIkRetargetingDebugReadout()
+    {
+        AdvancedBodyScalingFullIkRetargetingDebugState? debugState = null;
+
+        if (TryGetFullIkRetargetingDebugState(out var liveState) && liveState != null)
+            debugState = liveState;
+
+        ImGui.TextDisabled($"Settings source: {(debugState?.SettingsSourceLabel ?? "Global settings")}");
+
+        if (debugState == null)
+        {
+            ImGui.TextDisabled("No live armature Full IK Retargeting debug data yet. Activity appears while a supported actor is rendered.");
+            return;
+        }
+
+        ImGui.TextDisabled($"Enabled: {debugState.Enabled} | Active: {debugState.Active} | Full-Body IK follow-up active: {debugState.FullBodyIkFollowupActive}");
+        ImGui.TextDisabled($"Motion safety: {debugState.MotionSafetyBias:0.00} | Blend bias: {debugState.BlendBias:0.00}");
+        ImGui.TextDisabled($"Locks/pins limited solve: {debugState.LocksLimited} | Safety limiting: {debugState.SafetyLimited}");
+        ImGui.TextDisabled($"Estimated residual risk: {debugState.EstimatedBeforeRisk:0.#} -> {debugState.EstimatedAfterRisk:0.#}");
+
+        if (!string.IsNullOrWhiteSpace(debugState.Summary))
+            ImGui.TextWrapped(debugState.Summary);
+
+        if (!string.IsNullOrWhiteSpace(debugState.FullBodyIkFollowupSummary))
+            ImGui.TextDisabled($"Full-Body IK follow-up: {debugState.FullBodyIkFollowupSummary}");
+
+        if (debugState.Chains.Count == 0)
+        {
+            ImGui.TextDisabled("No supported retargeting chain debug data is available yet.");
+            return;
+        }
+
+        ImGui.TextUnformatted("Chain activity:");
+        foreach (var chain in debugState.Chains
+                     .OrderByDescending(entry => entry.BlendAmount)
+                     .ThenByDescending(entry => entry.Strength)
+                     .ThenBy(entry => entry.Label, StringComparer.Ordinal))
+        {
+            ImGui.Bullet();
+            ImGui.SameLine();
+
+            if (!chain.IsValid)
+            {
+                var skipReason = string.IsNullOrWhiteSpace(chain.SkipReason) ? "Chain unavailable." : chain.SkipReason;
+                ImGui.TextWrapped($"{chain.Label}: {skipReason}");
+            }
+            else if (!chain.IsActive)
+            {
+                ImGui.TextWrapped($"{chain.Label}: blend {chain.BlendAmount:0.00}, strength {chain.Strength:0.00}. {chain.DriverSummary}.");
+            }
+            else
+            {
+                ImGui.TextWrapped($"{chain.Label}: blend {chain.BlendAmount:0.00}, strength {chain.Strength:0.00}, proportion {chain.ProportionDelta:+0.00;-0.00;0.00}, correction {chain.CorrectionMagnitude:0.000}.");
+            }
+
+            ImGui.Indent();
+            if (chain.LockLimited)
+                ImGui.TextDisabled("Locks or pinned axes limited this chain.");
+
+            if (chain.SafetyLimited)
+            {
+                var flags = new List<string>();
+                if (chain.Clamped)
+                    flags.Add("clamped");
+                if (chain.Rejected)
+                    flags.Add("rejected");
+                if (chain.Damped)
+                    flags.Add("damped");
+
+                if (flags.Count > 0)
+                    ImGui.TextDisabled($"Safety state: {string.Join(", ", flags)}");
+
+                if (!string.IsNullOrWhiteSpace(chain.SafetySummary))
+                    ImGui.TextDisabled(chain.SafetySummary);
+            }
+
+            ImGui.TextDisabled(chain.Description);
+            if (!string.IsNullOrWhiteSpace(chain.DriverSummary))
+                ImGui.TextDisabled(chain.DriverSummary);
+            ImGui.Unindent();
+        }
+    }
+
+    private void DrawFullBodyIkDebugReadout()
+    {
+        AdvancedBodyScalingFullBodyIkDebugState? debugState = null;
+
+        if (TryGetFullBodyIkDebugState(out var liveState) && liveState != null)
+            debugState = liveState;
+
+        ImGui.TextDisabled($"Settings source: {(debugState?.SettingsSourceLabel ?? "Global settings")}");
+
+        if (debugState == null)
+        {
+            ImGui.TextDisabled("No live armature Full-Body IK debug data yet. Activity appears while a supported actor is rendered.");
+            return;
+        }
+
+        ImGui.TextDisabled($"Enabled: {debugState.Enabled} | Active: {debugState.Active}");
+        ImGui.TextDisabled($"Iterations used: {debugState.IterationCountUsed} | Tolerance: {debugState.ConvergenceTolerance:0.000}");
+        ImGui.TextDisabled($"Converged: {debugState.Converged} | Locks/pins limited solve: {debugState.LocksLimited} | Stability limiting: {debugState.SafetyLimited}");
+        ImGui.TextDisabled($"Estimated residual risk: {debugState.EstimatedBeforeRisk:0.#} -> {debugState.EstimatedAfterRisk:0.#} | Max residual: {debugState.MaxResidualError:0.000}");
+
+        if (!string.IsNullOrWhiteSpace(debugState.Summary))
+            ImGui.TextWrapped(debugState.Summary);
+
+        if (debugState.Chains.Count == 0)
+        {
+            ImGui.TextDisabled("No supported chain debug data is available yet.");
+            return;
+        }
+
+        ImGui.TextUnformatted("Chain activity:");
+        foreach (var chain in debugState.Chains
+                     .OrderByDescending(entry => entry.Strength)
+                     .ThenByDescending(entry => entry.Activation)
+                     .ThenBy(entry => entry.Label, StringComparer.Ordinal))
+        {
+            ImGui.Bullet();
+            ImGui.SameLine();
+
+            if (!chain.IsValid)
+            {
+                var skipReason = string.IsNullOrWhiteSpace(chain.SkipReason) ? "Chain unavailable." : chain.SkipReason;
+                ImGui.TextWrapped($"{chain.Label}: {skipReason}");
+            }
+            else if (!chain.IsSolved)
+            {
+                ImGui.TextWrapped($"{chain.Label}: activation {chain.Activation:0.00}, strength {chain.Strength:0.00}. {chain.DriverSummary}.");
+            }
+            else
+            {
+                ImGui.TextWrapped($"{chain.Label}: activation {chain.Activation:0.00}, strength {chain.Strength:0.00}, correction {chain.CorrectionMagnitude:0.000}, residual {chain.ResidualError:0.000}.");
+            }
+
+            ImGui.Indent();
+            if (chain.LockLimited)
+                ImGui.TextDisabled("Locks or pinned axes limited this chain.");
+
+            if (chain.SafetyLimited)
+            {
+                var flags = new List<string>();
+                if (chain.Clamped)
+                    flags.Add("clamped");
+                if (chain.Rejected)
+                    flags.Add("rejected");
+                if (chain.Damped)
+                    flags.Add("damped");
+
+                if (flags.Count > 0)
+                    ImGui.TextDisabled($"Safety state: {string.Join(", ", flags)}");
+
+                if (!string.IsNullOrWhiteSpace(chain.SafetySummary))
+                    ImGui.TextDisabled(chain.SafetySummary);
+            }
+
+            ImGui.TextDisabled(chain.Description);
+            if (!string.IsNullOrWhiteSpace(chain.DriverSummary))
+                ImGui.TextDisabled(chain.DriverSummary);
+            ImGui.Unindent();
+        }
+    }
+
     private bool TryGetPoseCorrectiveDebugState(out AdvancedBodyScalingPoseCorrectiveDebugState? debugState)
     {
         if ((_templateEditorManager.IsEditorActive || _templateEditorManager.IsEditorPaused) &&
@@ -1090,6 +1638,46 @@ public class SettingsTab
         if (TryGetArmatureForCharacter(currentPlayer, out var currentArmature))
         {
             debugState = currentArmature.PoseCorrectiveDebugState;
+            return true;
+        }
+
+        debugState = null;
+        return false;
+    }
+
+    private bool TryGetFullIkRetargetingDebugState(out AdvancedBodyScalingFullIkRetargetingDebugState? debugState)
+    {
+        if ((_templateEditorManager.IsEditorActive || _templateEditorManager.IsEditorPaused) &&
+            TryGetArmatureForCharacter(_templateEditorManager.Character, out var previewArmature))
+        {
+            debugState = previewArmature.FullIkRetargetingDebugState;
+            return true;
+        }
+
+        var currentPlayer = _gameObjectService.GetCurrentPlayerActorIdentifier().CreatePermanent();
+        if (TryGetArmatureForCharacter(currentPlayer, out var currentArmature))
+        {
+            debugState = currentArmature.FullIkRetargetingDebugState;
+            return true;
+        }
+
+        debugState = null;
+        return false;
+    }
+
+    private bool TryGetFullBodyIkDebugState(out AdvancedBodyScalingFullBodyIkDebugState? debugState)
+    {
+        if ((_templateEditorManager.IsEditorActive || _templateEditorManager.IsEditorPaused) &&
+            TryGetArmatureForCharacter(_templateEditorManager.Character, out var previewArmature))
+        {
+            debugState = previewArmature.FullBodyIkDebugState;
+            return true;
+        }
+
+        var currentPlayer = _gameObjectService.GetCurrentPlayerActorIdentifier().CreatePermanent();
+        if (TryGetArmatureForCharacter(currentPlayer, out var currentArmature))
+        {
+            debugState = currentArmature.FullBodyIkDebugState;
             return true;
         }
 
@@ -1137,7 +1725,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores only Surface balancing strength. It does not touch pose-space correctives, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
+        CtrlHelper.AddHoverText("Restores only Surface balancing strength. It does not touch pose-space correctives, Full IK retargeting, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset Naturalization"))
@@ -1146,7 +1734,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores only Naturalization strength. It does not touch pose-space correctives, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
+        CtrlHelper.AddHoverText("Restores only Naturalization strength. It does not touch pose-space correctives, Full IK retargeting, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset Pose-Aware"))
@@ -1155,7 +1743,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores only Pose-aware validation mode. It does not touch pose-space correctives, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
+        CtrlHelper.AddHoverText("Restores only Pose-aware validation mode. It does not touch pose-space correctives, Full IK retargeting, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset All Advanced Scaling"))
@@ -1164,7 +1752,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores all Advanced Body Scaling settings to shipped defaults, including pose-space correctives, the global neck/shoulder baseline, race-specific presets, animation-safe mode, and region tuning.");
+        CtrlHelper.AddHoverText("Restores all Advanced Body Scaling settings to shipped defaults, including pose-space correctives, Full IK retargeting, Full-Body IK, the global neck/shoulder baseline, race-specific presets, animation-safe mode, and region tuning.");
     }
 
     private void DrawAdvancedBodyScalingRegionProfiles(AdvancedBodyScalingSettings settings)
@@ -1335,6 +1923,20 @@ public class SettingsTab
             "Detached transitions and harsh region bridges that become more visible when the body is bent, raised, or twisted.",
             settings.PoseCorrectives.Enabled ? "Active" : "Off",
             "This is a limited supported-bone corrective layer. It uses standard pose data and falls back safely when no supported corrective morph path exists.");
+
+        DrawExplainabilityRow(
+            "Full IK retargeting",
+            "Pelvis/root, spine, neck/head, arms, and legs on supported ordinary bones before the final IK pass.",
+            "Animation-intent drift on scaled bodies, including reach mismatch, stride mismatch, and posture drift caused by changed proportions.",
+            settings.FullIkRetargeting.Enabled ? "Active" : "Off",
+            "This is a conservative supported-bone retargeting layer. It adapts pose intent from proportion deltas, yields to locks and pinned axes, and hands the result to Full-Body IK for the final coherence pass.");
+
+        DrawExplainabilityRow(
+            "Full-body IK",
+            "Pelvis/root, spine, neck/head, arms, and legs on supported ordinary bones.",
+            "Whole-body pose drift after heavy scaling, including planted-feet mismatch, shoulder/arm disconnects, and pelvis/spine imbalance.",
+            settings.FullBodyIk.Enabled ? "Active" : "Off",
+            "This is a conservative final supported-bone pose solver. It ignores unsupported custom extras and yields to row locks and pinned axes when they conflict.");
 
         DrawExplainabilityRow(
             "Animation-safe mode",

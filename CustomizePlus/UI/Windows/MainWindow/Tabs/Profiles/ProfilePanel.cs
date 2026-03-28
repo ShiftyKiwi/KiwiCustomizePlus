@@ -306,7 +306,7 @@ public class ProfilePanel
             _manager.UpdateAdvancedBodyScalingOverrides(profile, settings => settings.UseProfileOverrides = false);
 
         ImGui.SameLine();
-        ImGuiComponents.HelpMarker("Uses the Settings-tab Advanced Body Scaling configuration for this profile, including automation, neck and shoulder baselines, race presets, pose-space correctives, and region tuning, until profile overrides are enabled.");
+        ImGuiComponents.HelpMarker("Uses the Settings-tab Advanced Body Scaling configuration for this profile, including automation, neck and shoulder baselines, race presets, pose-space correctives, Full IK retargeting, Full-Body IK, and region tuning, until profile overrides are enabled.");
 
         ImGui.SameLine();
         if (ImGui.RadioButton("Use Profile Overrides", useOverrides))
@@ -314,7 +314,7 @@ public class ProfilePanel
 
         if (!profile.AdvancedBodyScalingOverrides.UseProfileOverrides)
         {
-            ImGui.TextDisabled("Using the Settings-tab Advanced Body Scaling config, including automation, neck and shoulder baselines, race presets, pose-space correctives, and region tuning, until overrides are enabled.");
+            ImGui.TextDisabled("Using the Settings-tab Advanced Body Scaling config, including automation, neck and shoulder baselines, race presets, pose-space correctives, Full IK retargeting, Full-Body IK, and region tuning, until overrides are enabled.");
             return;
         }
 
@@ -351,6 +351,38 @@ public class ProfilePanel
 
                 if (regionOverride.IsEmpty)
                     overrides.PoseCorrectiveRegionOverrides.Remove(region);
+            });
+
+        void UpdateFullBodyIkChainOverride(AdvancedBodyScalingFullBodyIkChain chain, Action<AdvancedBodyScalingFullBodyIkChainOverrides> update)
+            => _manager.UpdateAdvancedBodyScalingOverrides(profile, settings =>
+            {
+                var overrides = settings.Overrides;
+                if (!overrides.FullBodyIkChainOverrides.TryGetValue(chain, out var chainOverride))
+                {
+                    chainOverride = new AdvancedBodyScalingFullBodyIkChainOverrides();
+                    overrides.FullBodyIkChainOverrides[chain] = chainOverride;
+                }
+
+                update(chainOverride);
+
+                if (chainOverride.IsEmpty)
+                    overrides.FullBodyIkChainOverrides.Remove(chain);
+            });
+
+        void UpdateFullIkRetargetingChainOverride(AdvancedBodyScalingFullBodyIkChain chain, Action<AdvancedBodyScalingFullIkRetargetingChainOverrides> update)
+            => _manager.UpdateAdvancedBodyScalingOverrides(profile, settings =>
+            {
+                var overrides = settings.Overrides;
+                if (!overrides.FullIkRetargetingChainOverrides.TryGetValue(chain, out var chainOverride))
+                {
+                    chainOverride = new AdvancedBodyScalingFullIkRetargetingChainOverrides();
+                    overrides.FullIkRetargetingChainOverrides[chain] = chainOverride;
+                }
+
+                update(chainOverride);
+
+                if (chainOverride.IsEmpty)
+                    overrides.FullIkRetargetingChainOverrides.Remove(chain);
             });
 
         var overrides = profile.AdvancedBodyScalingOverrides.Overrides;
@@ -834,6 +866,643 @@ public class ProfilePanel
                         var strengthOverride = regionOverride?.Strength.HasValue == true;
                         if (ImGui.Checkbox($"##ProfilePoseCorrectiveRegionStrengthOverride{region}", ref strengthOverride))
                             UpdatePoseCorrectiveRegionOverride(region, o => o.Strength = strengthOverride ? globalRegion.Strength : null);
+                    }
+                }
+
+                ImGui.TreePop();
+                ImGui.Spacing();
+            }
+        }
+
+        ImGui.Spacing();
+        if (ImGui.CollapsingHeader("Full IK Retargeting Overrides"))
+        {
+            ImGui.TextDisabled("Override the Full IK Retargeting baseline for this profile. Disabled fields inherit the global retargeting settings.");
+            var globalRetarget = globalSettings.FullIkRetargeting;
+
+            using (var retargetTable = ImRaii.Table(
+                       "ProfileFullIkRetargeting",
+                       3,
+                       ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp,
+                       overrideTableWidth))
+            {
+                if (retargetTable)
+                {
+                    ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
+                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+                    ImGui.TableSetupScrollFreeze(0, 1);
+                    ImGui.TableHeadersRow();
+
+                    void DrawRetargetBoolOverride(
+                        string label,
+                        string idSuffix,
+                        bool globalValue,
+                        bool? overrideValue,
+                        Action<AdvancedBodyScalingOverrides, bool?> setter,
+                        string helpText)
+                    {
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted(label);
+                        ImGui.TableNextColumn();
+                        if (overrideValue.HasValue)
+                        {
+                            var value = overrideValue.Value;
+                            if (ImGui.Checkbox($"##{idSuffix}", ref value))
+                                ToggleOverride(o => setter(o, value));
+                        }
+                        else
+                        {
+                            var value = globalValue;
+                            using (ImRaii.Disabled())
+                                ImGui.Checkbox($"##{idSuffix}", ref value);
+                        }
+                        CtrlHelper.AddHoverText(helpText);
+                        ImGui.TableNextColumn();
+                        var enabled = overrideValue.HasValue;
+                        if (ImGui.Checkbox($"##{idSuffix}Override", ref enabled))
+                            ToggleOverride(o => setter(o, enabled ? globalValue : null));
+                    }
+
+                    void DrawRetargetFloatOverride(
+                        string label,
+                        string idSuffix,
+                        float globalValue,
+                        float? overrideValue,
+                        float min,
+                        float max,
+                        string format,
+                        Action<AdvancedBodyScalingOverrides, float?> setter,
+                        string helpText)
+                    {
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted(label);
+                        ImGui.TableNextColumn();
+                        if (overrideValue.HasValue)
+                        {
+                            var value = overrideValue.Value;
+                            ImGui.SetNextItemWidth(-1);
+                            if (ImGui.SliderFloat($"##{idSuffix}", ref value, min, max, format))
+                                ToggleOverride(o => setter(o, value));
+                        }
+                        else
+                        {
+                            var value = globalValue;
+                            using (ImRaii.Disabled())
+                            {
+                                ImGui.SetNextItemWidth(-1);
+                                ImGui.SliderFloat($"##{idSuffix}", ref value, min, max, format);
+                            }
+                        }
+                        CtrlHelper.AddHoverText(helpText);
+                        ImGui.TableNextColumn();
+                        var enabled = overrideValue.HasValue;
+                        if (ImGui.Checkbox($"##{idSuffix}Override", ref enabled))
+                            ToggleOverride(o => setter(o, enabled ? globalValue : null));
+                    }
+
+                    DrawRetargetBoolOverride(
+                        "Enable Full IK Retargeting",
+                        "ProfileFullIkRetargetingEnabled",
+                        globalRetarget.Enabled,
+                        overrides.FullIkRetargetingEnabled,
+                        (o, v) => o.FullIkRetargetingEnabled = v,
+                        "Overrides whether the supported-bone retargeting layer is active for this profile.");
+                    DrawRetargetFloatOverride(
+                        "Global retargeting strength",
+                        "ProfileFullIkRetargetingStrength",
+                        globalRetarget.GlobalStrength,
+                        overrides.FullIkRetargetingStrength,
+                        0f,
+                        AdvancedBodyScalingFullIkRetargetingTuning.UiMaxGlobalStrength,
+                        "%.2f",
+                        (o, v) => o.FullIkRetargetingStrength = v,
+                        "Overrides the overall Full IK Retargeting strength for this profile.");
+                    DrawRetargetFloatOverride(
+                        "Pelvis / root strength",
+                        "ProfileFullIkRetargetingPelvis",
+                        globalRetarget.PelvisStrength,
+                        overrides.FullIkRetargetingPelvisStrength,
+                        0f,
+                        AdvancedBodyScalingFullIkRetargetingTuning.UiMaxPelvisStrength,
+                        "%.2f",
+                        (o, v) => o.FullIkRetargetingPelvisStrength = v,
+                        "Overrides how strongly pelvis/root retargeting participates for this profile.");
+                    DrawRetargetFloatOverride(
+                        "Spine strength",
+                        "ProfileFullIkRetargetingSpine",
+                        globalRetarget.SpineStrength,
+                        overrides.FullIkRetargetingSpineStrength,
+                        0f,
+                        AdvancedBodyScalingFullIkRetargetingTuning.UiMaxSpineStrength,
+                        "%.2f",
+                        (o, v) => o.FullIkRetargetingSpineStrength = v,
+                        "Overrides how strongly spine retargeting participates for this profile.");
+                    DrawRetargetFloatOverride(
+                        "Arm strength",
+                        "ProfileFullIkRetargetingArm",
+                        globalRetarget.ArmStrength,
+                        overrides.FullIkRetargetingArmStrength,
+                        0f,
+                        AdvancedBodyScalingFullIkRetargetingTuning.UiMaxArmStrength,
+                        "%.2f",
+                        (o, v) => o.FullIkRetargetingArmStrength = v,
+                        "Overrides how strongly arm retargeting participates for this profile.");
+                    DrawRetargetFloatOverride(
+                        "Leg strength",
+                        "ProfileFullIkRetargetingLeg",
+                        globalRetarget.LegStrength,
+                        overrides.FullIkRetargetingLegStrength,
+                        0f,
+                        AdvancedBodyScalingFullIkRetargetingTuning.UiMaxLegStrength,
+                        "%.2f",
+                        (o, v) => o.FullIkRetargetingLegStrength = v,
+                        "Overrides how strongly leg retargeting participates for this profile.");
+                    DrawRetargetFloatOverride(
+                        "Head / neck strength",
+                        "ProfileFullIkRetargetingHead",
+                        globalRetarget.HeadStrength,
+                        overrides.FullIkRetargetingHeadStrength,
+                        0f,
+                        AdvancedBodyScalingFullIkRetargetingTuning.UiMaxHeadStrength,
+                        "%.2f",
+                        (o, v) => o.FullIkRetargetingHeadStrength = v,
+                        "Overrides how strongly head/neck retargeting participates for this profile.");
+                    DrawRetargetFloatOverride(
+                        "Reach adaptation strength",
+                        "ProfileFullIkRetargetingReach",
+                        globalRetarget.ReachAdaptationStrength,
+                        overrides.FullIkRetargetingReachAdaptationStrength,
+                        0f,
+                        AdvancedBodyScalingFullIkRetargetingTuning.UiMaxReachAdaptation,
+                        "%.2f",
+                        (o, v) => o.FullIkRetargetingReachAdaptationStrength = v,
+                        "Overrides the reach adaptation bias for this profile's retargeting layer.");
+                    DrawRetargetFloatOverride(
+                        "Stride adaptation strength",
+                        "ProfileFullIkRetargetingStride",
+                        globalRetarget.StrideAdaptationStrength,
+                        overrides.FullIkRetargetingStrideAdaptationStrength,
+                        0f,
+                        AdvancedBodyScalingFullIkRetargetingTuning.UiMaxStrideAdaptation,
+                        "%.2f",
+                        (o, v) => o.FullIkRetargetingStrideAdaptationStrength = v,
+                        "Overrides the stride adaptation bias for this profile's retargeting layer.");
+                    DrawRetargetFloatOverride(
+                        "Posture preservation strength",
+                        "ProfileFullIkRetargetingPosture",
+                        globalRetarget.PosturePreservationStrength,
+                        overrides.FullIkRetargetingPosturePreservationStrength,
+                        0f,
+                        AdvancedBodyScalingFullIkRetargetingTuning.UiMaxPosturePreservation,
+                        "%.2f",
+                        (o, v) => o.FullIkRetargetingPosturePreservationStrength = v,
+                        "Overrides the posture preservation bias for this profile's retargeting layer.");
+                    DrawRetargetFloatOverride(
+                        "Motion-safety / damping",
+                        "ProfileFullIkRetargetingSafety",
+                        globalRetarget.MotionSafetyBias,
+                        overrides.FullIkRetargetingMotionSafetyBias,
+                        0.30f,
+                        1f,
+                        "%.2f",
+                        (o, v) => o.FullIkRetargetingMotionSafetyBias = v,
+                        "Overrides damping and motion-safety for this profile's retargeting layer.");
+                    DrawRetargetFloatOverride(
+                        "Retargeting blend bias",
+                        "ProfileFullIkRetargetingBlend",
+                        globalRetarget.BlendBias,
+                        overrides.FullIkRetargetingBlendBias,
+                        0f,
+                        AdvancedBodyScalingFullIkRetargetingTuning.UiMaxBlendBias,
+                        "%.2f",
+                        (o, v) => o.FullIkRetargetingBlendBias = v,
+                        "Overrides how strongly this profile leans toward the retargeted pose versus the original animation.");
+                    DrawRetargetFloatOverride(
+                        "Max retargeting correction clamp",
+                        "ProfileFullIkRetargetingClamp",
+                        globalRetarget.MaxCorrectionClamp,
+                        overrides.FullIkRetargetingMaxCorrectionClamp,
+                        0f,
+                        AdvancedBodyScalingFullIkRetargetingTuning.UiMaxCorrectionClamp,
+                        "%.2f",
+                        (o, v) => o.FullIkRetargetingMaxCorrectionClamp = v,
+                        "Overrides the maximum correction clamp for this profile's retargeting layer.");
+                }
+            }
+
+            ImGui.Spacing();
+            ImGui.TextDisabled("Per-chain Full IK Retargeting overrides let this profile bias supported major chains without replacing the rest of the global retargeting tuning.");
+            foreach (var chain in AdvancedBodyScalingFullIkRetargetingSystem.GetOrderedChains())
+            {
+                var label = AdvancedBodyScalingFullIkRetargetingSystem.GetChainLabel(chain);
+                var description = AdvancedBodyScalingFullIkRetargetingSystem.GetChainDescription(chain);
+                var globalChain = globalRetarget.GetChainSettings(chain);
+                overrides.FullIkRetargetingChainOverrides.TryGetValue(chain, out var chainOverride);
+
+                if (!ImGui.TreeNode($"{label}##ProfileFullIkRetargetingChain{chain}"))
+                    continue;
+
+                ImGui.TextDisabled(description);
+                using (var chainTable = ImRaii.Table(
+                           $"ProfileFullIkRetargetingChain_{chain}",
+                           3,
+                           ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp,
+                           overrideTableWidth))
+                {
+                    if (chainTable)
+                    {
+                        ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
+                        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                        ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+                        ImGui.TableSetupScrollFreeze(0, 1);
+                        ImGui.TableHeadersRow();
+
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted("Enabled");
+                        ImGui.TableNextColumn();
+                        if (chainOverride?.Enabled.HasValue == true)
+                        {
+                            var value = chainOverride.Enabled.Value;
+                            if (ImGui.Checkbox($"##ProfileFullIkRetargetingChainEnabled{chain}", ref value))
+                                UpdateFullIkRetargetingChainOverride(chain, o => o.Enabled = value);
+                        }
+                        else
+                        {
+                            var value = globalChain.Enabled;
+                            using (ImRaii.Disabled())
+                                ImGui.Checkbox($"##ProfileFullIkRetargetingChainEnabled{chain}", ref value);
+                        }
+                        CtrlHelper.AddHoverText("Overrides whether this supported retargeting chain participates for this profile.");
+                        ImGui.TableNextColumn();
+                        var enabledOverride = chainOverride?.Enabled.HasValue == true;
+                        if (ImGui.Checkbox($"##ProfileFullIkRetargetingChainEnabledOverride{chain}", ref enabledOverride))
+                            UpdateFullIkRetargetingChainOverride(chain, o => o.Enabled = enabledOverride ? globalChain.Enabled : null);
+
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted("Strength");
+                        ImGui.TableNextColumn();
+                        if (chainOverride?.Strength.HasValue == true)
+                        {
+                            var value = chainOverride.Strength.Value;
+                            ImGui.SetNextItemWidth(-1);
+                            if (ImGui.SliderFloat($"##ProfileFullIkRetargetingChainStrength{chain}", ref value, 0f, AdvancedBodyScalingFullIkRetargetingTuning.GetUiMaxChainStrength(chain), "%.2f"))
+                                UpdateFullIkRetargetingChainOverride(chain, o => o.Strength = value);
+                        }
+                        else
+                        {
+                            var value = globalChain.Strength;
+                            using (ImRaii.Disabled())
+                            {
+                                ImGui.SetNextItemWidth(-1);
+                                ImGui.SliderFloat($"##ProfileFullIkRetargetingChainStrength{chain}", ref value, 0f, AdvancedBodyScalingFullIkRetargetingTuning.GetUiMaxChainStrength(chain), "%.2f");
+                            }
+                        }
+                        CtrlHelper.AddHoverText("Overrides how strongly this supported retargeting chain participates relative to the global and regional retargeting strengths for this profile.");
+                        ImGui.TableNextColumn();
+                        var strengthOverride = chainOverride?.Strength.HasValue == true;
+                        if (ImGui.Checkbox($"##ProfileFullIkRetargetingChainStrengthOverride{chain}", ref strengthOverride))
+                            UpdateFullIkRetargetingChainOverride(chain, o => o.Strength = strengthOverride ? globalChain.Strength : null);
+                    }
+                }
+
+                ImGui.TreePop();
+                ImGui.Spacing();
+            }
+        }
+
+        ImGui.Spacing();
+        if (ImGui.CollapsingHeader("Full-Body IK Overrides"))
+        {
+            ImGui.TextDisabled("Override the final Full-Body IK baseline for this profile. Disabled fields inherit the global IK settings.");
+            var globalFullBodyIk = globalSettings.FullBodyIk;
+
+            using (var ikTable = ImRaii.Table(
+                       "ProfileFullBodyIk",
+                       3,
+                       ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp,
+                       overrideTableWidth))
+            {
+                if (ikTable)
+                {
+                    ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
+                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+                    ImGui.TableSetupScrollFreeze(0, 1);
+                    ImGui.TableHeadersRow();
+
+                    void DrawIkBoolOverride(
+                        string label,
+                        string idSuffix,
+                        bool globalValue,
+                        bool? overrideValue,
+                        Action<AdvancedBodyScalingOverrides, bool?> setter,
+                        string helpText)
+                    {
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted(label);
+                        ImGui.TableNextColumn();
+                        if (overrideValue.HasValue)
+                        {
+                            var value = overrideValue.Value;
+                            if (ImGui.Checkbox($"##{idSuffix}", ref value))
+                                ToggleOverride(o => setter(o, value));
+                        }
+                        else
+                        {
+                            var value = globalValue;
+                            using (ImRaii.Disabled())
+                                ImGui.Checkbox($"##{idSuffix}", ref value);
+                        }
+                        CtrlHelper.AddHoverText(helpText);
+                        ImGui.TableNextColumn();
+                        var enabled = overrideValue.HasValue;
+                        if (ImGui.Checkbox($"##{idSuffix}Override", ref enabled))
+                            ToggleOverride(o => setter(o, enabled ? globalValue : null));
+                    }
+
+                    void DrawIkFloatOverride(
+                        string label,
+                        string idSuffix,
+                        float globalValue,
+                        float? overrideValue,
+                        float min,
+                        float max,
+                        string format,
+                        Action<AdvancedBodyScalingOverrides, float?> setter,
+                        string helpText)
+                    {
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted(label);
+                        ImGui.TableNextColumn();
+                        if (overrideValue.HasValue)
+                        {
+                            var value = overrideValue.Value;
+                            ImGui.SetNextItemWidth(-1);
+                            if (ImGui.SliderFloat($"##{idSuffix}", ref value, min, max, format))
+                                ToggleOverride(o => setter(o, value));
+                        }
+                        else
+                        {
+                            var value = globalValue;
+                            using (ImRaii.Disabled())
+                            {
+                                ImGui.SetNextItemWidth(-1);
+                                ImGui.SliderFloat($"##{idSuffix}", ref value, min, max, format);
+                            }
+                        }
+                        CtrlHelper.AddHoverText(helpText);
+                        ImGui.TableNextColumn();
+                        var enabled = overrideValue.HasValue;
+                        if (ImGui.Checkbox($"##{idSuffix}Override", ref enabled))
+                            ToggleOverride(o => setter(o, enabled ? globalValue : null));
+                    }
+
+                    void DrawIkIntOverride(
+                        string label,
+                        string idSuffix,
+                        int globalValue,
+                        int? overrideValue,
+                        int min,
+                        int max,
+                        Action<AdvancedBodyScalingOverrides, int?> setter,
+                        string helpText)
+                    {
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted(label);
+                        ImGui.TableNextColumn();
+                        if (overrideValue.HasValue)
+                        {
+                            var value = overrideValue.Value;
+                            ImGui.SetNextItemWidth(-1);
+                            if (ImGui.SliderInt($"##{idSuffix}", ref value, min, max))
+                                ToggleOverride(o => setter(o, value));
+                        }
+                        else
+                        {
+                            var value = globalValue;
+                            using (ImRaii.Disabled())
+                            {
+                                ImGui.SetNextItemWidth(-1);
+                                ImGui.SliderInt($"##{idSuffix}", ref value, min, max);
+                            }
+                        }
+                        CtrlHelper.AddHoverText(helpText);
+                        ImGui.TableNextColumn();
+                        var enabled = overrideValue.HasValue;
+                        if (ImGui.Checkbox($"##{idSuffix}Override", ref enabled))
+                            ToggleOverride(o => setter(o, enabled ? globalValue : null));
+                    }
+
+                    DrawIkBoolOverride(
+                        "Enable Full-Body IK",
+                        "ProfileFullBodyIkEnabled",
+                        globalFullBodyIk.Enabled,
+                        overrides.FullBodyIkEnabled,
+                        (o, v) => o.FullBodyIkEnabled = v,
+                        "Overrides whether the final supported-bone Full-Body IK layer is active for this profile.");
+                    DrawIkFloatOverride(
+                        "Global IK strength",
+                        "ProfileFullBodyIkStrength",
+                        globalFullBodyIk.GlobalStrength,
+                        overrides.FullBodyIkStrength,
+                        0f,
+                        AdvancedBodyScalingFullBodyIkTuning.UiMaxGlobalStrength,
+                        "%.2f",
+                        (o, v) => o.FullBodyIkStrength = v,
+                        "Overrides the overall Full-Body IK blend strength for this profile.");
+                    DrawIkIntOverride(
+                        "Iteration count",
+                        "ProfileFullBodyIkIterations",
+                        globalFullBodyIk.IterationCount,
+                        overrides.FullBodyIkIterationCount,
+                        1,
+                        12,
+                        (o, v) => o.FullBodyIkIterationCount = v,
+                        "Overrides the maximum solver iterations for this profile's final IK pass.");
+                    DrawIkFloatOverride(
+                        "Convergence tolerance",
+                        "ProfileFullBodyIkTolerance",
+                        globalFullBodyIk.ConvergenceTolerance,
+                        overrides.FullBodyIkConvergenceTolerance,
+                        0.001f,
+                        0.050f,
+                        "%.3f",
+                        (o, v) => o.FullBodyIkConvergenceTolerance = v,
+                        "Overrides how much residual error the profile's Full-Body IK pass will tolerate before settling.");
+                    DrawIkFloatOverride(
+                        "Pelvis compensation strength",
+                        "ProfileFullBodyIkPelvis",
+                        globalFullBodyIk.PelvisCompensationStrength,
+                        overrides.FullBodyIkPelvisCompensationStrength,
+                        0f,
+                        AdvancedBodyScalingFullBodyIkTuning.UiMaxPelvisStrength,
+                        "%.2f",
+                        (o, v) => o.FullBodyIkPelvisCompensationStrength = v,
+                        "Overrides how strongly the profile's Full-Body IK shares lower-body reach pressure back into the pelvis.");
+                    DrawIkFloatOverride(
+                        "Spine redistribution strength",
+                        "ProfileFullBodyIkSpine",
+                        globalFullBodyIk.SpineRedistributionStrength,
+                        overrides.FullBodyIkSpineRedistributionStrength,
+                        0f,
+                        AdvancedBodyScalingFullBodyIkTuning.UiMaxSpineStrength,
+                        "%.2f",
+                        (o, v) => o.FullBodyIkSpineRedistributionStrength = v,
+                        "Overrides how strongly the profile's Full-Body IK redistributes pressure through the supported spine chain.");
+                    DrawIkFloatOverride(
+                        "Arm strength",
+                        "ProfileFullBodyIkArm",
+                        globalFullBodyIk.ArmStrength,
+                        overrides.FullBodyIkArmStrength,
+                        0f,
+                        AdvancedBodyScalingFullBodyIkTuning.UiMaxArmStrength,
+                        "%.2f",
+                        (o, v) => o.FullBodyIkArmStrength = v,
+                        "Overrides how strongly the supported arm chains participate for this profile.");
+                    DrawIkFloatOverride(
+                        "Leg strength",
+                        "ProfileFullBodyIkLeg",
+                        globalFullBodyIk.LegStrength,
+                        overrides.FullBodyIkLegStrength,
+                        0f,
+                        AdvancedBodyScalingFullBodyIkTuning.UiMaxLegStrength,
+                        "%.2f",
+                        (o, v) => o.FullBodyIkLegStrength = v,
+                        "Overrides how strongly the supported leg chains participate for this profile.");
+                    DrawIkFloatOverride(
+                        "Head / neck alignment strength",
+                        "ProfileFullBodyIkHead",
+                        globalFullBodyIk.HeadAlignmentStrength,
+                        overrides.FullBodyIkHeadAlignmentStrength,
+                        0f,
+                        AdvancedBodyScalingFullBodyIkTuning.UiMaxHeadStrength,
+                        "%.2f",
+                        (o, v) => o.FullBodyIkHeadAlignmentStrength = v,
+                        "Overrides how strongly the neck and head realignment participates for this profile.");
+                    DrawIkFloatOverride(
+                        "Grounding bias",
+                        "ProfileFullBodyIkGrounding",
+                        globalFullBodyIk.GroundingBias,
+                        overrides.FullBodyIkGroundingBias,
+                        0f,
+                        AdvancedBodyScalingFullBodyIkTuning.UiMaxGroundingBias,
+                        "%.2f",
+                        (o, v) => o.FullBodyIkGroundingBias = v,
+                        "Overrides the planted-feet and grounding bias for this profile's Full-Body IK pass.");
+                    DrawIkFloatOverride(
+                        "Motion-safety bias / damping",
+                        "ProfileFullBodyIkSafety",
+                        globalFullBodyIk.MotionSafetyBias,
+                        overrides.FullBodyIkMotionSafetyBias,
+                        0.30f,
+                        1f,
+                        "%.2f",
+                        (o, v) => o.FullBodyIkMotionSafetyBias = v,
+                        "Overrides the damping and motion-safety bias for this profile's final IK pass.");
+                    DrawIkFloatOverride(
+                        "Max IK correction clamp",
+                        "ProfileFullBodyIkClamp",
+                        globalFullBodyIk.MaxCorrectionClamp,
+                        overrides.FullBodyIkMaxCorrectionClamp,
+                        0f,
+                        AdvancedBodyScalingFullBodyIkTuning.UiMaxCorrectionClamp,
+                        "%.2f",
+                        (o, v) => o.FullBodyIkMaxCorrectionClamp = v,
+                        "Overrides the maximum correction clamp for this profile's final IK pass.");
+                }
+            }
+
+            ImGui.Spacing();
+            ImGui.TextDisabled("Per-chain Full-Body IK overrides let this profile bias supported major chains without replacing the rest of the global solver tuning.");
+            foreach (var chain in AdvancedBodyScalingFullBodyIkSystem.GetOrderedChains())
+            {
+                var label = AdvancedBodyScalingFullBodyIkSystem.GetChainLabel(chain);
+                var description = AdvancedBodyScalingFullBodyIkSystem.GetChainDescription(chain);
+                var globalChain = globalFullBodyIk.GetChainSettings(chain);
+                overrides.FullBodyIkChainOverrides.TryGetValue(chain, out var chainOverride);
+
+                if (!ImGui.TreeNode($"{label}##ProfileFullBodyIkChain{chain}"))
+                    continue;
+
+                ImGui.TextDisabled(description);
+                using (var chainTable = ImRaii.Table(
+                           $"ProfileFullBodyIkChain_{chain}",
+                           3,
+                           ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp,
+                           overrideTableWidth))
+                {
+                    if (chainTable)
+                    {
+                        ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
+                        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                        ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+                        ImGui.TableSetupScrollFreeze(0, 1);
+                        ImGui.TableHeadersRow();
+
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted("Enabled");
+                        ImGui.TableNextColumn();
+                        if (chainOverride?.Enabled.HasValue == true)
+                        {
+                            var value = chainOverride.Enabled.Value;
+                            if (ImGui.Checkbox($"##ProfileFullBodyIkChainEnabled{chain}", ref value))
+                                UpdateFullBodyIkChainOverride(chain, o => o.Enabled = value);
+                        }
+                        else
+                        {
+                            var value = globalChain.Enabled;
+                            using (ImRaii.Disabled())
+                                ImGui.Checkbox($"##ProfileFullBodyIkChainEnabled{chain}", ref value);
+                        }
+                        CtrlHelper.AddHoverText("Overrides whether this supported major chain participates in the profile's final Full-Body IK pass.");
+                        ImGui.TableNextColumn();
+                        var enabledOverride = chainOverride?.Enabled.HasValue == true;
+                        if (ImGui.Checkbox($"##ProfileFullBodyIkChainEnabledOverride{chain}", ref enabledOverride))
+                            UpdateFullBodyIkChainOverride(chain, o => o.Enabled = enabledOverride ? globalChain.Enabled : null);
+
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted("Strength");
+                        ImGui.TableNextColumn();
+                        if (chainOverride?.Strength.HasValue == true)
+                        {
+                            var value = chainOverride.Strength.Value;
+                            ImGui.SetNextItemWidth(-1);
+                            if (ImGui.SliderFloat($"##ProfileFullBodyIkChainStrength{chain}", ref value, 0f, AdvancedBodyScalingFullBodyIkTuning.GetUiMaxChainStrength(chain), "%.2f"))
+                                UpdateFullBodyIkChainOverride(chain, o => o.Strength = value);
+                        }
+                        else
+                        {
+                            var value = globalChain.Strength;
+                            using (ImRaii.Disabled())
+                            {
+                                ImGui.SetNextItemWidth(-1);
+                                ImGui.SliderFloat($"##ProfileFullBodyIkChainStrength{chain}", ref value, 0f, AdvancedBodyScalingFullBodyIkTuning.GetUiMaxChainStrength(chain), "%.2f");
+                            }
+                        }
+                        CtrlHelper.AddHoverText("Overrides how strongly this supported chain participates relative to the global and regional Full-Body IK strengths for this profile.");
+                        ImGui.TableNextColumn();
+                        var strengthOverride = chainOverride?.Strength.HasValue == true;
+                        if (ImGui.Checkbox($"##ProfileFullBodyIkChainStrengthOverride{chain}", ref strengthOverride))
+                            UpdateFullBodyIkChainOverride(chain, o => o.Strength = strengthOverride ? globalChain.Strength : null);
                     }
                 }
 

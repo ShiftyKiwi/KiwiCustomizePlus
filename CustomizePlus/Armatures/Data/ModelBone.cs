@@ -366,6 +366,22 @@ public unsafe class ModelBone
             };
         }
 
+        ApplyEffectiveTransform(cBase, effectiveTransform);
+    }
+
+    public void ApplyRuntimeCorrection(CharacterBase* cBase, BoneTransform correction)
+    {
+        if (cBase == null || correction == null || !correction.IsEdited(true))
+            return;
+
+        ApplyEffectiveTransform(cBase, correction);
+    }
+
+    private void ApplyEffectiveTransform(CharacterBase* cBase, BoneTransform effectiveTransform)
+    {
+        if (cBase == null || effectiveTransform == null || !effectiveTransform.IsEdited(true))
+            return;
+
         var doPropagate = effectiveTransform.PropagateTranslation ||
                           effectiveTransform.PropagateRotation ||
                           effectiveTransform.PropagateScale;

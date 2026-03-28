@@ -70,9 +70,13 @@ public unsafe class Armature
     public AdvancedBodyScalingSettings? ActiveAdvancedBodyScalingSettings { get; private set; }
 
     internal AdvancedBodyScalingPoseCorrectiveDebugState PoseCorrectiveDebugState { get; } = new();
+    internal AdvancedBodyScalingFullIkRetargetingDebugState FullIkRetargetingDebugState { get; } = new();
+    internal AdvancedBodyScalingFullBodyIkDebugState FullBodyIkDebugState { get; } = new();
 
     private readonly Dictionary<string, Vector3> _poseCorrectiveScaleMultipliers = new(StringComparer.Ordinal);
     private readonly Dictionary<AdvancedBodyScalingCorrectiveRegion, float> _poseCorrectiveActivationState = new();
+    private readonly Dictionary<string, BoneTransform> _fullIkRetargetingCorrections = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, BoneTransform> _fullBodyIkCorrections = new(StringComparer.Ordinal);
 
     private List<ModelBone> _activeBones;
     public IReadOnlyList<ModelBone> ActiveBones => _activeBones;
@@ -333,7 +337,13 @@ public unsafe class Armature
     {
         ActiveAdvancedBodyScalingSettings = advancedBodyScaling?.DeepCopy();
         if (ActiveAdvancedBodyScalingSettings == null)
+        {
             ClearPoseCorrectives();
+            ClearFullIkRetargeting();
+        }
+
+        ClearFullIkRetargeting();
+        ClearFullBodyIk();
 
         var resolution = ProfileTransformResolver.Resolve(Profile);
         var effectiveTransforms = resolution.EffectiveTransforms;
@@ -404,6 +414,60 @@ public unsafe class Armature
         _poseCorrectiveActivationState.Clear();
         var path = AdvancedBodyScalingPoseCorrectiveSystem.DetectSupportedPath();
         PoseCorrectiveDebugState.Reset(path, AdvancedBodyScalingPoseCorrectiveSystem.GetPathDescription(path), Profile.AdvancedBodyScalingOverrides.UseProfileOverrides);
+    }
+
+    public unsafe void EvaluateAndApplyFullBodyIk(CharacterBase* cBase, float deltaSeconds)
+    {
+        if (cBase == null || ActiveAdvancedBodyScalingSettings == null)
+        {
+            ClearFullBodyIk();
+            return;
+        }
+
+        AdvancedBodyScalingFullBodyIkSystem.EvaluateAndApply(
+            this,
+            cBase,
+            ActiveAdvancedBodyScalingSettings,
+            Profile.AdvancedBodyScalingOverrides.UseProfileOverrides,
+            deltaSeconds,
+            _fullBodyIkCorrections,
+            FullBodyIkDebugState);
+
+        FullIkRetargetingDebugState.SetFullBodyIkFollowup(FullBodyIkDebugState.Active, FullBodyIkDebugState.Summary);
+    }
+
+    public unsafe void EvaluateAndApplyFullIkRetargeting(CharacterBase* cBase, float deltaSeconds)
+    {
+        if (cBase == null || ActiveAdvancedBodyScalingSettings == null)
+        {
+            ClearFullIkRetargeting();
+            return;
+        }
+
+        AdvancedBodyScalingFullIkRetargetingSystem.EvaluateAndApply(
+            this,
+            cBase,
+            ActiveAdvancedBodyScalingSettings,
+            Profile.AdvancedBodyScalingOverrides.UseProfileOverrides,
+            deltaSeconds,
+            _fullIkRetargetingCorrections,
+            FullIkRetargetingDebugState);
+    }
+
+    public void ClearFullBodyIk()
+    {
+        _fullBodyIkCorrections.Clear();
+        FullBodyIkDebugState.Reset(false, Profile.AdvancedBodyScalingOverrides.UseProfileOverrides, 0, 0f);
+        FullBodyIkDebugState.FinalizeState(false, false, false, false, 0f, 0f, 0f, "Full-body IK is inactive.");
+        FullIkRetargetingDebugState.SetFullBodyIkFollowup(false, "Full-body IK is inactive.");
+    }
+
+    public void ClearFullIkRetargeting()
+    {
+        _fullIkRetargetingCorrections.Clear();
+        FullIkRetargetingDebugState.Reset(false, Profile.AdvancedBodyScalingOverrides.UseProfileOverrides, 0f, 0f);
+        FullIkRetargetingDebugState.FinalizeState(false, false, false, 0f, 0f, "Full IK retargeting is inactive.");
+        FullIkRetargetingDebugState.SetFullBodyIkFollowup(false, "Full-body IK follow-up has not run.");
     }
 
     public void UpdateRuntimeTransforms(float deltaSeconds, float transitionSharpness)

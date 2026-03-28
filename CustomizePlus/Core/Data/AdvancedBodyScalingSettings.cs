@@ -366,6 +366,10 @@ public sealed class AdvancedBodyScalingSettings
 
     public AdvancedBodyScalingPoseCorrectiveSettings PoseCorrectives { get; set; } = new();
 
+    public AdvancedBodyScalingFullIkRetargetingSettings FullIkRetargeting { get; set; } = new();
+
+    public AdvancedBodyScalingFullBodyIkSettings FullBodyIk { get; set; } = new();
+
     public AdvancedBodyScalingRegionProfile GetRegionProfile(AdvancedBodyRegion region)
     {
         if (!RegionProfiles.TryGetValue(region, out var profile))
@@ -432,6 +436,41 @@ public sealed class AdvancedBodyScalingSettings
             corrective.Smoothing = MathF.Max(corrective.Smoothing, 0.7f);
             corrective.ActivationDeadzone = MathF.Max(corrective.ActivationDeadzone, 0.06f);
             corrective.MaxCorrection = MathF.Min(corrective.MaxCorrection, 0.035f);
+        }
+
+        FullIkRetargeting.GlobalStrength = MathF.Min(FullIkRetargeting.GlobalStrength, 0.32f);
+        FullIkRetargeting.PelvisStrength = MathF.Min(FullIkRetargeting.PelvisStrength, 0.28f);
+        FullIkRetargeting.SpineStrength = MathF.Min(FullIkRetargeting.SpineStrength, 0.30f);
+        FullIkRetargeting.ArmStrength = MathF.Min(FullIkRetargeting.ArmStrength, 0.30f);
+        FullIkRetargeting.LegStrength = MathF.Min(FullIkRetargeting.LegStrength, 0.32f);
+        FullIkRetargeting.HeadStrength = MathF.Min(FullIkRetargeting.HeadStrength, 0.22f);
+        FullIkRetargeting.ReachAdaptationStrength = MathF.Min(FullIkRetargeting.ReachAdaptationStrength, 0.50f);
+        FullIkRetargeting.StrideAdaptationStrength = MathF.Min(FullIkRetargeting.StrideAdaptationStrength, 0.46f);
+        FullIkRetargeting.PosturePreservationStrength = MathF.Min(FullIkRetargeting.PosturePreservationStrength, 0.42f);
+        FullIkRetargeting.MotionSafetyBias = MathF.Max(FullIkRetargeting.MotionSafetyBias, 0.86f);
+        FullIkRetargeting.BlendBias = MathF.Min(FullIkRetargeting.BlendBias, 0.62f);
+        FullIkRetargeting.MaxCorrectionClamp = MathF.Min(FullIkRetargeting.MaxCorrectionClamp, 0.18f);
+        foreach (var chain in Enum.GetValues<AdvancedBodyScalingFullBodyIkChain>())
+        {
+            var chainSettings = FullIkRetargeting.GetChainSettings(chain);
+            chainSettings.Strength = MathF.Min(chainSettings.Strength, AdvancedBodyScalingFullIkRetargetingTuning.GetRecommendedChainStrengthMax(chain));
+        }
+
+        FullBodyIk.GlobalStrength = MathF.Min(FullBodyIk.GlobalStrength, 0.34f);
+        FullBodyIk.IterationCount = Math.Min(FullBodyIk.IterationCount, 4);
+        FullBodyIk.ConvergenceTolerance = MathF.Max(FullBodyIk.ConvergenceTolerance, 0.020f);
+        FullBodyIk.PelvisCompensationStrength = MathF.Min(FullBodyIk.PelvisCompensationStrength, 0.38f);
+        FullBodyIk.SpineRedistributionStrength = MathF.Min(FullBodyIk.SpineRedistributionStrength, 0.34f);
+        FullBodyIk.LegStrength = MathF.Min(FullBodyIk.LegStrength, 0.38f);
+        FullBodyIk.ArmStrength = MathF.Min(FullBodyIk.ArmStrength, 0.34f);
+        FullBodyIk.HeadAlignmentStrength = MathF.Min(FullBodyIk.HeadAlignmentStrength, 0.26f);
+        FullBodyIk.GroundingBias = MathF.Min(FullBodyIk.GroundingBias, 0.62f);
+        FullBodyIk.MotionSafetyBias = MathF.Max(FullBodyIk.MotionSafetyBias, 0.86f);
+        FullBodyIk.MaxCorrectionClamp = MathF.Min(FullBodyIk.MaxCorrectionClamp, 0.24f);
+        foreach (var chain in Enum.GetValues<AdvancedBodyScalingFullBodyIkChain>())
+        {
+            var chainSettings = FullBodyIk.GetChainSettings(chain);
+            chainSettings.Strength = MathF.Min(chainSettings.Strength, AdvancedBodyScalingFullBodyIkTuning.GetRecommendedChainStrengthMax(chain));
         }
     }
 
@@ -504,6 +543,8 @@ public sealed class AdvancedBodyScalingSettings
         RaceNeckPresets = AdvancedBodyScalingNeckCompensationPreset.CreateDefaults();
         RegionProfiles = AdvancedBodyScalingRegionProfile.CreateDefaults();
         PoseCorrectives = new AdvancedBodyScalingPoseCorrectiveSettings();
+        FullIkRetargeting = new AdvancedBodyScalingFullIkRetargetingSettings();
+        FullBodyIk = new AdvancedBodyScalingFullBodyIkSettings();
     }
 
     public AdvancedBodyScalingSettings DeepCopy()
@@ -525,6 +566,8 @@ public sealed class AdvancedBodyScalingSettings
                 ? new Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset>()
                 : RaceNeckPresets.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
             RegionProfiles = RegionProfiles.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
-            PoseCorrectives = PoseCorrectives.DeepCopy()
+            PoseCorrectives = PoseCorrectives.DeepCopy(),
+            FullIkRetargeting = FullIkRetargeting.DeepCopy(),
+            FullBodyIk = FullBodyIk.DeepCopy(),
         };
 }

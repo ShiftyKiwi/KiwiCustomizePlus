@@ -95,6 +95,8 @@ internal static class AdvancedBodyScalingPipeline
             ApplyNeckCompensation(output, userTransforms, effectiveSettings);
             ApplyPinnedScaleSafety(output, userTransforms, debug);
             PopulateEstimatedPoseCorrectives(debug, output, effectiveSettings);
+            PopulateEstimatedRetargeting(debug, output, effectiveSettings);
+            PopulateEstimatedFullBodyIk(debug, output, effectiveSettings);
             return output;
         }
 
@@ -210,6 +212,8 @@ internal static class AdvancedBodyScalingPipeline
         ApplyNeckCompensation(output, userTransforms, effectiveSettings);
         ApplyPinnedScaleSafety(output, userTransforms, debug);
         PopulateEstimatedPoseCorrectives(debug, output, effectiveSettings);
+        PopulateEstimatedRetargeting(debug, output, effectiveSettings);
+        PopulateEstimatedFullBodyIk(debug, output, effectiveSettings);
 
         return output;
     }
@@ -224,6 +228,30 @@ internal static class AdvancedBodyScalingPipeline
 
         debug.EstimatedPoseCorrectives.Clear();
         debug.EstimatedPoseCorrectives.AddRange(AdvancedBodyScalingPoseCorrectiveSystem.EstimateStaticSupport(transforms, settings));
+    }
+
+    private static void PopulateEstimatedFullBodyIk(
+        AdvancedBodyScalingDebugReport? debug,
+        IReadOnlyDictionary<string, BoneTransform> transforms,
+        AdvancedBodyScalingSettings settings)
+    {
+        if (debug == null)
+            return;
+
+        debug.EstimatedFullBodyIk.Clear();
+        debug.EstimatedFullBodyIk.AddRange(AdvancedBodyScalingFullBodyIkSystem.EstimateStaticSupport(transforms, settings));
+    }
+
+    private static void PopulateEstimatedRetargeting(
+        AdvancedBodyScalingDebugReport? debug,
+        IReadOnlyDictionary<string, BoneTransform> transforms,
+        AdvancedBodyScalingSettings settings)
+    {
+        if (debug == null)
+            return;
+
+        debug.EstimatedRetargeting.Clear();
+        debug.EstimatedRetargeting.AddRange(AdvancedBodyScalingFullIkRetargetingSystem.EstimateStaticSupport(transforms, settings));
     }
 
     internal static BodyAnalysisResult Analyze(
@@ -276,6 +304,22 @@ internal static class AdvancedBodyScalingPipeline
             suggestedFixes.Count > 0 ? suggested : userTransforms,
             tunedSettings,
             "Body analyzer");
+        var retargetAdvisories = AdvancedBodyScalingFullIkRetargetingSystem.GetTuningAdvisories(tunedSettings).ToList();
+        var ikAdvisories = AdvancedBodyScalingFullBodyIkSystem.GetTuningAdvisories(tunedSettings).ToList();
+        var retargetingSummary = BuildRetargetingSummary(correctiveStressReport);
+        if (retargetAdvisories.Count > 0)
+            retargetingSummary = $"{retargetingSummary} Advisory: {retargetAdvisories[0]}";
+        var retargetingHints = BuildRetargetingHints(correctiveStressReport)
+            .Concat(retargetAdvisories)
+            .Take(4)
+            .ToList();
+        var fullBodyIkSummary = BuildFullBodyIkSummary(correctiveStressReport);
+        if (ikAdvisories.Count > 0)
+            fullBodyIkSummary = $"{fullBodyIkSummary} Advisory: {ikAdvisories[0]}";
+        var fullBodyIkHints = BuildFullBodyIkHints(correctiveStressReport)
+            .Concat(ikAdvisories)
+            .Take(4)
+            .ToList();
 
         return new BodyAnalysisResult(
             surfaceSmoothness,
@@ -284,7 +328,11 @@ internal static class AdvancedBodyScalingPipeline
             issues,
             suggestedFixes,
             BuildPoseCorrectiveSummary(correctiveStressReport),
-            BuildPoseCorrectiveHints(correctiveStressReport));
+            BuildPoseCorrectiveHints(correctiveStressReport),
+            retargetingSummary,
+            retargetingHints,
+            fullBodyIkSummary,
+            fullBodyIkHints);
     }
 
 
@@ -296,14 +344,14 @@ internal static class AdvancedBodyScalingPipeline
             .ToList();
 
         if (active.Count == 0)
-            return report.BaseOverallScore == report.OverallScore
+            return report.BaseOverallScore == report.CorrectiveOverallScore
                 ? "Pose-space correctives are available, but they are not strongly engaged for this setup right now."
-                : $"Pose-space correctives are lightly active and trim the estimated overall animation risk from {report.BaseOverallScore} to {report.OverallScore}.";
+                : $"Pose-space correctives are lightly active and trim the estimated pre-IK animation risk from {report.BaseOverallScore} to {report.CorrectiveOverallScore}.";
 
         var focus = string.Join(" and ", active.Select(region => region.RegionName));
-        return report.BaseOverallScore == report.OverallScore
+        return report.BaseOverallScore == report.CorrectiveOverallScore
             ? $"Pose-space correctives are most likely to engage around {focus}, but the current heuristics expect only a modest change in overall risk."
-            : $"Pose-space correctives are most likely to help around {focus}, trimming the estimated overall animation risk from {report.BaseOverallScore} to {report.OverallScore}.";
+            : $"Pose-space correctives are most likely to help around {focus}, trimming the estimated pre-IK animation risk from {report.BaseOverallScore} to {report.CorrectiveOverallScore}.";
     }
 
     private static IReadOnlyList<string> BuildPoseCorrectiveHints(AdvancedBodyScalingStressTestReport report)
@@ -313,6 +361,70 @@ internal static class AdvancedBodyScalingPipeline
             .Take(3)
             .Select(region =>
                 $"{region.RegionName}: {region.CorrectiveSummary}")
+            .ToList();
+
+    private static string BuildFullBodyIkSummary(AdvancedBodyScalingStressTestReport report)
+    {
+        var active = report.RegionSummary
+            .Where(region => region.FullBodyIkIntensity > 0.05f)
+            .OrderByDescending(region => region.FullBodyIkReductionScore)
+            .Take(2)
+            .ToList();
+
+        if (active.Count == 0)
+            return report.RetargetingOverallScore == report.OverallScore
+                ? "Full-body IK is available, but it is not strongly engaged for this setup right now."
+                : $"Full-body IK is lightly active and trims the estimated post-retargeting animation risk from {report.RetargetingOverallScore} to {report.OverallScore}.";
+
+        var focus = string.Join(" and ", active.Select(region => region.RegionName));
+        var chainText = report.FullBodyIkHotChains.Count == 0
+            ? "the supported major chains"
+            : string.Join(", ", report.FullBodyIkHotChains);
+
+        return report.RetargetingOverallScore == report.OverallScore
+            ? $"Full-body IK is most likely to engage around {focus}, but the current heuristics expect only a modest final risk change."
+            : $"Full-body IK is most likely to help around {focus}, trimming the estimated post-retargeting animation risk from {report.RetargetingOverallScore} to {report.OverallScore} through {chainText}.";
+    }
+
+    private static IReadOnlyList<string> BuildFullBodyIkHints(AdvancedBodyScalingStressTestReport report)
+        => report.RegionSummary
+            .Where(region => region.FullBodyIkIntensity > 0.05f)
+            .OrderByDescending(region => region.FullBodyIkReductionScore)
+            .Take(3)
+            .Select(region =>
+                $"{region.RegionName}: {region.FullBodyIkSummary}")
+            .ToList();
+
+    private static string BuildRetargetingSummary(AdvancedBodyScalingStressTestReport report)
+    {
+        var active = report.RegionSummary
+            .Where(region => region.RetargetingIntensity > 0.05f)
+            .OrderByDescending(region => region.RetargetingReductionScore)
+            .Take(2)
+            .ToList();
+
+        if (active.Count == 0)
+            return report.CorrectiveOverallScore == report.RetargetingOverallScore
+                ? "Full IK retargeting is available, but it is not strongly engaged for this setup right now."
+                : $"Full IK retargeting is lightly active and trims the estimated post-corrective animation risk from {report.CorrectiveOverallScore} to {report.RetargetingOverallScore}.";
+
+        var focus = string.Join(" and ", active.Select(region => region.RegionName));
+        var chainText = report.RetargetingHotChains.Count == 0
+            ? "the supported major chains"
+            : string.Join(", ", report.RetargetingHotChains);
+
+        return report.CorrectiveOverallScore == report.RetargetingOverallScore
+            ? $"Full IK retargeting is most likely to engage around {focus}, but the current heuristics expect only a modest mid-pipeline risk change."
+            : $"Full IK retargeting is most likely to help around {focus}, trimming the estimated post-corrective animation risk from {report.CorrectiveOverallScore} to {report.RetargetingOverallScore} through {chainText}.";
+    }
+
+    private static IReadOnlyList<string> BuildRetargetingHints(AdvancedBodyScalingStressTestReport report)
+        => report.RegionSummary
+            .Where(region => region.RetargetingIntensity > 0.05f)
+            .OrderByDescending(region => region.RetargetingReductionScore)
+            .Take(3)
+            .Select(region =>
+                $"{region.RegionName}: {region.RetargetingSummary}")
             .ToList();
 
     private static ModeTuning GetTuning(AdvancedBodyScalingMode mode, bool animationSafeMode)
@@ -1118,6 +1230,10 @@ internal sealed class BodyAnalysisResult
     public IReadOnlyDictionary<string, BoneTransform> SuggestedFixes { get; }
     public string PoseCorrectiveSummary { get; }
     public IReadOnlyList<string> PoseCorrectiveHints { get; }
+    public string RetargetingSummary { get; }
+    public IReadOnlyList<string> RetargetingHints { get; }
+    public string FullBodyIkSummary { get; }
+    public IReadOnlyList<string> FullBodyIkHints { get; }
 
     public BodyAnalysisResult(
         int surfaceSmoothness,
@@ -1126,7 +1242,11 @@ internal sealed class BodyAnalysisResult
         IReadOnlyList<string> issues,
         IReadOnlyDictionary<string, BoneTransform> suggestedFixes,
         string poseCorrectiveSummary,
-        IReadOnlyList<string> poseCorrectiveHints)
+        IReadOnlyList<string> poseCorrectiveHints,
+        string retargetingSummary,
+        IReadOnlyList<string> retargetingHints,
+        string fullBodyIkSummary,
+        IReadOnlyList<string> fullBodyIkHints)
     {
         SurfaceSmoothness = surfaceSmoothness;
         ProportionBalance = proportionBalance;
@@ -1135,6 +1255,10 @@ internal sealed class BodyAnalysisResult
         SuggestedFixes = suggestedFixes;
         PoseCorrectiveSummary = poseCorrectiveSummary;
         PoseCorrectiveHints = poseCorrectiveHints;
+        RetargetingSummary = retargetingSummary;
+        RetargetingHints = retargetingHints;
+        FullBodyIkSummary = fullBodyIkSummary;
+        FullBodyIkHints = fullBodyIkHints;
     }
 }
 

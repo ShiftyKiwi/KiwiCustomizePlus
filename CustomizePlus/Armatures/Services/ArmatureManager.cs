@@ -299,7 +299,7 @@ public unsafe sealed class ArmatureManager : IDisposable
                 foreach (var actor in actorData.Objects)
                 {
                     EnsureObjectMovementFlagCapacity(actor.AsObject->ObjectIndex);
-                    ApplyPiecewiseTransformation(armature, actor, armature.ActorIdentifier);
+                    ApplyPiecewiseTransformation(armature, actor, armature.ActorIdentifier, deltaSeconds);
 
                     if (!_objectMovementFlagsArr[actor.AsObject->ObjectIndex])
                     {
@@ -361,7 +361,7 @@ public unsafe sealed class ArmatureManager : IDisposable
     /// for which this armature contains corresponding model bones. This method of application
     /// is safer but more computationally costly
     /// </summary>
-    private void ApplyPiecewiseTransformation(Armature armature, Actor actor, ActorIdentifier actorIdentifier)
+    private void ApplyPiecewiseTransformation(Armature armature, Actor actor, ActorIdentifier actorIdentifier, float deltaSeconds)
     {
         var cBase = actor.Model.AsCharacterBase;
 
@@ -378,6 +378,13 @@ public unsafe sealed class ArmatureManager : IDisposable
 
         if (cBase != null)
         {
+            // Final runtime order:
+            // 1. Base/profile/template transforms
+            // 2. Advanced body scaling output
+            // 3. Runtime safeguards
+            // 4. Pose-space corrective scale support
+            // 5. Full IK retargeting adaptation layer
+            // 6. Full-body IK final pose solve
             armature.EvaluatePoseCorrectives(cBase);
 
             foreach (var mb in armature.ActiveBones)
@@ -417,6 +424,9 @@ public unsafe sealed class ArmatureManager : IDisposable
                     mb.ApplyModelTransform(cBase);
                 }
             }
+
+            armature.EvaluateAndApplyFullIkRetargeting(cBase, deltaSeconds);
+            armature.EvaluateAndApplyFullBodyIk(cBase, deltaSeconds);
         }
     }
 
