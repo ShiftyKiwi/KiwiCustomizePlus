@@ -45,6 +45,14 @@ public sealed class AdvancedBodyScalingOverrides
     public float? FullIkRetargetingMotionSafetyBias { get; set; }
     public float? FullIkRetargetingBlendBias { get; set; }
     public float? FullIkRetargetingMaxCorrectionClamp { get; set; }
+    public bool? MotionWarpingEnabled { get; set; }
+    public float? MotionWarpingStrength { get; set; }
+    public float? MotionWarpingStrideStrength { get; set; }
+    public float? MotionWarpingOrientationStrength { get; set; }
+    public float? MotionWarpingPostureStrength { get; set; }
+    public float? MotionWarpingMotionSafetyBias { get; set; }
+    public float? MotionWarpingBlendBias { get; set; }
+    public float? MotionWarpingMaxCorrectionClamp { get; set; }
     public bool? FullBodyIkEnabled { get; set; }
     public float? FullBodyIkStrength { get; set; }
     public int? FullBodyIkIterationCount { get; set; }
@@ -68,6 +76,7 @@ public sealed class AdvancedBodyScalingOverrides
     public Dictionary<AdvancedBodyRegion, AdvancedBodyScalingRegionProfileOverrides> RegionOverrides { get; set; } = new();
     public Dictionary<AdvancedBodyScalingCorrectiveRegion, AdvancedBodyScalingCorrectiveRegionOverrides> PoseCorrectiveRegionOverrides { get; set; } = new();
     public Dictionary<AdvancedBodyScalingFullBodyIkChain, AdvancedBodyScalingFullIkRetargetingChainOverrides> FullIkRetargetingChainOverrides { get; set; } = new();
+    public Dictionary<AdvancedBodyScalingFullBodyIkChain, AdvancedBodyScalingMotionWarpingChainOverrides> MotionWarpingChainOverrides { get; set; } = new();
     public Dictionary<AdvancedBodyScalingFullBodyIkChain, AdvancedBodyScalingFullBodyIkChainOverrides> FullBodyIkChainOverrides { get; set; } = new();
 
     public AdvancedBodyScalingSettings MergeOnto(AdvancedBodyScalingSettings baseline)
@@ -127,6 +136,30 @@ public sealed class AdvancedBodyScalingOverrides
 
         if (FullIkRetargetingMaxCorrectionClamp.HasValue)
             merged.FullIkRetargeting.MaxCorrectionClamp = FullIkRetargetingMaxCorrectionClamp.Value;
+
+        if (MotionWarpingEnabled.HasValue)
+            merged.MotionWarping.Enabled = MotionWarpingEnabled.Value;
+
+        if (MotionWarpingStrength.HasValue)
+            merged.MotionWarping.GlobalStrength = MotionWarpingStrength.Value;
+
+        if (MotionWarpingStrideStrength.HasValue)
+            merged.MotionWarping.StrideWarpStrength = MotionWarpingStrideStrength.Value;
+
+        if (MotionWarpingOrientationStrength.HasValue)
+            merged.MotionWarping.OrientationWarpStrength = MotionWarpingOrientationStrength.Value;
+
+        if (MotionWarpingPostureStrength.HasValue)
+            merged.MotionWarping.PostureWarpStrength = MotionWarpingPostureStrength.Value;
+
+        if (MotionWarpingMotionSafetyBias.HasValue)
+            merged.MotionWarping.MotionSafetyBias = MotionWarpingMotionSafetyBias.Value;
+
+        if (MotionWarpingBlendBias.HasValue)
+            merged.MotionWarping.BlendBias = MotionWarpingBlendBias.Value;
+
+        if (MotionWarpingMaxCorrectionClamp.HasValue)
+            merged.MotionWarping.MaxCorrectionClamp = MotionWarpingMaxCorrectionClamp.Value;
 
         if (FullBodyIkEnabled.HasValue)
             merged.FullBodyIk.Enabled = FullBodyIkEnabled.Value;
@@ -224,6 +257,18 @@ public sealed class AdvancedBodyScalingOverrides
             }
         }
 
+        if (MotionWarpingChainOverrides.Count > 0)
+        {
+            foreach (var (chain, overrides) in MotionWarpingChainOverrides)
+            {
+                if (overrides == null)
+                    continue;
+
+                var settings = merged.MotionWarping.GetChainSettings(chain);
+                overrides.ApplyTo(settings);
+            }
+        }
+
         if (FullBodyIkChainOverrides.Count > 0)
         {
             foreach (var (chain, overrides) in FullBodyIkChainOverrides)
@@ -260,6 +305,14 @@ public sealed class AdvancedBodyScalingOverrides
             FullIkRetargetingMotionSafetyBias = FullIkRetargetingMotionSafetyBias,
             FullIkRetargetingBlendBias = FullIkRetargetingBlendBias,
             FullIkRetargetingMaxCorrectionClamp = FullIkRetargetingMaxCorrectionClamp,
+            MotionWarpingEnabled = MotionWarpingEnabled,
+            MotionWarpingStrength = MotionWarpingStrength,
+            MotionWarpingStrideStrength = MotionWarpingStrideStrength,
+            MotionWarpingOrientationStrength = MotionWarpingOrientationStrength,
+            MotionWarpingPostureStrength = MotionWarpingPostureStrength,
+            MotionWarpingMotionSafetyBias = MotionWarpingMotionSafetyBias,
+            MotionWarpingBlendBias = MotionWarpingBlendBias,
+            MotionWarpingMaxCorrectionClamp = MotionWarpingMaxCorrectionClamp,
             FullBodyIkEnabled = FullBodyIkEnabled,
             FullBodyIkStrength = FullBodyIkStrength,
             FullBodyIkIterationCount = FullBodyIkIterationCount,
@@ -283,6 +336,7 @@ public sealed class AdvancedBodyScalingOverrides
             RegionOverrides = RegionOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
             PoseCorrectiveRegionOverrides = PoseCorrectiveRegionOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
             FullIkRetargetingChainOverrides = FullIkRetargetingChainOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
+            MotionWarpingChainOverrides = MotionWarpingChainOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
             FullBodyIkChainOverrides = FullBodyIkChainOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy())
         };
 }

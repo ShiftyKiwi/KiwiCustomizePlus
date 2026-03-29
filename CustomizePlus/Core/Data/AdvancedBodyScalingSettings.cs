@@ -368,6 +368,8 @@ public sealed class AdvancedBodyScalingSettings
 
     public AdvancedBodyScalingFullIkRetargetingSettings FullIkRetargeting { get; set; } = new();
 
+    public AdvancedBodyScalingMotionWarpingSettings MotionWarping { get; set; } = new();
+
     public AdvancedBodyScalingFullBodyIkSettings FullBodyIk { get; set; } = new();
 
     public AdvancedBodyScalingRegionProfile GetRegionProfile(AdvancedBodyRegion region)
@@ -454,6 +456,19 @@ public sealed class AdvancedBodyScalingSettings
         {
             var chainSettings = FullIkRetargeting.GetChainSettings(chain);
             chainSettings.Strength = MathF.Min(chainSettings.Strength, AdvancedBodyScalingFullIkRetargetingTuning.GetRecommendedChainStrengthMax(chain));
+        }
+
+        MotionWarping.GlobalStrength = MathF.Min(MotionWarping.GlobalStrength, 0.28f);
+        MotionWarping.StrideWarpStrength = MathF.Min(MotionWarping.StrideWarpStrength, 0.36f);
+        MotionWarping.OrientationWarpStrength = MathF.Min(MotionWarping.OrientationWarpStrength, 0.30f);
+        MotionWarping.PostureWarpStrength = MathF.Min(MotionWarping.PostureWarpStrength, 0.28f);
+        MotionWarping.MotionSafetyBias = MathF.Max(MotionWarping.MotionSafetyBias, 0.88f);
+        MotionWarping.BlendBias = MathF.Min(MotionWarping.BlendBias, 0.60f);
+        MotionWarping.MaxCorrectionClamp = MathF.Min(MotionWarping.MaxCorrectionClamp, 0.16f);
+        foreach (var chain in Enum.GetValues<AdvancedBodyScalingFullBodyIkChain>())
+        {
+            var chainSettings = MotionWarping.GetChainSettings(chain);
+            chainSettings.Strength = MathF.Min(chainSettings.Strength, AdvancedBodyScalingMotionWarpingTuning.GetRecommendedChainStrengthMax(chain));
         }
 
         FullBodyIk.GlobalStrength = MathF.Min(FullBodyIk.GlobalStrength, 0.34f);
@@ -544,6 +559,7 @@ public sealed class AdvancedBodyScalingSettings
         RegionProfiles = AdvancedBodyScalingRegionProfile.CreateDefaults();
         PoseCorrectives = new AdvancedBodyScalingPoseCorrectiveSettings();
         FullIkRetargeting = new AdvancedBodyScalingFullIkRetargetingSettings();
+        MotionWarping = new AdvancedBodyScalingMotionWarpingSettings();
         FullBodyIk = new AdvancedBodyScalingFullBodyIkSettings();
     }
 
@@ -568,6 +584,7 @@ public sealed class AdvancedBodyScalingSettings
             RegionProfiles = RegionProfiles.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
             PoseCorrectives = PoseCorrectives.DeepCopy(),
             FullIkRetargeting = FullIkRetargeting.DeepCopy(),
+            MotionWarping = MotionWarping.DeepCopy(),
             FullBodyIk = FullBodyIk.DeepCopy(),
         };
 }

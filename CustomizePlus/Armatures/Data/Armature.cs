@@ -71,12 +71,19 @@ public unsafe class Armature
 
     internal AdvancedBodyScalingPoseCorrectiveDebugState PoseCorrectiveDebugState { get; } = new();
     internal AdvancedBodyScalingFullIkRetargetingDebugState FullIkRetargetingDebugState { get; } = new();
+    internal AdvancedBodyScalingMotionWarpingDebugState MotionWarpingDebugState { get; } = new();
     internal AdvancedBodyScalingFullBodyIkDebugState FullBodyIkDebugState { get; } = new();
 
     private readonly Dictionary<string, Vector3> _poseCorrectiveScaleMultipliers = new(StringComparer.Ordinal);
     private readonly Dictionary<AdvancedBodyScalingCorrectiveRegion, float> _poseCorrectiveActivationState = new();
     private readonly Dictionary<string, BoneTransform> _fullIkRetargetingCorrections = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, BoneTransform> _motionWarpingCorrections = new(StringComparer.Ordinal);
     private readonly Dictionary<string, BoneTransform> _fullBodyIkCorrections = new(StringComparer.Ordinal);
+    private readonly AdvancedBodyScalingMotionWarpingContext _motionWarpingContext = new();
+    private Vector3 _lastMotionSampleWorldPosition;
+    private Vector3 _smoothedMotionDirectionWorld = Vector3.Zero;
+    private float _smoothedPlanarSpeed;
+    private bool _hasMotionSample;
 
     private List<ModelBone> _activeBones;
     public IReadOnlyList<ModelBone> ActiveBones => _activeBones;
@@ -340,9 +347,11 @@ public unsafe class Armature
         {
             ClearPoseCorrectives();
             ClearFullIkRetargeting();
+            ClearMotionWarping();
         }
 
         ClearFullIkRetargeting();
+        ClearMotionWarping();
         ClearFullBodyIk();
 
         var resolution = ProfileTransformResolver.Resolve(Profile);
@@ -433,6 +442,7 @@ public unsafe class Armature
             _fullBodyIkCorrections,
             FullBodyIkDebugState);
 
+        MotionWarpingDebugState.SetFullBodyIkFollowup(FullBodyIkDebugState.Active, FullBodyIkDebugState.Summary);
         FullIkRetargetingDebugState.SetFullBodyIkFollowup(FullBodyIkDebugState.Active, FullBodyIkDebugState.Summary);
     }
 
@@ -454,11 +464,31 @@ public unsafe class Armature
             FullIkRetargetingDebugState);
     }
 
+    public unsafe void EvaluateAndApplyMotionWarping(CharacterBase* cBase, float deltaSeconds)
+    {
+        if (cBase == null || ActiveAdvancedBodyScalingSettings == null)
+        {
+            ClearMotionWarping();
+            return;
+        }
+
+        AdvancedBodyScalingMotionWarpingSystem.EvaluateAndApply(
+            this,
+            cBase,
+            ActiveAdvancedBodyScalingSettings,
+            Profile.AdvancedBodyScalingOverrides.UseProfileOverrides,
+            deltaSeconds,
+            _motionWarpingContext,
+            _motionWarpingCorrections,
+            MotionWarpingDebugState);
+    }
+
     public void ClearFullBodyIk()
     {
         _fullBodyIkCorrections.Clear();
         FullBodyIkDebugState.Reset(false, Profile.AdvancedBodyScalingOverrides.UseProfileOverrides, 0, 0f);
         FullBodyIkDebugState.FinalizeState(false, false, false, false, 0f, 0f, 0f, "Full-body IK is inactive.");
+        MotionWarpingDebugState.SetFullBodyIkFollowup(false, "Full-body IK is inactive.");
         FullIkRetargetingDebugState.SetFullBodyIkFollowup(false, "Full-body IK is inactive.");
     }
 
@@ -468,6 +498,80 @@ public unsafe class Armature
         FullIkRetargetingDebugState.Reset(false, Profile.AdvancedBodyScalingOverrides.UseProfileOverrides, 0f, 0f);
         FullIkRetargetingDebugState.FinalizeState(false, false, false, 0f, 0f, "Full IK retargeting is inactive.");
         FullIkRetargetingDebugState.SetFullBodyIkFollowup(false, "Full-body IK follow-up has not run.");
+    }
+
+    public void ClearMotionWarping()
+    {
+        _motionWarpingCorrections.Clear();
+        MotionWarpingDebugState.Reset(false, Profile.AdvancedBodyScalingOverrides.UseProfileOverrides, 0f, 0f, _motionWarpingContext);
+        MotionWarpingDebugState.FinalizeState(false, false, false, 0f, 0f, "Motion warping is inactive.");
+        MotionWarpingDebugState.SetFullBodyIkFollowup(false, "Full-body IK follow-up has not run.");
+    }
+
+    public void ResetMotionWarpingContext(string summary = "Waiting for locomotion context.")
+    {
+        _motionWarpingContext.Reset(summary);
+        _smoothedMotionDirectionWorld = Vector3.Zero;
+        _smoothedPlanarSpeed = 0f;
+        _hasMotionSample = false;
+    }
+
+    public void UpdateMotionWarpingContext(Vector3 worldPosition, float facingRadians, float deltaSeconds)
+    {
+        if (deltaSeconds <= 0f)
+        {
+            _motionWarpingContext.Reset("Waiting for locomotion context.");
+            return;
+        }
+
+        if (!_hasMotionSample)
+        {
+            _lastMotionSampleWorldPosition = worldPosition;
+            _hasMotionSample = true;
+            _motionWarpingContext.Reset("Waiting for locomotion context.");
+            _motionWarpingContext.HasObservation = true;
+            _motionWarpingContext.FacingRadians = facingRadians;
+            return;
+        }
+
+        var delta = worldPosition - _lastMotionSampleWorldPosition;
+        _lastMotionSampleWorldPosition = worldPosition;
+        var planarDelta = new Vector3(delta.X, 0f, delta.Z);
+        var rawSpeed = planarDelta.Length() / MathF.Max(deltaSeconds, 0.0001f);
+        var smoothing = Math.Clamp(deltaSeconds * 10f, 0f, 1f);
+        _smoothedPlanarSpeed += (rawSpeed - _smoothedPlanarSpeed) * smoothing;
+
+        if (planarDelta.LengthSquared() > 0.000001f)
+        {
+            var rawDirection = Vector3.Normalize(planarDelta);
+            _smoothedMotionDirectionWorld = _smoothedMotionDirectionWorld.LengthSquared() <= 0.0001f
+                ? rawDirection
+                : Vector3.Normalize(Vector3.Lerp(_smoothedMotionDirectionWorld, rawDirection, smoothing));
+        }
+
+        var localDirection = _smoothedMotionDirectionWorld.LengthSquared() <= 0.0001f
+            ? Vector3.Zero
+            : Vector3.Transform(_smoothedMotionDirectionWorld, Quaternion.CreateFromAxisAngle(Vector3.UnitY, -facingRadians));
+        localDirection = new Vector3(localDirection.X, 0f, localDirection.Z);
+        if (localDirection.LengthSquared() > 0.0001f)
+            localDirection = Vector3.Normalize(localDirection);
+
+        var locomotionAmount = Remap(_smoothedPlanarSpeed, 0.10f, 1.65f);
+        var turnAmount = localDirection.LengthSquared() <= 0.0001f
+            ? 0f
+            : Math.Clamp(MathF.Abs(localDirection.X) + (MathF.Max(0f, -localDirection.Z) * 0.35f), 0f, 1f) * locomotionAmount;
+
+        _motionWarpingContext.HasObservation = true;
+        _motionWarpingContext.HasLocomotion = locomotionAmount > 0.02f;
+        _motionWarpingContext.PlanarSpeed = _smoothedPlanarSpeed;
+        _motionWarpingContext.LocomotionAmount = locomotionAmount;
+        _motionWarpingContext.TurnAmount = turnAmount;
+        _motionWarpingContext.FacingRadians = facingRadians;
+        _motionWarpingContext.WorldDirection = _smoothedMotionDirectionWorld;
+        _motionWarpingContext.LocalDirection = localDirection;
+        _motionWarpingContext.Summary = _motionWarpingContext.HasLocomotion
+            ? $"Observed locomotion at {_smoothedPlanarSpeed:0.00} units/s with locomotion pressure {locomotionAmount:0.00}."
+            : "Movement is below the locomotion activation threshold, so motion warping stays conservative.";
     }
 
     public void UpdateRuntimeTransforms(float deltaSeconds, float transitionSharpness)
@@ -484,5 +588,13 @@ public unsafe class Armature
         return name1[^1] == 'r' ^ name2[^1] == 'r'
             && name1[^1] == 'l' ^ name2[^1] == 'l'
             && name1[0..^1] == name2[0..^1];
+    }
+
+    private static float Remap(float value, float start, float full)
+    {
+        if (full <= start)
+            return value >= full ? 1f : 0f;
+
+        return Math.Clamp((value - start) / (full - start), 0f, 1f);
     }
 }

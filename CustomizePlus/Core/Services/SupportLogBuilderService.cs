@@ -68,6 +68,7 @@ public class SupportLogBuilderService
         sb.AppendLine("**Settings -> Advanced Body Scaling**");
         var advanced = _configuration.AdvancedBodyScalingSettings;
         var retarget = advanced.FullIkRetargeting;
+        var motionWarping = advanced.MotionWarping;
         var ik = advanced.FullBodyIk;
         sb.Append($"> **`Enabled:                        `** {advanced.Enabled}\n");
         sb.Append($"> **`Automation mode:                `** {advanced.Mode}\n");
@@ -78,6 +79,9 @@ public class SupportLogBuilderService
         sb.Append($"> **`Retarget arms/legs/head:        `** {retarget.ArmStrength:0.00} / {retarget.LegStrength:0.00} / {retarget.HeadStrength:0.00}\n");
         sb.Append($"> **`Retarget reach/stride/posture:  `** {retarget.ReachAdaptationStrength:0.00} / {retarget.StrideAdaptationStrength:0.00} / {retarget.PosturePreservationStrength:0.00}\n");
         sb.Append($"> **`Retarget safety/clamp:          `** {retarget.MotionSafetyBias:0.00} / {retarget.MaxCorrectionClamp:0.00}\n");
+        sb.Append($"> **`Motion Warping:                 `** {motionWarping.Enabled} ({AdvancedBodyScalingMotionWarpingSystem.GetImplementationTierLabel()}, strength {motionWarping.GlobalStrength:0.00}, blend {motionWarping.BlendBias:0.00})\n");
+        sb.Append($"> **`Motion stride/orient/posture:   `** {motionWarping.StrideWarpStrength:0.00} / {motionWarping.OrientationWarpStrength:0.00} / {motionWarping.PostureWarpStrength:0.00}\n");
+        sb.Append($"> **`Motion safety/clamp:            `** {motionWarping.MotionSafetyBias:0.00} / {motionWarping.MaxCorrectionClamp:0.00}\n");
         sb.Append($"> **`Full-Body IK:                   `** {ik.Enabled} (strength {ik.GlobalStrength:0.00}, iterations {ik.IterationCount}, tolerance {ik.ConvergenceTolerance:0.000})\n");
         sb.Append($"> **`IK pelvis/spine:                `** {ik.PelvisCompensationStrength:0.00} / {ik.SpineRedistributionStrength:0.00}\n");
         sb.Append($"> **`IK arms/legs/head:              `** {ik.ArmStrength:0.00} / {ik.LegStrength:0.00} / {ik.HeadAlignmentStrength:0.00}\n");

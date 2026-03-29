@@ -96,6 +96,7 @@ internal static class AdvancedBodyScalingPipeline
             ApplyPinnedScaleSafety(output, userTransforms, debug);
             PopulateEstimatedPoseCorrectives(debug, output, effectiveSettings);
             PopulateEstimatedRetargeting(debug, output, effectiveSettings);
+            PopulateEstimatedMotionWarping(debug, output, effectiveSettings);
             PopulateEstimatedFullBodyIk(debug, output, effectiveSettings);
             return output;
         }
@@ -213,6 +214,7 @@ internal static class AdvancedBodyScalingPipeline
         ApplyPinnedScaleSafety(output, userTransforms, debug);
         PopulateEstimatedPoseCorrectives(debug, output, effectiveSettings);
         PopulateEstimatedRetargeting(debug, output, effectiveSettings);
+        PopulateEstimatedMotionWarping(debug, output, effectiveSettings);
         PopulateEstimatedFullBodyIk(debug, output, effectiveSettings);
 
         return output;
@@ -240,6 +242,18 @@ internal static class AdvancedBodyScalingPipeline
 
         debug.EstimatedFullBodyIk.Clear();
         debug.EstimatedFullBodyIk.AddRange(AdvancedBodyScalingFullBodyIkSystem.EstimateStaticSupport(transforms, settings));
+    }
+
+    private static void PopulateEstimatedMotionWarping(
+        AdvancedBodyScalingDebugReport? debug,
+        IReadOnlyDictionary<string, BoneTransform> transforms,
+        AdvancedBodyScalingSettings settings)
+    {
+        if (debug == null)
+            return;
+
+        debug.EstimatedMotionWarping.Clear();
+        debug.EstimatedMotionWarping.AddRange(AdvancedBodyScalingMotionWarpingSystem.EstimateStaticSupport(transforms, settings));
     }
 
     private static void PopulateEstimatedRetargeting(
@@ -305,12 +319,20 @@ internal static class AdvancedBodyScalingPipeline
             tunedSettings,
             "Body analyzer");
         var retargetAdvisories = AdvancedBodyScalingFullIkRetargetingSystem.GetTuningAdvisories(tunedSettings).ToList();
+        var motionAdvisories = AdvancedBodyScalingMotionWarpingSystem.GetTuningAdvisories(tunedSettings).ToList();
         var ikAdvisories = AdvancedBodyScalingFullBodyIkSystem.GetTuningAdvisories(tunedSettings).ToList();
         var retargetingSummary = BuildRetargetingSummary(correctiveStressReport);
         if (retargetAdvisories.Count > 0)
             retargetingSummary = $"{retargetingSummary} Advisory: {retargetAdvisories[0]}";
         var retargetingHints = BuildRetargetingHints(correctiveStressReport)
             .Concat(retargetAdvisories)
+            .Take(4)
+            .ToList();
+        var motionWarpingSummary = BuildMotionWarpingSummary(correctiveStressReport);
+        if (motionAdvisories.Count > 0)
+            motionWarpingSummary = $"{motionWarpingSummary} Advisory: {motionAdvisories[0]}";
+        var motionWarpingHints = BuildMotionWarpingHints(correctiveStressReport)
+            .Concat(motionAdvisories)
             .Take(4)
             .ToList();
         var fullBodyIkSummary = BuildFullBodyIkSummary(correctiveStressReport);
@@ -331,6 +353,8 @@ internal static class AdvancedBodyScalingPipeline
             BuildPoseCorrectiveHints(correctiveStressReport),
             retargetingSummary,
             retargetingHints,
+            motionWarpingSummary,
+            motionWarpingHints,
             fullBodyIkSummary,
             fullBodyIkHints);
     }
@@ -372,18 +396,18 @@ internal static class AdvancedBodyScalingPipeline
             .ToList();
 
         if (active.Count == 0)
-            return report.RetargetingOverallScore == report.OverallScore
+            return report.MotionWarpingOverallScore == report.OverallScore
                 ? "Full-body IK is available, but it is not strongly engaged for this setup right now."
-                : $"Full-body IK is lightly active and trims the estimated post-retargeting animation risk from {report.RetargetingOverallScore} to {report.OverallScore}.";
+                : $"Full-body IK is lightly active and trims the estimated post-motion-warping animation risk from {report.MotionWarpingOverallScore} to {report.OverallScore}.";
 
         var focus = string.Join(" and ", active.Select(region => region.RegionName));
         var chainText = report.FullBodyIkHotChains.Count == 0
             ? "the supported major chains"
             : string.Join(", ", report.FullBodyIkHotChains);
 
-        return report.RetargetingOverallScore == report.OverallScore
+        return report.MotionWarpingOverallScore == report.OverallScore
             ? $"Full-body IK is most likely to engage around {focus}, but the current heuristics expect only a modest final risk change."
-            : $"Full-body IK is most likely to help around {focus}, trimming the estimated post-retargeting animation risk from {report.RetargetingOverallScore} to {report.OverallScore} through {chainText}.";
+            : $"Full-body IK is most likely to help around {focus}, trimming the estimated post-motion-warping animation risk from {report.MotionWarpingOverallScore} to {report.OverallScore} through {chainText}.";
     }
 
     private static IReadOnlyList<string> BuildFullBodyIkHints(AdvancedBodyScalingStressTestReport report)
@@ -425,6 +449,38 @@ internal static class AdvancedBodyScalingPipeline
             .Take(3)
             .Select(region =>
                 $"{region.RegionName}: {region.RetargetingSummary}")
+            .ToList();
+
+    private static string BuildMotionWarpingSummary(AdvancedBodyScalingStressTestReport report)
+    {
+        var active = report.RegionSummary
+            .Where(region => region.MotionWarpingIntensity > 0.05f)
+            .OrderByDescending(region => region.MotionWarpingReductionScore)
+            .Take(2)
+            .ToList();
+
+        if (active.Count == 0)
+            return report.RetargetingOverallScore == report.MotionWarpingOverallScore
+                ? "Motion warping is available, but it only engages during observed locomotion and is not expected to contribute strongly for this setup right now."
+                : $"Motion warping is lightly active and trims the estimated post-retargeting locomotion risk from {report.RetargetingOverallScore} to {report.MotionWarpingOverallScore}.";
+
+        var focus = string.Join(" and ", active.Select(region => region.RegionName));
+        var chainText = report.MotionWarpingHotChains.Count == 0
+            ? "the supported major chains"
+            : string.Join(", ", report.MotionWarpingHotChains);
+
+        return report.RetargetingOverallScore == report.MotionWarpingOverallScore
+            ? $"Motion warping is most likely to engage around {focus}, but only while locomotion is observed and with a modest expected mid-pipeline risk change."
+            : $"Motion warping is most likely to help around {focus}, trimming the estimated post-retargeting locomotion risk from {report.RetargetingOverallScore} to {report.MotionWarpingOverallScore} through {chainText}.";
+    }
+
+    private static IReadOnlyList<string> BuildMotionWarpingHints(AdvancedBodyScalingStressTestReport report)
+        => report.RegionSummary
+            .Where(region => region.MotionWarpingIntensity > 0.05f)
+            .OrderByDescending(region => region.MotionWarpingReductionScore)
+            .Take(3)
+            .Select(region =>
+                $"{region.RegionName}: {region.MotionWarpingSummary}")
             .ToList();
 
     private static ModeTuning GetTuning(AdvancedBodyScalingMode mode, bool animationSafeMode)
@@ -1232,6 +1288,8 @@ internal sealed class BodyAnalysisResult
     public IReadOnlyList<string> PoseCorrectiveHints { get; }
     public string RetargetingSummary { get; }
     public IReadOnlyList<string> RetargetingHints { get; }
+    public string MotionWarpingSummary { get; }
+    public IReadOnlyList<string> MotionWarpingHints { get; }
     public string FullBodyIkSummary { get; }
     public IReadOnlyList<string> FullBodyIkHints { get; }
 
@@ -1245,6 +1303,8 @@ internal sealed class BodyAnalysisResult
         IReadOnlyList<string> poseCorrectiveHints,
         string retargetingSummary,
         IReadOnlyList<string> retargetingHints,
+        string motionWarpingSummary,
+        IReadOnlyList<string> motionWarpingHints,
         string fullBodyIkSummary,
         IReadOnlyList<string> fullBodyIkHints)
     {
@@ -1257,6 +1317,8 @@ internal sealed class BodyAnalysisResult
         PoseCorrectiveHints = poseCorrectiveHints;
         RetargetingSummary = retargetingSummary;
         RetargetingHints = retargetingHints;
+        MotionWarpingSummary = motionWarpingSummary;
+        MotionWarpingHints = motionWarpingHints;
         FullBodyIkSummary = fullBodyIkSummary;
         FullBodyIkHints = fullBodyIkHints;
     }

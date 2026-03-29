@@ -306,7 +306,7 @@ public class ProfilePanel
             _manager.UpdateAdvancedBodyScalingOverrides(profile, settings => settings.UseProfileOverrides = false);
 
         ImGui.SameLine();
-        ImGuiComponents.HelpMarker("Uses the Settings-tab Advanced Body Scaling configuration for this profile, including automation, neck and shoulder baselines, race presets, pose-space correctives, Full IK retargeting, Full-Body IK, and region tuning, until profile overrides are enabled.");
+        ImGuiComponents.HelpMarker("Uses the Settings-tab Advanced Body Scaling configuration for this profile, including automation, neck and shoulder baselines, race presets, pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, and region tuning, until profile overrides are enabled.");
 
         ImGui.SameLine();
         if (ImGui.RadioButton("Use Profile Overrides", useOverrides))
@@ -314,7 +314,7 @@ public class ProfilePanel
 
         if (!profile.AdvancedBodyScalingOverrides.UseProfileOverrides)
         {
-            ImGui.TextDisabled("Using the Settings-tab Advanced Body Scaling config, including automation, neck and shoulder baselines, race presets, pose-space correctives, Full IK retargeting, Full-Body IK, and region tuning, until overrides are enabled.");
+            ImGui.TextDisabled("Using the Settings-tab Advanced Body Scaling config, including automation, neck and shoulder baselines, race presets, pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, and region tuning, until overrides are enabled.");
             return;
         }
 
@@ -383,6 +383,22 @@ public class ProfilePanel
 
                 if (chainOverride.IsEmpty)
                     overrides.FullIkRetargetingChainOverrides.Remove(chain);
+            });
+
+        void UpdateMotionWarpingChainOverride(AdvancedBodyScalingFullBodyIkChain chain, Action<AdvancedBodyScalingMotionWarpingChainOverrides> update)
+            => _manager.UpdateAdvancedBodyScalingOverrides(profile, settings =>
+            {
+                var overrides = settings.Overrides;
+                if (!overrides.MotionWarpingChainOverrides.TryGetValue(chain, out var chainOverride))
+                {
+                    chainOverride = new AdvancedBodyScalingMotionWarpingChainOverrides();
+                    overrides.MotionWarpingChainOverrides[chain] = chainOverride;
+                }
+
+                update(chainOverride);
+
+                if (chainOverride.IsEmpty)
+                    overrides.MotionWarpingChainOverrides.Remove(chain);
             });
 
         var overrides = profile.AdvancedBodyScalingOverrides.Overrides;
@@ -1171,6 +1187,261 @@ public class ProfilePanel
                         var strengthOverride = chainOverride?.Strength.HasValue == true;
                         if (ImGui.Checkbox($"##ProfileFullIkRetargetingChainStrengthOverride{chain}", ref strengthOverride))
                             UpdateFullIkRetargetingChainOverride(chain, o => o.Strength = strengthOverride ? globalChain.Strength : null);
+                    }
+                }
+
+                ImGui.TreePop();
+                ImGui.Spacing();
+            }
+        }
+
+        ImGui.Spacing();
+        if (ImGui.CollapsingHeader("Motion Warping Overrides"))
+        {
+            ImGui.TextDisabled("Override the locomotion-warping baseline for this profile. Disabled fields inherit the global motion-warping settings. This build supports locomotion warping only, not target-based motion warping.");
+            var globalMotionWarping = globalSettings.MotionWarping;
+
+            using (var motionTable = ImRaii.Table(
+                       "ProfileMotionWarping",
+                       3,
+                       ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp,
+                       overrideTableWidth))
+            {
+                if (motionTable)
+                {
+                    ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
+                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+                    ImGui.TableSetupScrollFreeze(0, 1);
+                    ImGui.TableHeadersRow();
+
+                    void DrawMotionBoolOverride(
+                        string label,
+                        string idSuffix,
+                        bool globalValue,
+                        bool? overrideValue,
+                        Action<AdvancedBodyScalingOverrides, bool?> setter,
+                        string helpText)
+                    {
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted(label);
+                        ImGui.TableNextColumn();
+                        if (overrideValue.HasValue)
+                        {
+                            var value = overrideValue.Value;
+                            if (ImGui.Checkbox($"##{idSuffix}", ref value))
+                                ToggleOverride(o => setter(o, value));
+                        }
+                        else
+                        {
+                            var value = globalValue;
+                            using (ImRaii.Disabled())
+                                ImGui.Checkbox($"##{idSuffix}", ref value);
+                        }
+                        CtrlHelper.AddHoverText(helpText);
+                        ImGui.TableNextColumn();
+                        var enabled = overrideValue.HasValue;
+                        if (ImGui.Checkbox($"##{idSuffix}Override", ref enabled))
+                            ToggleOverride(o => setter(o, enabled ? globalValue : null));
+                    }
+
+                    void DrawMotionFloatOverride(
+                        string label,
+                        string idSuffix,
+                        float globalValue,
+                        float? overrideValue,
+                        float min,
+                        float max,
+                        string format,
+                        Action<AdvancedBodyScalingOverrides, float?> setter,
+                        string helpText)
+                    {
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted(label);
+                        ImGui.TableNextColumn();
+                        if (overrideValue.HasValue)
+                        {
+                            var value = overrideValue.Value;
+                            ImGui.SetNextItemWidth(-1);
+                            if (ImGui.SliderFloat($"##{idSuffix}", ref value, min, max, format))
+                                ToggleOverride(o => setter(o, value));
+                        }
+                        else
+                        {
+                            var value = globalValue;
+                            using (ImRaii.Disabled())
+                            {
+                                ImGui.SetNextItemWidth(-1);
+                                ImGui.SliderFloat($"##{idSuffix}", ref value, min, max, format);
+                            }
+                        }
+                        CtrlHelper.AddHoverText(helpText);
+                        ImGui.TableNextColumn();
+                        var enabled = overrideValue.HasValue;
+                        if (ImGui.Checkbox($"##{idSuffix}Override", ref enabled))
+                            ToggleOverride(o => setter(o, enabled ? globalValue : null));
+                    }
+
+                    DrawMotionBoolOverride(
+                        "Enable Motion Warping",
+                        "ProfileMotionWarpingEnabled",
+                        globalMotionWarping.Enabled,
+                        overrides.MotionWarpingEnabled,
+                        (o, v) => o.MotionWarpingEnabled = v,
+                        "Overrides whether the locomotion-warping layer is active for this profile.");
+                    DrawMotionFloatOverride(
+                        "Global warping strength",
+                        "ProfileMotionWarpingStrength",
+                        globalMotionWarping.GlobalStrength,
+                        overrides.MotionWarpingStrength,
+                        0f,
+                        AdvancedBodyScalingMotionWarpingTuning.UiMaxGlobalStrength,
+                        "%.2f",
+                        (o, v) => o.MotionWarpingStrength = v,
+                        "Overrides the overall locomotion-warping strength for this profile.");
+                    DrawMotionFloatOverride(
+                        "Stride warping strength",
+                        "ProfileMotionWarpingStride",
+                        globalMotionWarping.StrideWarpStrength,
+                        overrides.MotionWarpingStrideStrength,
+                        0f,
+                        AdvancedBodyScalingMotionWarpingTuning.UiMaxStrideWarpStrength,
+                        "%.2f",
+                        (o, v) => o.MotionWarpingStrideStrength = v,
+                        "Overrides the stride-fit bias for this profile's locomotion-warping layer.");
+                    DrawMotionFloatOverride(
+                        "Orientation warping strength",
+                        "ProfileMotionWarpingOrientation",
+                        globalMotionWarping.OrientationWarpStrength,
+                        overrides.MotionWarpingOrientationStrength,
+                        0f,
+                        AdvancedBodyScalingMotionWarpingTuning.UiMaxOrientationWarpStrength,
+                        "%.2f",
+                        (o, v) => o.MotionWarpingOrientationStrength = v,
+                        "Overrides the movement-direction alignment bias for this profile's locomotion-warping layer.");
+                    DrawMotionFloatOverride(
+                        "Posture / locomotion coherence strength",
+                        "ProfileMotionWarpingPosture",
+                        globalMotionWarping.PostureWarpStrength,
+                        overrides.MotionWarpingPostureStrength,
+                        0f,
+                        AdvancedBodyScalingMotionWarpingTuning.UiMaxPostureWarpStrength,
+                        "%.2f",
+                        (o, v) => o.MotionWarpingPostureStrength = v,
+                        "Overrides how strongly pelvis, spine, head, and arm balance adapt to locomotion pressure for this profile.");
+                    DrawMotionFloatOverride(
+                        "Motion-safety / damping",
+                        "ProfileMotionWarpingSafety",
+                        globalMotionWarping.MotionSafetyBias,
+                        overrides.MotionWarpingMotionSafetyBias,
+                        0.30f,
+                        1f,
+                        "%.2f",
+                        (o, v) => o.MotionWarpingMotionSafetyBias = v,
+                        "Overrides damping and motion-safety for this profile's locomotion-warping layer.");
+                    DrawMotionFloatOverride(
+                        "Warping blend bias",
+                        "ProfileMotionWarpingBlend",
+                        globalMotionWarping.BlendBias,
+                        overrides.MotionWarpingBlendBias,
+                        0f,
+                        AdvancedBodyScalingMotionWarpingTuning.UiMaxBlendBias,
+                        "%.2f",
+                        (o, v) => o.MotionWarpingBlendBias = v,
+                        "Overrides how strongly this profile leans toward the locomotion-warped pose versus the original animation.");
+                    DrawMotionFloatOverride(
+                        "Max warp correction clamp",
+                        "ProfileMotionWarpingClamp",
+                        globalMotionWarping.MaxCorrectionClamp,
+                        overrides.MotionWarpingMaxCorrectionClamp,
+                        0f,
+                        AdvancedBodyScalingMotionWarpingTuning.UiMaxCorrectionClamp,
+                        "%.2f",
+                        (o, v) => o.MotionWarpingMaxCorrectionClamp = v,
+                        "Overrides the maximum correction clamp for this profile's locomotion-warping layer.");
+                }
+            }
+
+            ImGui.Spacing();
+            ImGui.TextDisabled("Per-chain Motion Warping overrides let this profile bias supported major chains without replacing the rest of the global locomotion-warping tuning.");
+            foreach (var chain in AdvancedBodyScalingMotionWarpingSystem.GetOrderedChains())
+            {
+                var label = AdvancedBodyScalingMotionWarpingSystem.GetChainLabel(chain);
+                var description = AdvancedBodyScalingMotionWarpingSystem.GetChainDescription(chain);
+                var globalChain = globalMotionWarping.GetChainSettings(chain);
+                overrides.MotionWarpingChainOverrides.TryGetValue(chain, out var chainOverride);
+
+                if (!ImGui.TreeNode($"{label}##ProfileMotionWarpingChain{chain}"))
+                    continue;
+
+                ImGui.TextDisabled(description);
+                using (var chainTable = ImRaii.Table(
+                           $"ProfileMotionWarpingChain_{chain}",
+                           3,
+                           ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp,
+                           overrideTableWidth))
+                {
+                    if (chainTable)
+                    {
+                        ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
+                        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                        ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+                        ImGui.TableSetupScrollFreeze(0, 1);
+                        ImGui.TableHeadersRow();
+
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted("Enabled");
+                        ImGui.TableNextColumn();
+                        if (chainOverride?.Enabled.HasValue == true)
+                        {
+                            var value = chainOverride.Enabled.Value;
+                            if (ImGui.Checkbox($"##ProfileMotionWarpingChainEnabled{chain}", ref value))
+                                UpdateMotionWarpingChainOverride(chain, o => o.Enabled = value);
+                        }
+                        else
+                        {
+                            var value = globalChain.Enabled;
+                            using (ImRaii.Disabled())
+                                ImGui.Checkbox($"##ProfileMotionWarpingChainEnabled{chain}", ref value);
+                        }
+                        CtrlHelper.AddHoverText("Overrides whether this supported locomotion-warping chain participates for this profile.");
+                        ImGui.TableNextColumn();
+                        var enabledOverride = chainOverride?.Enabled.HasValue == true;
+                        if (ImGui.Checkbox($"##ProfileMotionWarpingChainEnabledOverride{chain}", ref enabledOverride))
+                            UpdateMotionWarpingChainOverride(chain, o => o.Enabled = enabledOverride ? globalChain.Enabled : null);
+
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.AlignTextToFramePadding();
+                        ImGui.TextUnformatted("Strength");
+                        ImGui.TableNextColumn();
+                        if (chainOverride?.Strength.HasValue == true)
+                        {
+                            var value = chainOverride.Strength.Value;
+                            ImGui.SetNextItemWidth(-1);
+                            if (ImGui.SliderFloat($"##ProfileMotionWarpingChainStrength{chain}", ref value, 0f, AdvancedBodyScalingMotionWarpingTuning.GetUiMaxChainStrength(chain), "%.2f"))
+                                UpdateMotionWarpingChainOverride(chain, o => o.Strength = value);
+                        }
+                        else
+                        {
+                            var value = globalChain.Strength;
+                            using (ImRaii.Disabled())
+                            {
+                                ImGui.SetNextItemWidth(-1);
+                                ImGui.SliderFloat($"##ProfileMotionWarpingChainStrength{chain}", ref value, 0f, AdvancedBodyScalingMotionWarpingTuning.GetUiMaxChainStrength(chain), "%.2f");
+                            }
+                        }
+                        CtrlHelper.AddHoverText("Overrides how strongly this supported locomotion-warping chain participates relative to the global and regional motion-warping strengths for this profile.");
+                        ImGui.TableNextColumn();
+                        var strengthOverride = chainOverride?.Strength.HasValue == true;
+                        if (ImGui.Checkbox($"##ProfileMotionWarpingChainStrengthOverride{chain}", ref strengthOverride))
+                            UpdateMotionWarpingChainOverride(chain, o => o.Strength = strengthOverride ? globalChain.Strength : null);
                     }
                 }
 

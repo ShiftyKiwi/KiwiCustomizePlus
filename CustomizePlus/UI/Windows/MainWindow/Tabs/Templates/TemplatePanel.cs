@@ -256,12 +256,23 @@ public class TemplatePanel : IDisposable
                 ImGui.BulletText(hint);
         }
 
+        if (!string.IsNullOrWhiteSpace(analysisResult.MotionWarpingSummary))
+        {
+            ImGui.Spacing();
+            ImGui.TextUnformatted("Motion warping outlook:");
+            ImGui.SameLine();
+            ImGuiComponents.HelpMarker("Estimate based on the current advanced-scaling settings, supported major chains, and expected locomotion mismatch after retargeting. This build supports locomotion warping only, not target-based warping.");
+            ImGui.TextWrapped(analysisResult.MotionWarpingSummary);
+            foreach (var hint in analysisResult.MotionWarpingHints)
+                ImGui.BulletText(hint);
+        }
+
         if (!string.IsNullOrWhiteSpace(analysisResult.FullBodyIkSummary))
         {
             ImGui.Spacing();
             ImGui.TextUnformatted("Full-body IK outlook:");
             ImGui.SameLine();
-            ImGuiComponents.HelpMarker("Estimate based on the current advanced-scaling settings, supported major chains, and detected risk patterns after retargeting.");
+            ImGuiComponents.HelpMarker("Estimate based on the current advanced-scaling settings, supported major chains, and detected risk patterns after retargeting and motion warping.");
             ImGui.TextWrapped(analysisResult.FullBodyIkSummary);
             foreach (var hint in analysisResult.FullBodyIkHints)
                 ImGui.BulletText(hint);
@@ -402,7 +413,7 @@ public class TemplatePanel : IDisposable
             if (!_showAdvancedDebug)
                 _advancedDebug = null;
         }
-        ImGuiUtil.HoverTooltip("Show debug output for this preview, including guardrails plus estimated pose corrective, retargeting, and Full-Body IK activity.");
+        ImGuiUtil.HoverTooltip("Show debug output for this preview, including guardrails plus estimated pose corrective, retargeting, motion-warping, and Full-Body IK activity.");
 
         if (_showAdvancedPreview)
         {
@@ -467,14 +478,22 @@ public class TemplatePanel : IDisposable
             _stressTestReport.CorrectiveOverallScore,
             _stressTestReport.RetargetingOverallRisk,
             _stressTestReport.RetargetingOverallScore,
+            _stressTestReport.MotionWarpingOverallRisk,
+            _stressTestReport.MotionWarpingOverallScore,
             _stressTestReport.OverallRisk,
             _stressTestReport.OverallScore);
-        ImGui.TextDisabled("Base -> after pose-space correctives -> after full IK retargeting -> after full-body IK");
+        ImGui.TextDisabled("Base -> after pose-space correctives -> after full IK retargeting -> after motion warping -> after full-body IK");
         ImGui.TextWrapped(_stressTestReport.Summary);
         if (_stressTestReport.RetargetingAdvisories.Count > 0)
         {
             ImGui.TextUnformatted("Retargeting advisories:");
             foreach (var advisory in _stressTestReport.RetargetingAdvisories.Take(4))
+                ImGui.BulletText(advisory);
+        }
+        if (_stressTestReport.MotionWarpingAdvisories.Count > 0)
+        {
+            ImGui.TextUnformatted("Motion-warping advisories:");
+            foreach (var advisory in _stressTestReport.MotionWarpingAdvisories.Take(4))
                 ImGui.BulletText(advisory);
         }
         if (_stressTestReport.FullBodyIkAdvisories.Count > 0)
@@ -501,6 +520,8 @@ public class TemplatePanel : IDisposable
                     region.CorrectiveOnlyScore,
                     region.RetargetingRiskLevel,
                     region.RetargetingScore,
+                    region.MotionWarpingRiskLevel,
+                    region.MotionWarpingScore,
                     region.RiskLevel,
                     region.Score);
                 ImGui.TextWrapped(region.Reasons.FirstOrDefault() ?? "No major issue detected.");
@@ -508,6 +529,8 @@ public class TemplatePanel : IDisposable
                     ImGui.TextDisabled(region.CorrectiveSummary);
                 if (region.RetargetingIntensity > 0.05f)
                     ImGui.TextDisabled(region.RetargetingSummary);
+                if (region.MotionWarpingIntensity > 0.05f)
+                    ImGui.TextDisabled(region.MotionWarpingSummary);
                 if (region.FullBodyIkIntensity > 0.05f)
                     ImGui.TextDisabled(region.FullBodyIkSummary);
             }
@@ -526,9 +549,11 @@ public class TemplatePanel : IDisposable
                 pose.CorrectiveOnlyScore,
                 pose.RetargetingRiskLevel,
                 pose.RetargetingScore,
+                pose.MotionWarpingRiskLevel,
+                pose.MotionWarpingScore,
                 pose.RiskLevel,
                 pose.Score);
-            ImGui.TextDisabled("Base -> after pose-space correctives -> after full IK retargeting -> after full-body IK");
+            ImGui.TextDisabled("Base -> after pose-space correctives -> after full IK retargeting -> after motion warping -> after full-body IK");
             ImGui.TextWrapped(pose.Description);
 
             foreach (var region in pose.Regions)
@@ -543,6 +568,8 @@ public class TemplatePanel : IDisposable
                     region.CorrectiveOnlyScore,
                     region.RetargetingRiskLevel,
                     region.RetargetingScore,
+                    region.MotionWarpingRiskLevel,
+                    region.MotionWarpingScore,
                     region.RiskLevel,
                     region.Score);
 
@@ -561,6 +588,9 @@ public class TemplatePanel : IDisposable
 
                 if (region.RetargetingIntensity > 0.05f)
                     ImGui.TextDisabled(region.RetargetingSummary);
+
+                if (region.MotionWarpingIntensity > 0.05f)
+                    ImGui.TextDisabled(region.MotionWarpingSummary);
 
                 if (region.FullBodyIkIntensity > 0.05f)
                     ImGui.TextDisabled(region.FullBodyIkSummary);
@@ -731,34 +761,6 @@ public class TemplatePanel : IDisposable
             }
 
             ImGui.Spacing();
-            ImGui.Text("Estimated full-body IK:");
-            if (debug.EstimatedFullBodyIk.Count == 0)
-            {
-                ImGui.Text("None");
-            }
-            else
-            {
-                foreach (var entry in debug.EstimatedFullBodyIk.Take(8))
-                {
-                    ImGui.Bullet();
-                    ImGui.SameLine();
-                    if (!entry.IsValid)
-                    {
-                        var reason = string.IsNullOrWhiteSpace(entry.SkipReason) ? "Chain unavailable." : entry.SkipReason;
-                        ImGui.TextWrapped($"{entry.Label}: {reason}");
-                    }
-                    else
-                    {
-                        ImGui.TextWrapped($"{entry.Label}: activation {entry.Activation:0.00}, solve {entry.Strength:0.00}, est. risk {entry.EstimatedBeforeRisk:0.#} -> {entry.EstimatedAfterRisk:0.#}.");
-                    }
-
-                    ImGui.Indent();
-                    ImGui.TextDisabled($"{entry.DriverSummary}. {entry.Description}");
-                    ImGui.Unindent();
-                }
-            }
-
-            ImGui.Spacing();
             ImGui.Text("Estimated full IK retargeting:");
             if (debug.EstimatedRetargeting.Count == 0)
             {
@@ -786,12 +788,77 @@ public class TemplatePanel : IDisposable
                 }
             }
 
+            ImGui.Spacing();
+            ImGui.Text($"Estimated motion warping ({AdvancedBodyScalingMotionWarpingSystem.GetImplementationTierLabel()}):");
+            if (debug.EstimatedMotionWarping.Count == 0)
+            {
+                ImGui.Text("None");
+            }
+            else
+            {
+                foreach (var entry in debug.EstimatedMotionWarping.Take(8))
+                {
+                    ImGui.Bullet();
+                    ImGui.SameLine();
+                    if (!entry.IsValid)
+                    {
+                        var reason = string.IsNullOrWhiteSpace(entry.SkipReason) ? "Chain unavailable." : entry.SkipReason;
+                        ImGui.TextWrapped($"{entry.Label}: {reason}");
+                    }
+                    else
+                    {
+                        ImGui.TextWrapped($"{entry.Label}: blend {entry.BlendAmount:0.00}, strength {entry.Strength:0.00}, est. risk {entry.EstimatedBeforeRisk:0.#} -> {entry.EstimatedAfterRisk:0.#}.");
+                    }
+
+                    ImGui.Indent();
+                    ImGui.TextDisabled($"{entry.DriverSummary}. {entry.Description}");
+                    ImGui.Unindent();
+                }
+            }
+
+            ImGui.Spacing();
+            ImGui.Text("Estimated full-body IK:");
+            if (debug.EstimatedFullBodyIk.Count == 0)
+            {
+                ImGui.Text("None");
+            }
+            else
+            {
+                foreach (var entry in debug.EstimatedFullBodyIk.Take(8))
+                {
+                    ImGui.Bullet();
+                    ImGui.SameLine();
+                    if (!entry.IsValid)
+                    {
+                        var reason = string.IsNullOrWhiteSpace(entry.SkipReason) ? "Chain unavailable." : entry.SkipReason;
+                        ImGui.TextWrapped($"{entry.Label}: {reason}");
+                    }
+                    else
+                    {
+                        ImGui.TextWrapped($"{entry.Label}: activation {entry.Activation:0.00}, solve {entry.Strength:0.00}, est. risk {entry.EstimatedBeforeRisk:0.#} -> {entry.EstimatedAfterRisk:0.#}.");
+                    }
+
+                    ImGui.Indent();
+                    ImGui.TextDisabled($"{entry.DriverSummary}. {entry.Description}");
+                    ImGui.Unindent();
+                }
+            }
+
             var retargetAdvisories = AdvancedBodyScalingFullIkRetargetingSystem.GetTuningAdvisories(settings);
             if (retargetAdvisories.Count > 0)
             {
                 ImGui.Spacing();
                 ImGui.Text("Retargeting advisories:");
                 foreach (var advisory in retargetAdvisories.Take(4))
+                    ImGui.BulletText(advisory);
+            }
+
+            var motionAdvisories = AdvancedBodyScalingMotionWarpingSystem.GetTuningAdvisories(settings);
+            if (motionAdvisories.Count > 0)
+            {
+                ImGui.Spacing();
+                ImGui.Text("Motion-warping advisories:");
+                foreach (var advisory in motionAdvisories.Take(4))
                     ImGui.BulletText(advisory);
             }
 
@@ -878,6 +945,8 @@ public class TemplatePanel : IDisposable
         int correctiveScore,
         AdvancedBodyScalingRiskLevel retargetingRisk,
         int retargetingScore,
+        AdvancedBodyScalingRiskLevel motionWarpingRisk,
+        int motionWarpingScore,
         AdvancedBodyScalingRiskLevel finalRisk,
         int finalScore)
     {
@@ -896,7 +965,15 @@ public class TemplatePanel : IDisposable
             DrawRiskBadge(retargetingRisk, retargetingScore);
         }
 
-        if (retargetingRisk == finalRisk && retargetingScore == finalScore)
+        if (retargetingRisk != motionWarpingRisk || retargetingScore != motionWarpingScore)
+        {
+            ImGui.SameLine();
+            ImGui.TextUnformatted("->");
+            ImGui.SameLine();
+            DrawRiskBadge(motionWarpingRisk, motionWarpingScore);
+        }
+
+        if (motionWarpingRisk == finalRisk && motionWarpingScore == finalScore)
             return;
 
         ImGui.SameLine();

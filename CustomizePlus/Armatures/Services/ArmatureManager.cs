@@ -296,6 +296,29 @@ public unsafe sealed class ArmatureManager : IDisposable
 
             if (armature.IsBuilt && armature.IsVisible && _objectManager.TryGetValue(armature.ActorIdentifier, out var actorData))
             {
+                if (actorData.Objects.Count > 0)
+                {
+                    var motionActor = actorData.Objects[0];
+                    if (_emoteService.IsSitting(motionActor))
+                    {
+                        armature.ResetMotionWarpingContext("Motion warping is suppressed while the actor is sitting.");
+                    }
+                    else
+                    {
+                        armature.UpdateMotionWarpingContext(
+                            new Vector3(
+                                motionActor.AsObject->Position.X,
+                                motionActor.AsObject->Position.Y,
+                                motionActor.AsObject->Position.Z),
+                            motionActor.AsObject->Rotation,
+                            deltaSeconds);
+                    }
+                }
+                else
+                {
+                    armature.ResetMotionWarpingContext();
+                }
+
                 foreach (var actor in actorData.Objects)
                 {
                     EnsureObjectMovementFlagCapacity(actor.AsObject->ObjectIndex);
@@ -384,7 +407,8 @@ public unsafe sealed class ArmatureManager : IDisposable
             // 3. Runtime safeguards
             // 4. Pose-space corrective scale support
             // 5. Full IK retargeting adaptation layer
-            // 6. Full-body IK final pose solve
+            // 6. Motion warping locomotion layer
+            // 7. Full-body IK final pose solve
             armature.EvaluatePoseCorrectives(cBase);
 
             foreach (var mb in armature.ActiveBones)
@@ -426,6 +450,7 @@ public unsafe sealed class ArmatureManager : IDisposable
             }
 
             armature.EvaluateAndApplyFullIkRetargeting(cBase, deltaSeconds);
+            armature.EvaluateAndApplyMotionWarping(cBase, deltaSeconds);
             armature.EvaluateAndApplyFullBodyIk(cBase, deltaSeconds);
         }
     }

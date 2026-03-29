@@ -586,6 +586,9 @@ public class SettingsTab
             DrawFullIkRetargetingSettings(settings);
 
             ImGui.Spacing();
+            DrawMotionWarpingSettings(settings);
+
+            ImGui.Spacing();
             DrawFullBodyIkSettings(settings);
 
             ImGui.Spacing();
@@ -1236,6 +1239,158 @@ public class SettingsTab
         DrawFullIkRetargetingDebugReadout();
     }
 
+    private void DrawMotionWarpingSettings(AdvancedBodyScalingSettings settings)
+    {
+        if (!ImGui.CollapsingHeader("Motion Warping"))
+            return;
+
+        var motion = settings.MotionWarping;
+        ImGui.TextDisabled("Motion Warping helps movement fit changed body proportions more naturally. This build currently supports conservative locomotion warping only: stride, direction alignment, and locomotion posture coherence before the final Full-Body IK solve.");
+
+        var enabled = motion.Enabled;
+        if (ImGui.Checkbox("Enable Motion Warping", ref enabled))
+        {
+            motion.Enabled = enabled;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Turns the locomotion-warping layer on or off. It runs after Full IK Retargeting and before the final Full-Body IK pass. True target-window motion warping is not available in this runtime.");
+
+        ImGui.SameLine();
+        if (ImGui.Button("Restore warping defaults"))
+        {
+            settings.MotionWarping = new AdvancedBodyScalingMotionWarpingSettings();
+            motion = settings.MotionWarping;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Restores the shipped Motion Warping defaults, including global enable/strength, damping and clamp values, and every per-chain enable and strength setting.");
+
+        ImGui.TextDisabled($"Implementation tier: {AdvancedBodyScalingMotionWarpingSystem.GetImplementationTierLabel()}");
+        ImGui.TextDisabled("Target-aware root-motion warping is not currently supported, so there are no target-alignment controls in this build.");
+
+        using (var disabled = ImRaii.Disabled(!motion.Enabled))
+        {
+            var globalStrength = motion.GlobalStrength;
+            if (ImGui.SliderFloat("Global warping strength", ref globalStrength, 0f, AdvancedBodyScalingMotionWarpingTuning.UiMaxGlobalStrength, "%.2f"))
+            {
+                motion.GlobalStrength = globalStrength;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Scales how strongly locomotion warping is allowed to adapt the current animation pose overall. Conservative values are recommended; stronger values can start to replace the original motion read.");
+
+            var stride = motion.StrideWarpStrength;
+            if (ImGui.SliderFloat("Stride warping strength", ref stride, 0f, AdvancedBodyScalingMotionWarpingTuning.UiMaxStrideWarpStrength, "%.2f"))
+            {
+                motion.StrideWarpStrength = stride;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Biases how strongly supported leg and pelvis chains adapt stride fit from observed locomotion speed and changed leg proportions. Legs are intentionally safer at lower values.");
+
+            var orientation = motion.OrientationWarpStrength;
+            if (ImGui.SliderFloat("Orientation warping strength", ref orientation, 0f, AdvancedBodyScalingMotionWarpingTuning.UiMaxOrientationWarpStrength, "%.2f"))
+            {
+                motion.OrientationWarpStrength = orientation;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Biases how strongly pelvis, spine, and locomotion-facing chains align toward observed movement direction. Stronger values can make movement feel over-steered.");
+
+            var posture = motion.PostureWarpStrength;
+            if (ImGui.SliderFloat("Posture / locomotion coherence strength", ref posture, 0f, AdvancedBodyScalingMotionWarpingTuning.UiMaxPostureWarpStrength, "%.2f"))
+            {
+                motion.PostureWarpStrength = posture;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Biases how strongly pelvis, spine, neck/head, and arm balance respond to locomotion pressure so movement reads more coherent on scaled bodies.");
+
+            var motionSafety = motion.MotionSafetyBias;
+            if (ImGui.SliderFloat("Motion-safety / damping", ref motionSafety, 0.30f, 1f, "%.2f"))
+            {
+                motion.MotionSafetyBias = motionSafety;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Adds damping, deadzone, and hysteresis pressure so locomotion warping stays calm and does not flicker with tiny movement changes. Lower values are riskier.");
+
+            var blendBias = motion.BlendBias;
+            if (ImGui.SliderFloat("Warping blend bias", ref blendBias, 0f, AdvancedBodyScalingMotionWarpingTuning.UiMaxBlendBias, "%.2f"))
+            {
+                motion.BlendBias = blendBias;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Controls how much the runtime output leans toward the warped locomotion pose instead of the original animation pose.");
+
+            var maxCorrection = motion.MaxCorrectionClamp;
+            if (ImGui.SliderFloat("Max warp correction clamp", ref maxCorrection, 0f, AdvancedBodyScalingMotionWarpingTuning.UiMaxCorrectionClamp, "%.2f"))
+            {
+                motion.MaxCorrectionClamp = maxCorrection;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Hard cap on how much local rotation and translation the locomotion-warping pass is allowed to add before the final IK solve. Larger clamps can make unsafe stride or orientation changes more visible.");
+
+            var advisories = AdvancedBodyScalingMotionWarpingSystem.GetTuningAdvisories(settings);
+            if (advisories.Count == 0)
+            {
+                ImGui.TextDisabled("Recommended range: conservative values usually preserve locomotion intent more cleanly than stronger ones.");
+            }
+            else
+            {
+                ImGui.TextColored(new Vector4(0.95f, 0.80f, 0.38f, 1f), "Motion-warping advisories:");
+                foreach (var advisory in advisories.Take(4))
+                    ImGui.BulletText(advisory);
+            }
+
+            foreach (var chain in AdvancedBodyScalingMotionWarpingSystem.GetOrderedChains())
+            {
+                var label = AdvancedBodyScalingMotionWarpingSystem.GetChainLabel(chain);
+                var description = AdvancedBodyScalingMotionWarpingSystem.GetChainDescription(chain);
+                if (!ImGui.TreeNode($"{label}##MotionWarpChain{chain}"))
+                    continue;
+
+                var chainSettings = motion.GetChainSettings(chain);
+                if (ImGui.SmallButton($"Restore chain defaults##MotionWarpRestore{chain}"))
+                {
+                    motion.Chains[chain] = AdvancedBodyScalingMotionWarpingChainSettings.CreateDefault(chain);
+                    chainSettings = motion.GetChainSettings(chain);
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                }
+                CtrlHelper.AddHoverText($"Restore the shipped defaults for the {label} motion-warping chain without changing the rest of the locomotion-warping tuning.");
+
+                ImGui.TextDisabled(description);
+
+                var chainEnabled = chainSettings.Enabled;
+                if (ImGui.Checkbox($"Enable##MotionWarpEnabled{chain}", ref chainEnabled))
+                {
+                    chainSettings.Enabled = chainEnabled;
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                }
+                CtrlHelper.AddHoverText("Turns this supported motion-warping chain on or off without changing the rest of the locomotion-warping system.");
+
+                var chainStrength = chainSettings.Strength;
+                if (ImGui.SliderFloat($"Strength##MotionWarpStrength{chain}", ref chainStrength, 0f, AdvancedBodyScalingMotionWarpingTuning.GetUiMaxChainStrength(chain), "%.2f"))
+                {
+                    chainSettings.Strength = chainStrength;
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                }
+                CtrlHelper.AddHoverText("Scales how strongly this chain participates relative to the global locomotion-warping strength and the matching chain-group pressure. Conservative values are recommended.");
+
+                ImGui.TreePop();
+                ImGui.Spacing();
+            }
+        }
+
+        DrawMotionWarpingDebugReadout();
+    }
+
     private void DrawFullBodyIkSettings(AdvancedBodyScalingSettings settings)
     {
         if (!ImGui.CollapsingHeader("Full-Body IK"))
@@ -1545,6 +1700,93 @@ public class SettingsTab
         }
     }
 
+    private void DrawMotionWarpingDebugReadout()
+    {
+        AdvancedBodyScalingMotionWarpingDebugState? debugState = null;
+
+        if (TryGetMotionWarpingDebugState(out var liveState) && liveState != null)
+            debugState = liveState;
+
+        ImGui.TextDisabled($"Settings source: {(debugState?.SettingsSourceLabel ?? "Global settings")} | Tier: {(debugState?.ImplementationTierLabel ?? AdvancedBodyScalingMotionWarpingTuning.ImplementationTierLabel)}");
+
+        if (debugState == null)
+        {
+            ImGui.TextDisabled("No live armature Motion Warping debug data yet. Activity appears while a supported actor is moving.");
+            return;
+        }
+
+        ImGui.TextDisabled($"Enabled: {debugState.Enabled} | Active: {debugState.Active} | Full-Body IK follow-up active: {debugState.FullBodyIkFollowupActive}");
+        ImGui.TextDisabled($"Locomotion observed: {debugState.LocomotionObserved} | Planar speed: {debugState.PlanarSpeed:0.00} | Locomotion amount: {debugState.LocomotionAmount:0.00}");
+        ImGui.TextDisabled($"Motion safety: {debugState.MotionSafetyBias:0.00} | Blend bias: {debugState.BlendBias:0.00}");
+        ImGui.TextDisabled($"Locks/pins limited solve: {debugState.LocksLimited} | Safety limiting: {debugState.SafetyLimited}");
+        ImGui.TextDisabled($"Estimated residual risk: {debugState.EstimatedBeforeRisk:0.#} -> {debugState.EstimatedAfterRisk:0.#}");
+
+        if (!string.IsNullOrWhiteSpace(debugState.ContextSummary))
+            ImGui.TextWrapped(debugState.ContextSummary);
+
+        if (!string.IsNullOrWhiteSpace(debugState.Summary))
+            ImGui.TextWrapped(debugState.Summary);
+
+        if (!string.IsNullOrWhiteSpace(debugState.FullBodyIkFollowupSummary))
+            ImGui.TextDisabled($"Full-Body IK follow-up: {debugState.FullBodyIkFollowupSummary}");
+
+        if (debugState.Chains.Count == 0)
+        {
+            ImGui.TextDisabled("No supported motion-warping chain debug data is available yet.");
+            return;
+        }
+
+        ImGui.TextUnformatted("Chain activity:");
+        foreach (var chain in debugState.Chains
+                     .OrderByDescending(entry => entry.BlendAmount)
+                     .ThenByDescending(entry => entry.Strength)
+                     .ThenBy(entry => entry.Label, StringComparer.Ordinal))
+        {
+            ImGui.Bullet();
+            ImGui.SameLine();
+
+            if (!chain.IsValid)
+            {
+                var skipReason = string.IsNullOrWhiteSpace(chain.SkipReason) ? "Chain unavailable." : chain.SkipReason;
+                ImGui.TextWrapped($"{chain.Label}: {skipReason}");
+            }
+            else if (!chain.IsActive)
+            {
+                ImGui.TextWrapped($"{chain.Label}: blend {chain.BlendAmount:0.00}, strength {chain.Strength:0.00}. {chain.DriverSummary}.");
+            }
+            else
+            {
+                ImGui.TextWrapped($"{chain.Label}: blend {chain.BlendAmount:0.00}, strength {chain.Strength:0.00}, alignment {chain.MovementAlignment:+0.00;-0.00;0.00}, correction {chain.CorrectionMagnitude:0.000}.");
+            }
+
+            ImGui.Indent();
+            if (chain.LockLimited)
+                ImGui.TextDisabled("Locks or pinned axes limited this chain.");
+
+            if (chain.SafetyLimited)
+            {
+                var flags = new List<string>();
+                if (chain.Clamped)
+                    flags.Add("clamped");
+                if (chain.Rejected)
+                    flags.Add("rejected");
+                if (chain.Damped)
+                    flags.Add("damped");
+
+                if (flags.Count > 0)
+                    ImGui.TextDisabled($"Safety state: {string.Join(", ", flags)}");
+
+                if (!string.IsNullOrWhiteSpace(chain.SafetySummary))
+                    ImGui.TextDisabled(chain.SafetySummary);
+            }
+
+            ImGui.TextDisabled(chain.Description);
+            if (!string.IsNullOrWhiteSpace(chain.DriverSummary))
+                ImGui.TextDisabled(chain.DriverSummary);
+            ImGui.Unindent();
+        }
+    }
+
     private void DrawFullBodyIkDebugReadout()
     {
         AdvancedBodyScalingFullBodyIkDebugState? debugState = null;
@@ -1665,6 +1907,26 @@ public class SettingsTab
         return false;
     }
 
+    private bool TryGetMotionWarpingDebugState(out AdvancedBodyScalingMotionWarpingDebugState? debugState)
+    {
+        if ((_templateEditorManager.IsEditorActive || _templateEditorManager.IsEditorPaused) &&
+            TryGetArmatureForCharacter(_templateEditorManager.Character, out var previewArmature))
+        {
+            debugState = previewArmature.MotionWarpingDebugState;
+            return true;
+        }
+
+        var currentPlayer = _gameObjectService.GetCurrentPlayerActorIdentifier().CreatePermanent();
+        if (TryGetArmatureForCharacter(currentPlayer, out var currentArmature))
+        {
+            debugState = currentArmature.MotionWarpingDebugState;
+            return true;
+        }
+
+        debugState = null;
+        return false;
+    }
+
     private bool TryGetFullBodyIkDebugState(out AdvancedBodyScalingFullBodyIkDebugState? debugState)
     {
         if ((_templateEditorManager.IsEditorActive || _templateEditorManager.IsEditorPaused) &&
@@ -1725,7 +1987,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores only Surface balancing strength. It does not touch pose-space correctives, Full IK retargeting, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
+        CtrlHelper.AddHoverText("Restores only Surface balancing strength. It does not touch pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset Naturalization"))
@@ -1734,7 +1996,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores only Naturalization strength. It does not touch pose-space correctives, Full IK retargeting, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
+        CtrlHelper.AddHoverText("Restores only Naturalization strength. It does not touch pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset Pose-Aware"))
@@ -1743,7 +2005,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores only Pose-aware validation mode. It does not touch pose-space correctives, Full IK retargeting, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
+        CtrlHelper.AddHoverText("Restores only Pose-aware validation mode. It does not touch pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset All Advanced Scaling"))
@@ -1752,7 +2014,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores all Advanced Body Scaling settings to shipped defaults, including pose-space correctives, Full IK retargeting, Full-Body IK, the global neck/shoulder baseline, race-specific presets, animation-safe mode, and region tuning.");
+        CtrlHelper.AddHoverText("Restores all Advanced Body Scaling settings to shipped defaults, including pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, animation-safe mode, and region tuning.");
     }
 
     private void DrawAdvancedBodyScalingRegionProfiles(AdvancedBodyScalingSettings settings)
@@ -1930,6 +2192,13 @@ public class SettingsTab
             "Animation-intent drift on scaled bodies, including reach mismatch, stride mismatch, and posture drift caused by changed proportions.",
             settings.FullIkRetargeting.Enabled ? "Active" : "Off",
             "This is a conservative supported-bone retargeting layer. It adapts pose intent from proportion deltas, yields to locks and pinned axes, and hands the result to Full-Body IK for the final coherence pass.");
+
+        DrawExplainabilityRow(
+            "Motion warping",
+            "Pelvis/root, spine, neck/head, arms, and legs on supported ordinary bones during observed locomotion.",
+            "Stride-length mismatch, movement-direction drift, and locomotion posture imbalance that can remain after retargeting on scaled bodies.",
+            settings.MotionWarping.Enabled ? "Active" : "Off",
+            "This build supports Tier C locomotion warping only. It derives conservative stride, orientation, and posture pressure from observed movement, ignores unsupported target-based warping, yields to locks and pinned axes, and hands the result to Full-Body IK.");
 
         DrawExplainabilityRow(
             "Full-body IK",

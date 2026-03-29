@@ -21,6 +21,7 @@ internal sealed class AdvancedBodyScalingDebugReport
     public List<GuardrailCorrection> GuardrailCorrections { get; } = new();
     public List<AdvancedBodyScalingCorrectiveDebugRegionState> EstimatedPoseCorrectives { get; } = new();
     public List<AdvancedBodyScalingFullIkRetargetingEstimate> EstimatedRetargeting { get; } = new();
+    public List<AdvancedBodyScalingMotionWarpingEstimate> EstimatedMotionWarping { get; } = new();
     public List<AdvancedBodyScalingFullBodyIkEstimate> EstimatedFullBodyIk { get; } = new();
 
     public sealed class GuardrailCorrection
