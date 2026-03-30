@@ -37,6 +37,7 @@ public class IPCTestTab //: IDisposable
     private readonly ActorObjectManager _objectManager;
     private readonly ActorManager _actorManager;
     private readonly Logger _logger;
+    private readonly PluginConfiguration _configuration;
 
     [EzIPC("General.GetApiVersion")] 
     private readonly Func<(int, int)> _getApiVersionIpcFunc = null!;
@@ -99,6 +100,8 @@ public class IPCTestTab //: IDisposable
 
     private int _cutsceneActorIdx;
     private int _cutsceneActorParentIdx;
+    private bool _ipcInitialized;
+    private string _ipcInitializationStatus = "IPC has not been initialized yet.";
 
 
     public IPCTestTab(
@@ -119,16 +122,23 @@ public class IPCTestTab //: IDisposable
         _gameObjectService = gameObjectService;
         _actorManager = actorManager;
         _logger = logger;
+        _configuration = configuration;
 
-        if(configuration.DebuggingModeEnabled)
-            EzIPC.Init(this, "CustomizePlus"); //do not init EzIPC if debugging disabled so no debug event hook is created
-
-        if (_getApiVersionIpcFunc != null)
-            _apiVersion = _getApiVersionIpcFunc();
+        if (_configuration.DebuggingModeEnabled)
+            EnsureIpcInitialized();
     }
 
     public unsafe void Draw()
     {
+        if (!EnsureIpcInitialized())
+        {
+            ImGui.TextDisabled(_ipcInitializationStatus);
+            if (ImGui.Button("Retry IPC init"))
+                EnsureIpcInitialized();
+
+            return;
+        }
+
         if (_targetCharacterName == null)
             _targetCharacterName = _gameObjectService.GetCurrentPlayerName();
 
@@ -137,7 +147,7 @@ public class IPCTestTab //: IDisposable
         ImGui.Text($"IsValid: {_validResult} ({_lastValidCheckAt} UTC)");
 
         ImGui.SameLine();
-        if(ImGui.Button("Check IPC validity") || _lastValidCheckAt == DateTime.MinValue)
+        if ((ImGui.Button("Check IPC validity") || _lastValidCheckAt == DateTime.MinValue) && _isValidIpcFunc != null)
         {
             _validResult = _isValidIpcFunc();
             _lastValidCheckAt = DateTime.UtcNow;
@@ -460,6 +470,63 @@ public class IPCTestTab //: IDisposable
             }
         }
     }
+
+    private bool EnsureIpcInitialized()
+    {
+        if (_ipcInitialized && HasAllBindings())
+            return true;
+
+        if (!_configuration.DebuggingModeEnabled)
+        {
+            _ipcInitializationStatus = "Debugging mode is disabled. Enable it in Settings before opening the IPC test tab.";
+            return false;
+        }
+
+        try
+        {
+            EzIPC.Init(this, "CustomizePlus");
+            if (!HasAllBindings())
+            {
+                _ipcInitialized = false;
+                _ipcInitializationStatus = "IPC bindings are incomplete, so the IPC test tab was left inactive to avoid null-reference crashes.";
+                _logger.Error(_ipcInitializationStatus);
+                return false;
+            }
+
+            _ipcInitialized = true;
+            _ipcInitializationStatus = "IPC initialized.";
+
+            if (_getApiVersionIpcFunc != null)
+                _apiVersion = _getApiVersionIpcFunc();
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _ipcInitialized = false;
+            _ipcInitializationStatus = $"IPC initialization failed: {ex.Message}";
+            _logger.Error($"{_ipcInitializationStatus}\n{ex}");
+            return false;
+        }
+    }
+
+    private bool HasAllBindings()
+        => _getApiVersionIpcFunc != null
+            && _isValidIpcFunc != null
+            && _getProfileListIpcFunc != null
+            && _enableProfileByUniqueIdIpcFunc != null
+            && _disableProfileByUniqueIdIpcFunc != null
+            && _setPriorityByUniqueIdIpcFunc != null
+            && _getActiveProfileIdOnCharacterIpcFunc != null
+            && _setTemporaryProfileOnCharacterIpcFunc != null
+            && _deleteTemporaryProfileOnCharacterIpcFunc != null
+            && _deleteTemporaryProfileByUniqueIdIpcFunc != null
+            && _addPlayerCharacterIpcFunc != null
+            && _removePlayerCharacterIpcFunc != null
+            && _getProfileByIdIpcFunc != null
+            && _getProfileTemplatesIpcFunc != null
+            && _getCutsceneParentIdxIpcFunc != null
+            && _setCutsceneParentIdxIpcFunc != null;
 
     [EzIPCEvent("Profile.OnUpdate")]
     private void OnProfileUpdate(ushort gameObjectIndex, Guid profileUniqueId)
