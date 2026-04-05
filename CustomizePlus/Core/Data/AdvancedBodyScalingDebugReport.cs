@@ -19,6 +19,32 @@ internal sealed class AdvancedBodyScalingDebugReport
     public Dictionary<string, float> FinalScales { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, float> PropagationDeltas { get; } = new(StringComparer.Ordinal);
     public List<GuardrailCorrection> GuardrailCorrections { get; } = new();
+    public bool BoneImportanceEnabled { get; set; }
+    public bool BoneImportancePreferTrueSkinWeights { get; set; }
+    public float BoneImportanceHeuristicBlend { get; set; }
+    public bool BoneImportanceCacheHit { get; set; }
+    public bool BoneImportanceFallbackUsed { get; set; }
+    public bool BoneImportanceInfluencedPropagation { get; set; }
+    public bool BoneImportanceInfluencedSmoothing { get; set; }
+    public bool BoneImportanceInfluencedGuardrails { get; set; }
+    public bool BoneImportanceMultiModelAggregate { get; set; }
+    public int BoneImportanceContributingPartCount { get; set; }
+    public string BoneImportanceSource { get; set; } = "heuristic fallback";
+    public string BoneImportanceStage { get; set; } = "heuristic fallback";
+    public string BoneImportanceResolution { get; set; } = "heuristic fallback";
+    public string BoneImportanceAggregateMode { get; set; } = "single-model";
+    public string BoneImportanceRequestedModelPath { get; set; } = string.Empty;
+    public string BoneImportanceModelIdentity { get; set; } = string.Empty;
+    public string BoneImportanceModelSignature { get; set; } = string.Empty;
+    public string BoneImportanceModelPath { get; set; } = string.Empty;
+    public string BoneImportanceResolutionDetail { get; set; } = string.Empty;
+    public string BoneImportanceResolutionTrace { get; set; } = string.Empty;
+    public string BoneImportanceRefreshStatus { get; set; } = string.Empty;
+    public bool BoneImportanceSignatureChanged { get; set; }
+    public string BoneImportanceSummary { get; set; } = string.Empty;
+    public List<string> BoneImportanceSamples { get; } = new();
+    public List<string> BoneImportancePartDetails { get; } = new();
+    public List<string> BoneImportanceMissingPartDetails { get; } = new();
     public List<AdvancedBodyScalingCorrectiveDebugRegionState> EstimatedPoseCorrectives { get; } = new();
     public List<AdvancedBodyScalingFullIkRetargetingEstimate> EstimatedRetargeting { get; } = new();
     public List<AdvancedBodyScalingMotionWarpingEstimate> EstimatedMotionWarping { get; } = new();

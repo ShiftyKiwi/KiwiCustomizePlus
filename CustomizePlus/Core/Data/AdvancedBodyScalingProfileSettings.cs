@@ -32,6 +32,9 @@ public sealed class AdvancedBodyScalingOverrides
     public bool? AnimationSafeModeEnabled { get; set; }
     public bool? PoseCorrectivesEnabled { get; set; }
     public float? PoseCorrectiveStrength { get; set; }
+    public float? PoseCorrectivePoseMapSharpness { get; set; }
+    public float? PoseCorrectiveDamping { get; set; }
+    public float? PoseCorrectiveMaxCorrectionClamp { get; set; }
     public bool? FullIkRetargetingEnabled { get; set; }
     public float? FullIkRetargetingStrength { get; set; }
     public float? FullIkRetargetingPelvisStrength { get; set; }
@@ -97,6 +100,15 @@ public sealed class AdvancedBodyScalingOverrides
 
         if (PoseCorrectiveStrength.HasValue)
             merged.PoseCorrectives.Strength = PoseCorrectiveStrength.Value;
+
+        if (PoseCorrectivePoseMapSharpness.HasValue)
+            merged.PoseCorrectives.PoseMapSharpness = PoseCorrectivePoseMapSharpness.Value;
+
+        if (PoseCorrectiveDamping.HasValue)
+            merged.PoseCorrectives.Damping = PoseCorrectiveDamping.Value;
+
+        if (PoseCorrectiveMaxCorrectionClamp.HasValue)
+            merged.PoseCorrectives.MaxCorrectionClamp = PoseCorrectiveMaxCorrectionClamp.Value;
 
         if (FullIkRetargetingEnabled.HasValue)
             merged.FullIkRetargeting.Enabled = FullIkRetargetingEnabled.Value;
@@ -292,6 +304,9 @@ public sealed class AdvancedBodyScalingOverrides
             AnimationSafeModeEnabled = AnimationSafeModeEnabled,
             PoseCorrectivesEnabled = PoseCorrectivesEnabled,
             PoseCorrectiveStrength = PoseCorrectiveStrength,
+            PoseCorrectivePoseMapSharpness = PoseCorrectivePoseMapSharpness,
+            PoseCorrectiveDamping = PoseCorrectiveDamping,
+            PoseCorrectiveMaxCorrectionClamp = PoseCorrectiveMaxCorrectionClamp,
             FullIkRetargetingEnabled = FullIkRetargetingEnabled,
             FullIkRetargetingStrength = FullIkRetargetingStrength,
             FullIkRetargetingPelvisStrength = FullIkRetargetingPelvisStrength,

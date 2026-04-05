@@ -57,10 +57,71 @@ internal static class AdvancedBodyScalingPipeline
         float NaturalizationMultiplier,
         int PropagationDepth);
 
+    private readonly record struct BoneImportanceContext(
+        bool Active,
+        float BlendBias,
+        IReadOnlyDictionary<string, float>? Scores)
+    {
+        public static BoneImportanceContext Create(
+            IReadOnlyCollection<string> relevantBones,
+            AdvancedBodyScalingSettings settings,
+            AdvancedBodyScalingBoneImportanceResult? result)
+        {
+            if (!settings.ModelDerivedBoneImportanceEnabled ||
+                settings.BoneImportanceHeuristicBlend <= Epsilon ||
+                result == null ||
+                !result.ModelDerivedActive ||
+                result.Scores.Count == 0 ||
+                !relevantBones.Any(result.Scores.ContainsKey))
+            {
+                return new BoneImportanceContext(false, settings.BoneImportanceHeuristicBlend, null);
+            }
+
+            return new BoneImportanceContext(true, settings.BoneImportanceHeuristicBlend, result.Scores);
+        }
+
+        public float GetPropagationWeight(string bone)
+        {
+            if (!TryGetScore(bone, out var score))
+                return 1f;
+
+            return Lerp(1f, Lerp(0.55f, 1.10f, score), BlendBias);
+        }
+
+        public float GetAdjustmentResponsiveness(string bone)
+        {
+            if (!TryGetScore(bone, out var score))
+                return 1f;
+
+            return Lerp(1f, Lerp(1f, 0.72f, score), BlendBias);
+        }
+
+        public float GetRedistributionWeight(string bone)
+        {
+            if (!TryGetScore(bone, out var score))
+                return 1f;
+
+            return Lerp(1f, Lerp(0.70f, 1.12f, score), BlendBias);
+        }
+
+        private bool TryGetScore(string bone, out float score)
+        {
+            if (!Active || Scores == null || !Scores.TryGetValue(bone, out score))
+            {
+                score = 1f;
+                return false;
+            }
+
+            score = Math.Clamp(score, 0f, 1f);
+            return true;
+        }
+    }
+
     public static Dictionary<string, BoneTransform> Apply(
         IReadOnlyDictionary<string, BoneTransform> userTransforms,
         AdvancedBodyScalingSettings settings,
-        AdvancedBodyScalingDebugReport? debug = null)
+        AdvancedBodyScalingDebugReport? debug = null,
+        AdvancedBodyScalingBoneImportanceResult? boneImportance = null)
     {
         var output = new Dictionary<string, BoneTransform>(StringComparer.Ordinal);
         foreach (var kvp in userTransforms)
@@ -89,6 +150,9 @@ internal static class AdvancedBodyScalingPipeline
             if (kvp.Value.LockState == BoneLockState.Priority || MathF.Abs(uniformScale - 1f) > Epsilon)
                 sources.Add(kvp.Key);
         }
+
+        var earlyImportanceContext = BoneImportanceContext.Create(relevantBones, effectiveSettings, boneImportance);
+        PopulateBoneImportanceDebug(debug, effectiveSettings, boneImportance, earlyImportanceContext);
 
         if (sources.Count == 0)
         {
@@ -133,12 +197,15 @@ internal static class AdvancedBodyScalingPipeline
             regionProfiles[bone] = effectiveSettings.GetRegionProfile(ResolveRegion(bone));
         }
 
+        var importanceContext = BoneImportanceContext.Create(relevantBones, effectiveSettings, boneImportance);
+        PopulateBoneImportanceDebug(debug, effectiveSettings, boneImportance, importanceContext);
+
         var originalScales = uniformScales.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.Ordinal);
 
         if (debug != null)
             AdvancedBodyScalingDebugReport.CopyScales(uniformScales, debug.InitialScales);
 
-        ApplyInfluencePropagation(uniformScales, lockStates, regionProfiles, sources, tuning);
+        ApplyInfluencePropagation(uniformScales, lockStates, regionProfiles, sources, tuning, importanceContext);
         if (debug != null)
         {
             AdvancedBodyScalingDebugReport.CopyScales(uniformScales, debug.AfterPropagation);
@@ -147,23 +214,23 @@ internal static class AdvancedBodyScalingPipeline
                 debug.PropagationDeltas[kvp.Key] = kvp.Value - originalScales[kvp.Key];
         }
 
-        ApplySurfaceBalancing(uniformScales, lockStates, regionProfiles, surfaceStrength, DefaultSurfaceBalanceThreshold);
+        ApplySurfaceBalancing(uniformScales, lockStates, regionProfiles, surfaceStrength, DefaultSurfaceBalanceThreshold, importanceContext);
         if (debug != null)
             AdvancedBodyScalingDebugReport.CopyScales(uniformScales, debug.AfterSurfaceBalancing);
 
-        ApplyMassRedistribution(uniformScales, lockStates, regionProfiles, massStrength, DefaultMassRedistributionThreshold);
+        ApplyMassRedistribution(uniformScales, lockStates, regionProfiles, massStrength, DefaultMassRedistributionThreshold, importanceContext);
         if (debug != null)
             AdvancedBodyScalingDebugReport.CopyScales(uniformScales, debug.AfterMassRedistribution);
 
-        ApplyGuardrails(uniformScales, lockStates, regionProfiles, guardrailStrength, debug);
+        ApplyGuardrails(uniformScales, lockStates, regionProfiles, guardrailStrength, debug, importanceContext);
         if (debug != null)
             AdvancedBodyScalingDebugReport.CopyScales(uniformScales, debug.AfterGuardrails);
 
-        ApplyCurveSolver(uniformScales, lockStates, regionProfiles, tuning.CurveStrength, DefaultCurveThreshold);
+        ApplyCurveSolver(uniformScales, lockStates, regionProfiles, tuning.CurveStrength, DefaultCurveThreshold, importanceContext);
         if (debug != null)
             AdvancedBodyScalingDebugReport.CopyScales(uniformScales, debug.AfterCurveSmoothing);
 
-        ApplyPoseAwareValidation(uniformScales, lockStates, regionProfiles, poseValidationStrength, debug);
+        ApplyPoseAwareValidation(uniformScales, lockStates, regionProfiles, poseValidationStrength, debug, importanceContext);
         if (debug != null)
             AdvancedBodyScalingDebugReport.CopyScales(uniformScales, debug.AfterPoseValidation);
 
@@ -268,6 +335,50 @@ internal static class AdvancedBodyScalingPipeline
         debug.EstimatedRetargeting.AddRange(AdvancedBodyScalingFullIkRetargetingSystem.EstimateStaticSupport(transforms, settings));
     }
 
+    private static void PopulateBoneImportanceDebug(
+        AdvancedBodyScalingDebugReport? debug,
+        AdvancedBodyScalingSettings settings,
+        AdvancedBodyScalingBoneImportanceResult? result,
+        BoneImportanceContext context)
+    {
+        if (debug == null)
+            return;
+
+        debug.BoneImportanceEnabled = settings.ModelDerivedBoneImportanceEnabled;
+        debug.BoneImportancePreferTrueSkinWeights = settings.PreferTrueSkinWeightImportance;
+        debug.BoneImportanceHeuristicBlend = settings.BoneImportanceHeuristicBlend;
+        debug.BoneImportanceMultiModelAggregate = result?.MultiModelAggregate ?? false;
+        debug.BoneImportanceContributingPartCount = result?.ContributingPartCount ?? 0;
+        debug.BoneImportanceSource = result?.SourceLabel ?? "heuristic fallback";
+        debug.BoneImportanceStage = result?.StageLabel ?? "heuristic fallback";
+        debug.BoneImportanceResolution = result?.ResolutionLabel ?? "heuristic fallback";
+        debug.BoneImportanceAggregateMode = result?.AggregateModeLabel ?? "single-model";
+        debug.BoneImportanceRequestedModelPath = result?.RequestedGamePath ?? string.Empty;
+        debug.BoneImportanceModelIdentity = result?.ModelIdentity ?? string.Empty;
+        debug.BoneImportanceModelSignature = result?.ModelSignature ?? string.Empty;
+        debug.BoneImportanceModelPath = result?.ModelPath ?? string.Empty;
+        debug.BoneImportanceResolutionDetail = result?.ResolutionDetail ?? string.Empty;
+        debug.BoneImportanceResolutionTrace = result?.ResolutionTrace ?? string.Empty;
+        debug.BoneImportanceRefreshStatus = result?.RefreshStatus ?? string.Empty;
+        debug.BoneImportanceSignatureChanged = result?.ModelSignatureChanged ?? false;
+        debug.BoneImportanceCacheHit = result?.CacheHit ?? false;
+        debug.BoneImportanceFallbackUsed = !context.Active;
+        debug.BoneImportanceSummary = result?.Summary
+            ?? "Using heuristic fallback because no live actor model was resolved for this preview.";
+        debug.BoneImportanceSamples.Clear();
+        debug.BoneImportancePartDetails.Clear();
+        debug.BoneImportanceMissingPartDetails.Clear();
+        if (result?.SampleValues != null)
+            debug.BoneImportanceSamples.AddRange(result.SampleValues);
+        if (result?.PartDetails != null)
+            debug.BoneImportancePartDetails.AddRange(result.PartDetails);
+        if (result?.MissingPartDetails != null)
+            debug.BoneImportanceMissingPartDetails.AddRange(result.MissingPartDetails);
+        debug.BoneImportanceInfluencedPropagation = context.Active;
+        debug.BoneImportanceInfluencedSmoothing = context.Active;
+        debug.BoneImportanceInfluencedGuardrails = context.Active;
+    }
+
     internal static BodyAnalysisResult Analyze(
         IReadOnlyDictionary<string, BoneTransform> userTransforms,
         AdvancedBodyScalingSettings settings)
@@ -318,9 +429,17 @@ internal static class AdvancedBodyScalingPipeline
             suggestedFixes.Count > 0 ? suggested : userTransforms,
             tunedSettings,
             "Body analyzer");
+        var correctiveAdvisories = AdvancedBodyScalingPoseCorrectiveSystem.GetTuningAdvisories(tunedSettings).ToList();
         var retargetAdvisories = AdvancedBodyScalingFullIkRetargetingSystem.GetTuningAdvisories(tunedSettings).ToList();
         var motionAdvisories = AdvancedBodyScalingMotionWarpingSystem.GetTuningAdvisories(tunedSettings).ToList();
         var ikAdvisories = AdvancedBodyScalingFullBodyIkSystem.GetTuningAdvisories(tunedSettings).ToList();
+        var poseCorrectiveSummary = BuildPoseCorrectiveSummary(correctiveStressReport);
+        if (correctiveAdvisories.Count > 0)
+            poseCorrectiveSummary = $"{poseCorrectiveSummary} Advisory: {correctiveAdvisories[0]}";
+        var poseCorrectiveHints = BuildPoseCorrectiveHints(correctiveStressReport)
+            .Concat(correctiveAdvisories)
+            .Take(4)
+            .ToList();
         var retargetingSummary = BuildRetargetingSummary(correctiveStressReport);
         if (retargetAdvisories.Count > 0)
             retargetingSummary = $"{retargetingSummary} Advisory: {retargetAdvisories[0]}";
@@ -349,8 +468,8 @@ internal static class AdvancedBodyScalingPipeline
             symmetry,
             issues,
             suggestedFixes,
-            BuildPoseCorrectiveSummary(correctiveStressReport),
-            BuildPoseCorrectiveHints(correctiveStressReport),
+            poseCorrectiveSummary,
+            poseCorrectiveHints,
             retargetingSummary,
             retargetingHints,
             motionWarpingSummary,
@@ -369,13 +488,13 @@ internal static class AdvancedBodyScalingPipeline
 
         if (active.Count == 0)
             return report.BaseOverallScore == report.CorrectiveOverallScore
-                ? "Pose-space correctives are available, but they are not strongly engaged for this setup right now."
-                : $"Pose-space correctives are lightly active and trim the estimated pre-IK animation risk from {report.BaseOverallScore} to {report.CorrectiveOverallScore}.";
+                ? "RBF pose-space correctives are available, but they are not strongly engaged for this setup right now."
+                : $"RBF pose-space correctives are lightly active and trim the estimated pre-retarget animation risk from {report.BaseOverallScore} to {report.CorrectiveOverallScore}.";
 
         var focus = string.Join(" and ", active.Select(region => region.RegionName));
         return report.BaseOverallScore == report.CorrectiveOverallScore
-            ? $"Pose-space correctives are most likely to engage around {focus}, but the current heuristics expect only a modest change in overall risk."
-            : $"Pose-space correctives are most likely to help around {focus}, trimming the estimated pre-IK animation risk from {report.BaseOverallScore} to {report.CorrectiveOverallScore}.";
+            ? $"RBF pose-space correctives are most likely to engage around {focus}, but the current heuristics expect only a modest change in overall risk."
+            : $"RBF pose-space correctives are most likely to help around {focus}, trimming the estimated pre-retarget animation risk from {report.BaseOverallScore} to {report.CorrectiveOverallScore}.";
     }
 
     private static IReadOnlyList<string> BuildPoseCorrectiveHints(AdvancedBodyScalingStressTestReport report)
@@ -597,7 +716,8 @@ internal static class AdvancedBodyScalingPipeline
         IReadOnlyDictionary<string, BoneLockState> lockStates,
         IReadOnlyDictionary<string, AdvancedBodyScalingRegionProfile> regionProfiles,
         IReadOnlyCollection<string> sources,
-        ModeTuning tuning)
+        ModeTuning tuning,
+        BoneImportanceContext importance)
     {
         if (tuning.InfluenceStrength <= 0f || tuning.PropagationDepth <= 0)
             return;
@@ -616,6 +736,8 @@ internal static class AdvancedBodyScalingPipeline
             var delta = sourceScale - 1f;
             if (MathF.Abs(delta) < Epsilon)
                 continue;
+
+            var sourceImportance = importance.GetPropagationWeight(source);
 
             var queue = new Queue<(string Bone, int Depth)>();
             var visited = new HashSet<string>(StringComparer.Ordinal) { source };
@@ -638,7 +760,11 @@ internal static class AdvancedBodyScalingPipeline
 
                     var neighborProfile = GetRegionProfile(regionProfiles, neighbor.Name);
                     var regionMultiplier = (sourceProfile.InfluenceMultiplier + neighborProfile.InfluenceMultiplier) * 0.5f;
-                    var attenuation = neighbor.Weight * MathF.Pow(DefaultPropagationFalloff, depth) * tuning.InfluenceStrength * regionMultiplier;
+                    var attenuation = neighbor.Weight
+                        * MathF.Pow(DefaultPropagationFalloff, depth)
+                        * tuning.InfluenceStrength
+                        * regionMultiplier
+                        * ((sourceImportance + importance.GetPropagationWeight(neighbor.Name)) * 0.5f);
 
                     if (attenuation > 0f && scales.ContainsKey(neighbor.Name))
                     {
@@ -657,7 +783,8 @@ internal static class AdvancedBodyScalingPipeline
         IReadOnlyDictionary<string, BoneLockState> lockStates,
         IReadOnlyDictionary<string, AdvancedBodyScalingRegionProfile> regionProfiles,
         float smoothingFactor,
-        float threshold)
+        float threshold,
+        BoneImportanceContext importance)
     {
         if (smoothingFactor <= 0f)
             return;
@@ -683,16 +810,34 @@ internal static class AdvancedBodyScalingPipeline
 
                 var neighborProfile = GetRegionProfile(regionProfiles, neighbor.Name);
                 var smoothingMultiplier = (boneProfile.SmoothingMultiplier + neighborProfile.SmoothingMultiplier) * 0.5f;
-                var adjust = diff * smoothingFactor * smoothingMultiplier * 0.5f;
+                var adjust = diff * smoothingFactor * smoothingMultiplier * 0.5f
+                    * ((importance.GetPropagationWeight(bone) + importance.GetPropagationWeight(neighbor.Name)) * 0.5f);
 
                 var boneLocked = lockStates.TryGetValue(bone, out var boneState) && boneState != BoneLockState.Unlocked;
                 var neighborLocked = lockStates.TryGetValue(neighbor.Name, out var neighborState) && neighborState != BoneLockState.Unlocked;
 
+                if (!importance.Active)
+                {
+                    if (!boneLocked)
+                        deltas[bone] = GetValueOrDefault(deltas, bone) - adjust;
+
+                    if (!neighborLocked)
+                        deltas[neighbor.Name] = GetValueOrDefault(deltas, neighbor.Name) + adjust;
+
+                    continue;
+                }
+
+                var boneResponse = importance.GetAdjustmentResponsiveness(bone);
+                var neighborResponse = importance.GetAdjustmentResponsiveness(neighbor.Name);
+                var responseTotal = boneResponse + neighborResponse;
+                var boneShare = responseTotal <= Epsilon ? 0.5f : boneResponse / responseTotal;
+                var neighborShare = responseTotal <= Epsilon ? 0.5f : neighborResponse / responseTotal;
+
                 if (!boneLocked)
-                    deltas[bone] = GetValueOrDefault(deltas, bone) - adjust;
+                    deltas[bone] = GetValueOrDefault(deltas, bone) - (boneLocked || neighborLocked ? adjust : adjust * boneShare);
 
                 if (!neighborLocked)
-                    deltas[neighbor.Name] = GetValueOrDefault(deltas, neighbor.Name) + adjust;
+                    deltas[neighbor.Name] = GetValueOrDefault(deltas, neighbor.Name) + (boneLocked || neighborLocked ? adjust : adjust * neighborShare);
             }
         }
 
@@ -705,7 +850,8 @@ internal static class AdvancedBodyScalingPipeline
         IReadOnlyDictionary<string, BoneLockState> lockStates,
         IReadOnlyDictionary<string, AdvancedBodyScalingRegionProfile> regionProfiles,
         float strength,
-        float threshold)
+        float threshold,
+        BoneImportanceContext importance)
     {
         if (strength <= 0f)
             return;
@@ -735,16 +881,16 @@ internal static class AdvancedBodyScalingPipeline
             if (neighbors.Count == 0)
                 continue;
 
-            var totalWeight = neighbors.Sum(n => n.Weight);
+            var totalWeight = neighbors.Sum(n => n.Weight * importance.GetRedistributionWeight(n.Name));
             if (totalWeight <= 0f)
                 continue;
 
-            var redistribute = delta * regionStrength;
+            var redistribute = delta * regionStrength * importance.GetAdjustmentResponsiveness(bone);
             updates[bone] = GetValueOrDefault(updates, bone) - redistribute;
 
             foreach (var neighbor in neighbors)
             {
-                var share = redistribute * (neighbor.Weight / totalWeight);
+                var share = redistribute * ((neighbor.Weight * importance.GetRedistributionWeight(neighbor.Name)) / totalWeight);
                 updates[neighbor.Name] = GetValueOrDefault(updates, neighbor.Name) + share;
             }
         }
@@ -758,19 +904,20 @@ internal static class AdvancedBodyScalingPipeline
         IReadOnlyDictionary<string, BoneLockState> lockStates,
         IReadOnlyDictionary<string, AdvancedBodyScalingRegionProfile> regionProfiles,
         float strength,
-        AdvancedBodyScalingDebugReport? debug)
+        AdvancedBodyScalingDebugReport? debug,
+        BoneImportanceContext importance)
     {
         if (strength <= 0f)
             return;
 
         ApplyRatioGuardrail(scales, lockStates, regionProfiles, GuardrailBones.Shoulder, GuardrailBones.Waist, 1.1f, 1.6f, strength,
-            "Shoulder/Waist guardrail", debug, allowGuardrails: true);
+            "Shoulder/Waist guardrail", debug, allowGuardrails: true, importance);
         ApplyRatioGuardrail(scales, lockStates, regionProfiles, GuardrailBones.Hip, GuardrailBones.Waist, 1.1f, 1.5f, strength,
-            "Hip/Waist guardrail", debug, allowGuardrails: true);
+            "Hip/Waist guardrail", debug, allowGuardrails: true, importance);
         ApplyRatioGuardrail(scales, lockStates, regionProfiles, GuardrailBones.Thigh, GuardrailBones.Calf, 1.0f, 1.4f, strength,
-            "Thigh/Calf guardrail", debug, allowGuardrails: true);
+            "Thigh/Calf guardrail", debug, allowGuardrails: true, importance);
         ApplyRatioGuardrail(scales, lockStates, regionProfiles, GuardrailBones.UpperArm, GuardrailBones.Forearm, 0.9f, 1.3f, strength,
-            "UpperArm/Forearm guardrail", debug, allowGuardrails: true);
+            "UpperArm/Forearm guardrail", debug, allowGuardrails: true, importance);
     }
 
     private static void ApplyCurveSolver(
@@ -778,13 +925,14 @@ internal static class AdvancedBodyScalingPipeline
         IReadOnlyDictionary<string, BoneLockState> lockStates,
         IReadOnlyDictionary<string, AdvancedBodyScalingRegionProfile> regionProfiles,
         float strength,
-        float threshold)
+        float threshold,
+        BoneImportanceContext importance)
     {
         if (strength <= 0f)
             return;
 
         foreach (var chain in CurveChains.All)
-            ApplyCurveSmoothing(scales, lockStates, regionProfiles, chain, strength, threshold);
+            ApplyCurveSmoothing(scales, lockStates, regionProfiles, chain, strength, threshold, importance);
     }
 
     private static void ApplyNeckCompensation(
@@ -803,12 +951,12 @@ internal static class AdvancedBodyScalingPipeline
         if (reduction <= 0f)
             return;
 
+        foreach (var bone in NeckBones)
+            ApplyNeckScale(output, userTransforms, bone, reduction, 1f);
+
         var upperSpineWeight = 0.6f * blend;
         var clavicleWeight = blend * Lerp(0.2f, 0.45f, clavicleSmoothing);
         var shoulderWeight = blend * Lerp(0.15f, 0.35f, clavicleSmoothing);
-
-        foreach (var bone in NeckBones)
-            ApplyNeckScale(output, userTransforms, bone, reduction, 1f);
 
         foreach (var bone in UpperSpineBones)
             ApplyNeckScale(output, userTransforms, bone, reduction, upperSpineWeight);
@@ -882,16 +1030,17 @@ internal static class AdvancedBodyScalingPipeline
         IReadOnlyDictionary<string, BoneLockState> lockStates,
         IReadOnlyDictionary<string, AdvancedBodyScalingRegionProfile> regionProfiles,
         float strength,
-        AdvancedBodyScalingDebugReport? debug)
+        AdvancedBodyScalingDebugReport? debug,
+        BoneImportanceContext importance)
     {
         if (strength <= 0f)
             return;
 
         // Heuristic stand-in for pose-aware validation to reduce common deformation risks.
         ApplyRatioGuardrail(scales, lockStates, regionProfiles, GuardrailBones.Thigh, GuardrailBones.Calf, 1.0f, 1.3f, strength,
-            "Pose-aware thigh/calf", debug, allowGuardrails: false);
+            "Pose-aware thigh/calf", debug, allowGuardrails: false, importance);
         ApplyRatioGuardrail(scales, lockStates, regionProfiles, GuardrailBones.UpperArm, GuardrailBones.Forearm, 0.9f, 1.2f, strength,
-            "Pose-aware upperarm/forearm", debug, allowGuardrails: false);
+            "Pose-aware upperarm/forearm", debug, allowGuardrails: false, importance);
     }
 
     private static void ApplyCurveSmoothing(
@@ -900,7 +1049,8 @@ internal static class AdvancedBodyScalingPipeline
         IReadOnlyDictionary<string, AdvancedBodyScalingRegionProfile> regionProfiles,
         IReadOnlyList<string> chain,
         float strength,
-        float threshold)
+        float threshold,
+        BoneImportanceContext importance)
     {
         if (chain.Count < 3)
             return;
@@ -917,13 +1067,19 @@ internal static class AdvancedBodyScalingPipeline
             var prevScale = GetValueOrDefault(scales, chain[i - 1], 1f);
             var currentScale = scales[bone];
             var nextScale = GetValueOrDefault(scales, chain[i + 1], 1f);
-            var target = (prevScale + currentScale + nextScale) / 3f;
+            var prevWeight = importance.GetPropagationWeight(chain[i - 1]);
+            var currentWeight = importance.GetPropagationWeight(bone);
+            var nextWeight = importance.GetPropagationWeight(chain[i + 1]);
+            var weightTotal = prevWeight + currentWeight + nextWeight;
+            var target = weightTotal <= Epsilon
+                ? (prevScale + currentScale + nextScale) / 3f
+                : ((prevScale * prevWeight) + (currentScale * currentWeight) + (nextScale * nextWeight)) / weightTotal;
 
             if (MathF.Abs(currentScale - target) <= threshold)
                 continue;
 
             var regionProfile = GetRegionProfile(regionProfiles, bone);
-            var localStrength = strength * regionProfile.SmoothingMultiplier;
+            var localStrength = strength * regionProfile.SmoothingMultiplier * importance.GetAdjustmentResponsiveness(bone);
             if (localStrength <= 0f)
                 continue;
 
@@ -942,12 +1098,13 @@ internal static class AdvancedBodyScalingPipeline
         float strength,
         string description,
         AdvancedBodyScalingDebugReport? debug,
-        bool allowGuardrails)
+        bool allowGuardrails,
+        BoneImportanceContext importance)
     {
-        if (!TryAverageScale(scales, numeratorBones, out var numerator))
+        if (!TryAverageScale(scales, numeratorBones, importance, out var numerator))
             return;
 
-        if (!TryAverageScale(scales, denominatorBones, out var denominator))
+        if (!TryAverageScale(scales, denominatorBones, importance, out var denominator))
             return;
 
         var ratio = numerator / denominator;
@@ -956,17 +1113,17 @@ internal static class AdvancedBodyScalingPipeline
 
         var targetRatio = Math.Clamp(ratio, minRatio, maxRatio);
         var targetNumerator = denominator * targetRatio;
-        var adjusted = TryAdjustGroup(scales, lockStates, regionProfiles, numeratorBones, targetNumerator, strength, allowGuardrails);
+        var adjusted = TryAdjustGroup(scales, lockStates, regionProfiles, numeratorBones, targetNumerator, strength, allowGuardrails, importance);
 
         if (adjusted)
         {
-            RecordGuardrailCorrection(scales, numeratorBones, denominatorBones, ratio, description, debug);
+            RecordGuardrailCorrection(scales, numeratorBones, denominatorBones, importance, ratio, description, debug);
             return;
         }
 
         var targetDenominator = numerator / targetRatio;
-        if (TryAdjustGroup(scales, lockStates, regionProfiles, denominatorBones, targetDenominator, strength, allowGuardrails))
-            RecordGuardrailCorrection(scales, numeratorBones, denominatorBones, ratio, description, debug);
+        if (TryAdjustGroup(scales, lockStates, regionProfiles, denominatorBones, targetDenominator, strength, allowGuardrails, importance))
+            RecordGuardrailCorrection(scales, numeratorBones, denominatorBones, importance, ratio, description, debug);
     }
 
     private static bool TryAdjustGroup(
@@ -976,7 +1133,8 @@ internal static class AdvancedBodyScalingPipeline
         IReadOnlyList<string> bones,
         float targetScale,
         float strength,
-        bool allowGuardrails)
+        bool allowGuardrails,
+        BoneImportanceContext importance)
     {
         var modifiable = bones
             .Where(b => scales.ContainsKey(b))
@@ -991,16 +1149,16 @@ internal static class AdvancedBodyScalingPipeline
         if (modifiable.Count == 0)
             return false;
 
-        var currentAverage = AverageScale(scales, modifiable);
+        var currentAverage = AverageScale(scales, modifiable, importance);
         if (currentAverage <= Epsilon)
             return false;
 
-        var multiplier = AverageRegionMultiplier(regionProfiles, modifiable, allowGuardrails);
+        var multiplier = AverageRegionMultiplier(regionProfiles, modifiable, allowGuardrails, importance);
         var blended = Lerp(currentAverage, targetScale, strength * multiplier);
         var ratio = blended / currentAverage;
 
         foreach (var bone in modifiable)
-            scales[bone] = ClampScale(scales[bone] * ratio);
+            scales[bone] = ClampScale(scales[bone] * Lerp(1f, ratio, importance.GetAdjustmentResponsiveness(bone)));
 
         return true;
     }
@@ -1008,7 +1166,8 @@ internal static class AdvancedBodyScalingPipeline
     private static float AverageRegionMultiplier(
         IReadOnlyDictionary<string, AdvancedBodyScalingRegionProfile> regionProfiles,
         IReadOnlyList<string> bones,
-        bool allowGuardrails)
+        bool allowGuardrails,
+        BoneImportanceContext importance)
     {
         if (bones.Count == 0)
             return 1f;
@@ -1018,7 +1177,8 @@ internal static class AdvancedBodyScalingPipeline
         foreach (var bone in bones)
         {
             var profile = GetRegionProfile(regionProfiles, bone);
-            var multiplier = allowGuardrails ? profile.GuardrailMultiplier : profile.PoseValidationMultiplier;
+            var multiplier = (allowGuardrails ? profile.GuardrailMultiplier : profile.PoseValidationMultiplier)
+                * importance.GetPropagationWeight(bone);
             total += multiplier;
             count++;
         }
@@ -1033,6 +1193,7 @@ internal static class AdvancedBodyScalingPipeline
         Dictionary<string, float> scales,
         IReadOnlyList<string> numeratorBones,
         IReadOnlyList<string> denominatorBones,
+        BoneImportanceContext importance,
         float beforeRatio,
         string description,
         AdvancedBodyScalingDebugReport? debug)
@@ -1040,10 +1201,10 @@ internal static class AdvancedBodyScalingPipeline
         if (debug == null)
             return;
 
-        if (!TryAverageScale(scales, numeratorBones, out var numerator))
+        if (!TryAverageScale(scales, numeratorBones, importance, out var numerator))
             return;
 
-        if (!TryAverageScale(scales, denominatorBones, out var denominator))
+        if (!TryAverageScale(scales, denominatorBones, importance, out var denominator))
             return;
 
         var afterRatio = numerator / denominator;
@@ -1067,6 +1228,26 @@ internal static class AdvancedBodyScalingPipeline
         return values.Count == 0 ? 1f : values.Average();
     }
 
+    private static float AverageScale(
+        Dictionary<string, float> scales,
+        IReadOnlyList<string> bones,
+        BoneImportanceContext importance)
+    {
+        var total = 0f;
+        var weightTotal = 0f;
+        foreach (var bone in bones)
+        {
+            if (!scales.TryGetValue(bone, out var scale))
+                continue;
+
+            var weight = importance.GetPropagationWeight(bone);
+            total += scale * weight;
+            weightTotal += weight;
+        }
+
+        return weightTotal <= Epsilon ? 1f : total / weightTotal;
+    }
+
     private static bool TryAverageScale(Dictionary<string, float> scales, IReadOnlyList<string> bones, out float average)
     {
         var values = bones
@@ -1081,6 +1262,34 @@ internal static class AdvancedBodyScalingPipeline
         }
 
         average = values.Average();
+        return true;
+    }
+
+    private static bool TryAverageScale(
+        Dictionary<string, float> scales,
+        IReadOnlyList<string> bones,
+        BoneImportanceContext importance,
+        out float average)
+    {
+        var total = 0f;
+        var weightTotal = 0f;
+        foreach (var bone in bones)
+        {
+            if (!scales.TryGetValue(bone, out var scale))
+                continue;
+
+            var weight = importance.GetPropagationWeight(bone);
+            total += scale * weight;
+            weightTotal += weight;
+        }
+
+        if (weightTotal <= Epsilon)
+        {
+            average = 0f;
+            return false;
+        }
+
+        average = total / weightTotal;
         return true;
     }
 

@@ -158,6 +158,7 @@ public static class ServiceManagerBuilder
             .AddSingleton<FilenameService>()
             .AddSingleton<BackupService>()
             .AddSingleton<FrameworkManager>()
+            .AddSingleton<AdvancedBodyScalingBoneImportanceService>()
             .AddSingleton<SupportLogBuilderService>()
             .AddSingleton<UserNotifierService>();
 

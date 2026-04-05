@@ -78,6 +78,7 @@ internal sealed class AdvancedBodyScalingStressTestReport
     public required AdvancedBodyScalingRiskLevel MotionWarpingOverallRisk { get; init; }
     public required AdvancedBodyScalingRiskLevel OverallRisk { get; init; }
     public required string Summary { get; init; }
+    public required IReadOnlyList<string> CorrectiveAdvisories { get; init; }
     public required IReadOnlyList<string> RetargetingAdvisories { get; init; }
     public required IReadOnlyList<string> RetargetingHotChains { get; init; }
     public required IReadOnlyList<string> MotionWarpingAdvisories { get; init; }
@@ -186,6 +187,7 @@ internal static class AdvancedBodyScalingStressTestHarness
         var retargetingOverallScore = ComputeOverallScore(poses, regionSummary, static pose => pose.RetargetingScore, static region => region.RetargetingScore);
         var motionWarpingOverallScore = ComputeOverallScore(poses, regionSummary, static pose => pose.MotionWarpingScore, static region => region.MotionWarpingScore);
         var overallScore = ComputeOverallScore(poses, regionSummary, static pose => pose.Score, static region => region.Score);
+        var correctiveAdvisories = AdvancedBodyScalingPoseCorrectiveSystem.GetTuningAdvisories(effectiveSettings).ToList();
         var retargetAdvisories = AdvancedBodyScalingFullIkRetargetingSystem.GetTuningAdvisories(effectiveSettings).ToList();
         var motionAdvisories = AdvancedBodyScalingMotionWarpingSystem.GetTuningAdvisories(effectiveSettings).ToList();
         var ikAdvisories = AdvancedBodyScalingFullBodyIkSystem.GetTuningAdvisories(effectiveSettings).ToList();
@@ -227,7 +229,8 @@ internal static class AdvancedBodyScalingStressTestHarness
             RetargetingOverallRisk = ToRiskLevel(retargetingOverallScore),
             MotionWarpingOverallRisk = ToRiskLevel(motionWarpingOverallScore),
             OverallRisk = ToRiskLevel(overallScore),
-            Summary = BuildSummary(baseOverallScore, correctiveOverallScore, retargetingOverallScore, motionWarpingOverallScore, overallScore, ToRiskLevel(overallScore), poses, regionSummary, retargetHotChains, retargetAdvisories, motionHotChains, motionAdvisories, ikHotChains, ikAdvisories),
+            Summary = BuildSummary(baseOverallScore, correctiveOverallScore, retargetingOverallScore, motionWarpingOverallScore, overallScore, ToRiskLevel(overallScore), poses, regionSummary, correctiveAdvisories, retargetHotChains, retargetAdvisories, motionHotChains, motionAdvisories, ikHotChains, ikAdvisories),
+            CorrectiveAdvisories = correctiveAdvisories,
             RetargetingAdvisories = retargetAdvisories,
             RetargetingHotChains = retargetHotChains,
             MotionWarpingAdvisories = motionAdvisories,
@@ -278,8 +281,8 @@ internal static class AdvancedBodyScalingStressTestHarness
             var correctiveReduction = ClampScore(baseScore * reductionFraction);
             var correctiveOnlyScore = ClampScore(baseScore - correctiveReduction);
             var correctiveSummary = estimate == null || correctiveIntensity <= 0.005f
-                ? "No strong pose-space corrective response is expected for this region in this pose."
-                : $"Estimated corrective activity {correctiveIntensity:0.00} via {estimate.DriverSummary}, trimming about {correctiveReduction} risk points.";
+                ? "No strong RBF pose-space corrective response is expected for this region in this pose."
+                : $"Estimated RBF corrective activity {correctiveIntensity:0.00} via {estimate.DriverSummary}, trimming about {correctiveReduction} risk points.";
             var retargetEstimate = AdvancedBodyScalingFullIkRetargetingSystem.EstimateRegionRiskReduction(transforms, settings, region, weight);
             var retargetReduction = ClampScore(correctiveOnlyScore * retargetEstimate.EstimatedRiskReduction);
             var retargetingScore = ClampScore(correctiveOnlyScore - retargetReduction);
@@ -457,6 +460,7 @@ internal static class AdvancedBodyScalingStressTestHarness
         AdvancedBodyScalingRiskLevel overallRisk,
         IReadOnlyList<AdvancedBodyScalingPoseStressResult> poses,
         IReadOnlyList<AdvancedBodyScalingRegionStressResult> regionSummary,
+        IReadOnlyList<string> correctiveAdvisories,
         IReadOnlyList<string> retargetHotChains,
         IReadOnlyList<string> retargetAdvisories,
         IReadOnlyList<string> motionHotChains,
@@ -473,8 +477,8 @@ internal static class AdvancedBodyScalingStressTestHarness
         var motionReduction = Math.Max(0, retargetingOverallScore - motionWarpingOverallScore);
         var ikReduction = Math.Max(0, motionWarpingOverallScore - overallScore);
         var correctiveText = correctiveReduction > 0
-            ? $" Pose-space correctives trim about {correctiveReduction} overall risk points before the final IK pass."
-            : " Pose-space correctives are either off or not strongly engaged for this setup.";
+            ? $" RBF pose-space correctives trim about {correctiveReduction} overall risk points before retargeting."
+            : " RBF pose-space correctives are either off or not strongly engaged for this setup.";
         var retargetText = retargetReduction > 0
             ? $" Full IK retargeting trims about {retargetReduction} more points after correctives, led by {(retargetHotChains.Count == 0 ? "the supported major chains" : string.Join(", ", retargetHotChains))}."
             : " Full IK retargeting is either off or not strongly engaged for this setup.";
@@ -484,7 +488,7 @@ internal static class AdvancedBodyScalingStressTestHarness
         var ikText = ikReduction > 0
             ? $" Full-body IK trims about {ikReduction} more points after motion warping, led by {(ikHotChains.Count == 0 ? "the supported major chains" : string.Join(", ", ikHotChains))}."
             : " Full-body IK is either off or not strongly engaged for this setup.";
-        var advisoryText = retargetAdvisories.Concat(motionAdvisories).Concat(ikAdvisories).FirstOrDefault() is { Length: > 0 } advisory
+        var advisoryText = correctiveAdvisories.Concat(retargetAdvisories).Concat(motionAdvisories).Concat(ikAdvisories).FirstOrDefault() is { Length: > 0 } advisory
             ? $" Advisory: {advisory}"
             : string.Empty;
 

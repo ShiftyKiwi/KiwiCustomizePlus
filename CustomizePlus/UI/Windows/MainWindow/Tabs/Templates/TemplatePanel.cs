@@ -237,9 +237,9 @@ public class TemplatePanel : IDisposable
         if (!string.IsNullOrWhiteSpace(analysisResult.PoseCorrectiveSummary))
         {
             ImGui.Spacing();
-            ImGui.TextUnformatted("Pose corrective outlook:");
+            ImGui.TextUnformatted("RBF pose-space corrective outlook:");
             ImGui.SameLine();
-            ImGuiComponents.HelpMarker("Estimate based on the current advanced-scaling settings and detected risk patterns.");
+            ImGuiComponents.HelpMarker("Estimate based on the current advanced-scaling settings, built-in RBF sample poses, and detected continuity risk patterns.");
             ImGui.TextWrapped(analysisResult.PoseCorrectiveSummary);
             foreach (var hint in analysisResult.PoseCorrectiveHints)
                 ImGui.BulletText(hint);
@@ -413,7 +413,7 @@ public class TemplatePanel : IDisposable
             if (!_showAdvancedDebug)
                 _advancedDebug = null;
         }
-        ImGuiUtil.HoverTooltip("Show debug output for this preview, including guardrails plus estimated pose corrective, retargeting, motion-warping, and Full-Body IK activity.");
+        ImGuiUtil.HoverTooltip("Show debug output for this preview, including guardrails plus estimated RBF corrective, retargeting, motion-warping, and Full-Body IK activity.");
 
         if (_showAdvancedPreview)
         {
@@ -482,8 +482,14 @@ public class TemplatePanel : IDisposable
             _stressTestReport.MotionWarpingOverallScore,
             _stressTestReport.OverallRisk,
             _stressTestReport.OverallScore);
-        ImGui.TextDisabled("Base -> after pose-space correctives -> after full IK retargeting -> after motion warping -> after full-body IK");
+        ImGui.TextDisabled("Base -> after RBF pose-space correctives -> after full IK retargeting -> after motion warping -> after full-body IK");
         ImGui.TextWrapped(_stressTestReport.Summary);
+        if (_stressTestReport.CorrectiveAdvisories.Count > 0)
+        {
+            ImGui.TextUnformatted("RBF corrective advisories:");
+            foreach (var advisory in _stressTestReport.CorrectiveAdvisories.Take(4))
+                ImGui.BulletText(advisory);
+        }
         if (_stressTestReport.RetargetingAdvisories.Count > 0)
         {
             ImGui.TextUnformatted("Retargeting advisories:");
@@ -553,7 +559,7 @@ public class TemplatePanel : IDisposable
                 pose.MotionWarpingScore,
                 pose.RiskLevel,
                 pose.Score);
-            ImGui.TextDisabled("Base -> after pose-space correctives -> after full IK retargeting -> after motion warping -> after full-body IK");
+            ImGui.TextDisabled("Base -> after RBF pose-space correctives -> after full IK retargeting -> after motion warping -> after full-body IK");
             ImGui.TextWrapped(pose.Description);
 
             foreach (var region in pose.Regions)
@@ -742,7 +748,50 @@ public class TemplatePanel : IDisposable
             ImGui.BulletText($"Pose-aware corrections triggered in last preview: {poseAwareCorrections}");
 
             ImGui.Spacing();
-            ImGui.Text("Estimated pose-space correctives:");
+            ImGui.Text("Bone importance weighting:");
+            DrawWrappedBulletValue("Source", $"{debug.BoneImportanceSource} ({debug.BoneImportanceStage})");
+            DrawWrappedBulletValue("Resolution", debug.BoneImportanceResolution);
+            DrawWrappedBulletValue("Aggregate mode", $"{debug.BoneImportanceAggregateMode} ({debug.BoneImportanceContributingPartCount} contributing part{(debug.BoneImportanceContributingPartCount == 1 ? string.Empty : "s")})");
+            DrawWrappedBulletValue("Cache", debug.BoneImportanceCacheHit ? "hit" : "miss / not cached");
+            DrawWrappedBulletValue("Refresh", debug.BoneImportanceRefreshStatus);
+            DrawWrappedBulletValue("Blend bias", $"{debug.BoneImportanceHeuristicBlend:0.00}");
+            DrawWrappedBulletText(debug.BoneImportanceFallbackUsed
+                ? "Pipeline fell back to the current heuristic behavior for this preview."
+                : "Model-derived importance influenced propagation, smoothing, and guardrails in this preview.");
+            if (!string.IsNullOrWhiteSpace(debug.BoneImportanceModelIdentity))
+                DrawWrappedDisabledValue("Resolved model", debug.BoneImportanceModelIdentity);
+            if (!string.IsNullOrWhiteSpace(debug.BoneImportanceResolutionDetail))
+                DrawWrappedDisabledValue("Resolution detail", debug.BoneImportanceResolutionDetail);
+            if (!string.IsNullOrWhiteSpace(debug.BoneImportanceRequestedModelPath))
+                DrawWrappedDisabledValue("Requested game path", debug.BoneImportanceRequestedModelPath);
+            if (!string.IsNullOrWhiteSpace(debug.BoneImportanceModelPath))
+                DrawWrappedDisabledValue("Resolved model path", debug.BoneImportanceModelPath);
+            if (!string.IsNullOrWhiteSpace(debug.BoneImportanceSummary))
+                DrawWrappedDisabledValue("Importance source", debug.BoneImportanceSummary);
+            if (!string.IsNullOrWhiteSpace(debug.BoneImportanceResolutionTrace) &&
+                !string.Equals(debug.BoneImportanceResolutionTrace, debug.BoneImportanceSummary, StringComparison.Ordinal))
+                DrawWrappedDisabledValue("Resolution trace", debug.BoneImportanceResolutionTrace);
+            if (debug.BoneImportancePartDetails.Count > 0)
+            {
+                ImGui.TextDisabled("Contributing slots:");
+                ImGui.Indent();
+                foreach (var part in debug.BoneImportancePartDetails.Take(6))
+                    DrawWrappedDisabledBulletText(part);
+                ImGui.Unindent();
+            }
+            if (debug.BoneImportanceMissingPartDetails.Count > 0)
+            {
+                ImGui.TextDisabled("Missing slots:");
+                ImGui.Indent();
+                foreach (var missing in debug.BoneImportanceMissingPartDetails.Take(4))
+                    DrawWrappedDisabledBulletText(missing);
+                ImGui.Unindent();
+            }
+            foreach (var sample in debug.BoneImportanceSamples.Take(6))
+                DrawWrappedBulletText(sample);
+
+            ImGui.Spacing();
+            ImGui.Text("Estimated RBF pose-space correctives:");
             if (debug.EstimatedPoseCorrectives.Count == 0)
             {
                 ImGui.Text("None");
@@ -753,11 +802,27 @@ public class TemplatePanel : IDisposable
                 {
                     ImGui.Bullet();
                     ImGui.SameLine();
-                    ImGui.TextWrapped($"{entry.Label}: driver {entry.DriverStrength:0.00}, activation {entry.Activation:0.00}, corrective {entry.Strength:0.00}, est. risk reduction {entry.EstimatedRiskReduction * 100f:0}%.");
+                    ImGui.TextWrapped($"{entry.Label}: driver {entry.DriverStrength:0.00}, activation {entry.Activation:0.00}, corrective {entry.Strength:0.00}, est. risk reduction {entry.EstimatedRiskReduction * 100f:0}%, samples {entry.InfluenceSampleCount}/{entry.SampleCount}.");
                     ImGui.Indent();
                     ImGui.TextDisabled($"{entry.DriverSummary}. {entry.Description}");
+                    ImGui.TextDisabled(entry.ShortlistApplied
+                        ? $"Nearest-sample shortlist active. {(entry.BroadInterpolation ? "Broad interpolation" : "Focused interpolation")} is using {entry.InfluenceSampleCount} of {entry.SampleCount} samples."
+                        : $"{(entry.BroadInterpolation ? "Broad interpolation" : "Focused interpolation")} is using the full {entry.SampleCount}-sample library.");
+                    if (!string.IsNullOrWhiteSpace(entry.DriverVectorSummary))
+                        ImGui.TextDisabled($"Driver vector: {entry.DriverVectorSummary}");
+                    if (!string.IsNullOrWhiteSpace(entry.SampleSummary))
+                        ImGui.TextDisabled($"Pose weights: {entry.SampleSummary}");
                     ImGui.Unindent();
                 }
+            }
+
+            var correctiveAdvisories = AdvancedBodyScalingPoseCorrectiveSystem.GetTuningAdvisories(settings);
+            if (correctiveAdvisories.Count > 0)
+            {
+                ImGui.Spacing();
+                ImGui.Text("RBF corrective advisories:");
+                foreach (var advisory in correctiveAdvisories.Take(4))
+                    ImGui.BulletText(advisory);
             }
 
             ImGui.Spacing();
@@ -920,6 +985,57 @@ public class TemplatePanel : IDisposable
                     ImGui.Text($"{entry.Description}: {entry.BeforeRatio:0.##} -> {entry.AfterRatio:0.##}");
             }
         }
+    }
+
+    private static void DrawWrappedBulletValue(string label, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        DrawWrappedBulletText($"{label}: {value}");
+    }
+
+    private static void DrawWrappedBulletText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        ImGui.Bullet();
+        ImGui.SameLine();
+        DrawWrappedTextWithColor(value, ImGui.GetStyle().Colors[(int)ImGuiCol.Text]);
+    }
+
+    private static void DrawWrappedDisabledValue(string label, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        ImGui.TextDisabled($"{label}:");
+        ImGui.Indent();
+        DrawWrappedTextWithColor(value, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
+        ImGui.Unindent();
+    }
+
+    private static void DrawWrappedDisabledBulletText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        ImGui.Bullet();
+        ImGui.SameLine();
+        DrawWrappedTextWithColor(value, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
+    }
+
+    private static void DrawWrappedTextWithColor(string value, Vector4 color)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        ImGui.PushStyleColor(ImGuiCol.Text, color);
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+        ImGui.TextUnformatted(value);
+        ImGui.PopTextWrapPos();
+        ImGui.PopStyleColor();
     }
 
     private static void DrawRiskTransition(

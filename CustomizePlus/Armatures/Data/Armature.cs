@@ -68,6 +68,9 @@ public unsafe class Armature
     public Dictionary<string, BoneTransform> ResolvedBoneTransforms { get; init; }
 
     public AdvancedBodyScalingSettings? ActiveAdvancedBodyScalingSettings { get; private set; }
+    internal AdvancedBodyScalingBoneImportanceResult ActiveBoneImportanceResult { get; private set; }
+        = AdvancedBodyScalingBoneImportanceResult.CreateFallback("Not evaluated yet.", enabled: false, preferSkinWeights: true, heuristicBlend: 0f);
+    internal bool BoneImportanceAppliedToPipeline { get; private set; }
 
     internal AdvancedBodyScalingPoseCorrectiveDebugState PoseCorrectiveDebugState { get; } = new();
     internal AdvancedBodyScalingFullIkRetargetingDebugState FullIkRetargetingDebugState { get; } = new();
@@ -239,7 +242,12 @@ public unsafe class Armature
     /// <summary>
     /// Rebuild the armature using the provided character base as a reference.
     /// </summary>
-    public void RebuildSkeleton(CharacterBase* cBase, bool enableSoftScaleLimits = true, bool enableAutomaticChildCompensation = true, AdvancedBodyScalingSettings? advancedBodyScaling = null)
+    internal void RebuildSkeleton(
+        CharacterBase* cBase,
+        bool enableSoftScaleLimits = true,
+        bool enableAutomaticChildCompensation = true,
+        AdvancedBodyScalingSettings? advancedBodyScaling = null,
+        AdvancedBodyScalingBoneImportanceResult? boneImportance = null)
     {
         if (cBase == null)
             return;
@@ -248,7 +256,7 @@ public unsafe class Armature
 
         _partialSkeletons = newPartials.Select(x => x.ToArray()).ToArray();
 
-        RebuildBoneTemplateBinding(enableSoftScaleLimits, enableAutomaticChildCompensation, advancedBodyScaling); //todo: intentionally not calling ArmatureChanged.Type.Updated because this is pending rewrite
+        RebuildBoneTemplateBinding(enableSoftScaleLimits, enableAutomaticChildCompensation, advancedBodyScaling, boneImportance); //todo: intentionally not calling ArmatureChanged.Type.Updated because this is pending rewrite
 
         Plugin.Logger.Debug($"Rebuilt {this}");
     }
@@ -340,9 +348,22 @@ public unsafe class Armature
         return newPartials;
     }
 
-    public void RebuildBoneTemplateBinding(bool enableSoftScaleLimits = true, bool enableAutomaticChildCompensation = true, AdvancedBodyScalingSettings? advancedBodyScaling = null)
+    internal void RebuildBoneTemplateBinding(
+        bool enableSoftScaleLimits = true,
+        bool enableAutomaticChildCompensation = true,
+        AdvancedBodyScalingSettings? advancedBodyScaling = null,
+        AdvancedBodyScalingBoneImportanceResult? boneImportance = null)
     {
         ActiveAdvancedBodyScalingSettings = advancedBodyScaling?.DeepCopy();
+        ActiveBoneImportanceResult = boneImportance ?? AdvancedBodyScalingBoneImportanceResult.CreateFallback(
+            advancedBodyScaling?.ModelDerivedBoneImportanceEnabled == true
+                ? "No live actor model was resolved for this evaluation, so heuristic fallback remained active."
+                : "Model-derived bone importance is disabled for this evaluation.",
+            enabled: advancedBodyScaling?.ModelDerivedBoneImportanceEnabled == true,
+            preferSkinWeights: advancedBodyScaling?.PreferTrueSkinWeightImportance ?? true,
+            heuristicBlend: advancedBodyScaling?.BoneImportanceHeuristicBlend ?? 0f);
+        BoneImportanceAppliedToPipeline = false;
+
         if (ActiveAdvancedBodyScalingSettings == null)
         {
             ClearPoseCorrectives();
@@ -358,7 +379,12 @@ public unsafe class Armature
         var effectiveTransforms = resolution.EffectiveTransforms;
 
         if (advancedBodyScaling != null && advancedBodyScaling.Enabled && advancedBodyScaling.Mode != AdvancedBodyScalingMode.Manual)
-            effectiveTransforms = AdvancedBodyScalingPipeline.Apply(effectiveTransforms, advancedBodyScaling);
+        {
+            BoneImportanceAppliedToPipeline = ActiveBoneImportanceResult.ModelDerivedActive
+                && advancedBodyScaling.ModelDerivedBoneImportanceEnabled
+                && advancedBodyScaling.BoneImportanceHeuristicBlend > 0f;
+            effectiveTransforms = AdvancedBodyScalingPipeline.Apply(effectiveTransforms, advancedBodyScaling, boneImportance: ActiveBoneImportanceResult);
+        }
 
         BoneTemplateBinding.Clear();
         ResolvedBoneTransforms.Clear();
@@ -422,7 +448,16 @@ public unsafe class Armature
         _poseCorrectiveScaleMultipliers.Clear();
         _poseCorrectiveActivationState.Clear();
         var path = AdvancedBodyScalingPoseCorrectiveSystem.DetectSupportedPath();
-        PoseCorrectiveDebugState.Reset(path, AdvancedBodyScalingPoseCorrectiveSystem.GetPathDescription(path), Profile.AdvancedBodyScalingOverrides.UseProfileOverrides);
+        var poseSettings = ActiveAdvancedBodyScalingSettings?.PoseCorrectives;
+        PoseCorrectiveDebugState.Reset(
+            path,
+            AdvancedBodyScalingPoseCorrectiveSystem.GetPathDescription(path),
+            Profile.AdvancedBodyScalingOverrides.UseProfileOverrides,
+            poseSettings?.Enabled ?? false,
+            poseSettings?.Strength ?? 0f,
+            poseSettings?.PoseMapSharpness ?? 0f,
+            poseSettings?.Damping ?? 0f,
+            poseSettings?.MaxCorrectionClamp ?? 0f);
     }
 
     public unsafe void EvaluateAndApplyFullBodyIk(CharacterBase* cBase, float deltaSeconds)

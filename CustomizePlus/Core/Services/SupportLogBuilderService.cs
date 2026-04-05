@@ -73,7 +73,9 @@ public class SupportLogBuilderService
         sb.Append($"> **`Enabled:                        `** {advanced.Enabled}\n");
         sb.Append($"> **`Automation mode:                `** {advanced.Mode}\n");
         sb.Append($"> **`Animation-safe mode:            `** {advanced.AnimationSafeModeEnabled}\n");
-        sb.Append($"> **`Pose-space correctives:         `** {advanced.PoseCorrectives.Enabled} (strength {advanced.PoseCorrectives.Strength:0.00})\n");
+        sb.Append($"> **`Model-derived bone importance:  `** {advanced.ModelDerivedBoneImportanceEnabled} (prefer skin weights {advanced.PreferTrueSkinWeightImportance}, blend {advanced.BoneImportanceHeuristicBlend:0.00})\n");
+        sb.Append($"> **`RBF pose-space correctives:     `** {advanced.PoseCorrectives.Enabled} (strength {advanced.PoseCorrectives.Strength:0.00}, sharpness {advanced.PoseCorrectives.PoseMapSharpness:0.00})\n");
+        sb.Append($"> **`Corrective damping/clamp:       `** {advanced.PoseCorrectives.Damping:0.00} / {advanced.PoseCorrectives.MaxCorrectionClamp:0.000}\n");
         sb.Append($"> **`Full IK Retargeting:            `** {retarget.Enabled} (strength {retarget.GlobalStrength:0.00}, blend {retarget.BlendBias:0.00})\n");
         sb.Append($"> **`Retarget pelvis/spine:          `** {retarget.PelvisStrength:0.00} / {retarget.SpineStrength:0.00}\n");
         sb.Append($"> **`Retarget arms/legs/head:        `** {retarget.ArmStrength:0.00} / {retarget.LegStrength:0.00} / {retarget.HeadStrength:0.00}\n");
@@ -134,6 +136,31 @@ public class SupportLogBuilderService
             sb.Append($">   > **`Pending rebind:             `** {armature.IsPendingProfileRebind}\n");
             sb.Append($">   > **`Last seen:                  `** {armature.LastSeen}\n");
             sb.Append($">   > **`Profile:                    `** {armature.Profile?.ToString() ?? "None"}\n");
+            sb.Append($">   > **`Bone importance source:     `** {armature.ActiveBoneImportanceResult.SourceLabel} ({armature.ActiveBoneImportanceResult.StageLabel})\n");
+            sb.Append($">   > **`Bone importance resolve:    `** {armature.ActiveBoneImportanceResult.ResolutionLabel}\n");
+            sb.Append($">   > **`Bone importance mode:       `** {armature.ActiveBoneImportanceResult.AggregateModeLabel} ({armature.ActiveBoneImportanceResult.ContributingPartCount} contributing part{(armature.ActiveBoneImportanceResult.ContributingPartCount == 1 ? string.Empty : "s")})\n");
+            sb.Append($">   > **`Bone importance cache:      `** {(armature.ActiveBoneImportanceResult.CacheHit ? "Hit" : "Miss / not cached")}\n");
+            if (!string.IsNullOrWhiteSpace(armature.ActiveBoneImportanceResult.RefreshStatus))
+                sb.Append($">   > **`Bone importance refresh:    `** {armature.ActiveBoneImportanceResult.RefreshStatus}\n");
+            sb.Append($">   > **`Bone importance applied:    `** {armature.BoneImportanceAppliedToPipeline}\n");
+            if (!string.IsNullOrWhiteSpace(armature.ActiveBoneImportanceResult.ModelIdentity))
+                sb.Append($">   > **`Bone importance model:      `** {armature.ActiveBoneImportanceResult.ModelIdentity}\n");
+            if (!string.IsNullOrWhiteSpace(armature.ActiveBoneImportanceResult.ModelSignature))
+                sb.Append($">   > **`Bone importance signature:  `** {armature.ActiveBoneImportanceResult.ModelSignature}\n");
+            if (!string.IsNullOrWhiteSpace(armature.ActiveBoneImportanceResult.ResolutionDetail))
+                sb.Append($">   > **`Bone importance detail:     `** {armature.ActiveBoneImportanceResult.ResolutionDetail}\n");
+            if (!string.IsNullOrWhiteSpace(armature.ActiveBoneImportanceResult.RequestedGamePath))
+                sb.Append($">   > **`Bone importance requested:  `** {armature.ActiveBoneImportanceResult.RequestedGamePath}\n");
+            if (!string.IsNullOrWhiteSpace(armature.ActiveBoneImportanceResult.ModelPath))
+                sb.Append($">   > **`Bone importance path:       `** {armature.ActiveBoneImportanceResult.ModelPath}\n");
+            if (!string.IsNullOrWhiteSpace(armature.ActiveBoneImportanceResult.Summary))
+                sb.Append($">   > **`Bone importance summary:    `** {armature.ActiveBoneImportanceResult.Summary}\n");
+            if (!string.IsNullOrWhiteSpace(armature.ActiveBoneImportanceResult.ResolutionTrace))
+                sb.Append($">   > **`Bone importance trace:      `** {armature.ActiveBoneImportanceResult.ResolutionTrace}\n");
+            foreach (var part in armature.ActiveBoneImportanceResult.PartDetails)
+                sb.Append($">   > **`Bone importance part:       `** {part}\n");
+            foreach (var missing in armature.ActiveBoneImportanceResult.MissingPartDetails)
+                sb.Append($">   > **`Bone importance missing:    `** {missing}\n");
             sb.Append($">   > **`Bone template bindings:`**\n");
             foreach (var bindingKvPair in armature.BoneTemplateBinding)
             {

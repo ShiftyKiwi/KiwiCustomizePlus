@@ -332,6 +332,18 @@ public sealed class AdvancedBodyScalingSettings
         set => _naturalizationStrength = Math.Clamp(value, 0f, 1f);
     }
 
+    public bool ModelDerivedBoneImportanceEnabled { get; set; } = true;
+
+    public bool PreferTrueSkinWeightImportance { get; set; } = true;
+
+    private float _boneImportanceHeuristicBlend = 0.55f;
+
+    public float BoneImportanceHeuristicBlend
+    {
+        get => _boneImportanceHeuristicBlend;
+        set => _boneImportanceHeuristicBlend = Math.Clamp(value, 0f, 1f);
+    }
+
     private float _neckLengthCompensation;
 
     public float NeckLengthCompensation
@@ -417,6 +429,7 @@ public sealed class AdvancedBodyScalingSettings
         SurfaceBalancingStrength = MathF.Max(SurfaceBalancingStrength, 0.65f);
         MassRedistributionStrength = MathF.Min(MassRedistributionStrength, 0.70f);
         NaturalizationStrength = MathF.Min(NaturalizationStrength, 0.55f);
+        BoneImportanceHeuristicBlend = MathF.Min(BoneImportanceHeuristicBlend, 0.70f);
         NeckLengthCompensation = MathF.Min(NeckLengthCompensation, 0.75f);
         NeckShoulderBlendStrength = MathF.Max(NeckShoulderBlendStrength, 0.45f);
         ClavicleShoulderSmoothing = MathF.Max(ClavicleShoulderSmoothing, 0.35f);
@@ -430,11 +443,14 @@ public sealed class AdvancedBodyScalingSettings
         foreach (var (region, profile) in RegionProfiles)
             ApplyAnimationSafeRegionBias(region, profile);
 
-        PoseCorrectives.Strength = MathF.Min(PoseCorrectives.Strength, 0.85f);
+        PoseCorrectives.Strength = MathF.Min(PoseCorrectives.Strength, 0.72f);
+        PoseCorrectives.PoseMapSharpness = MathF.Min(PoseCorrectives.PoseMapSharpness, 0.72f);
+        PoseCorrectives.Damping = MathF.Max(PoseCorrectives.Damping, 0.76f);
+        PoseCorrectives.MaxCorrectionClamp = MathF.Min(PoseCorrectives.MaxCorrectionClamp, 0.040f);
         foreach (var region in AdvancedBodyScalingPoseCorrectiveSystem.GetOrderedRegions())
         {
             var corrective = PoseCorrectives.GetRegionSettings(region);
-            corrective.Strength = MathF.Min(corrective.Strength, 0.85f);
+            corrective.Strength = MathF.Min(corrective.Strength, 0.78f);
             corrective.Smoothing = MathF.Max(corrective.Smoothing, 0.7f);
             corrective.ActivationDeadzone = MathF.Max(corrective.ActivationDeadzone, 0.06f);
             corrective.MaxCorrection = MathF.Min(corrective.MaxCorrection, 0.035f);
@@ -551,6 +567,9 @@ public sealed class AdvancedBodyScalingSettings
         GuardrailMode = defaults.GuardrailMode;
         PoseValidationMode = defaults.PoseValidationMode;
         NaturalizationStrength = defaults.NaturalizationStrength;
+        ModelDerivedBoneImportanceEnabled = defaults.ModelDerivedBoneImportanceEnabled;
+        PreferTrueSkinWeightImportance = defaults.PreferTrueSkinWeightImportance;
+        BoneImportanceHeuristicBlend = defaults.BoneImportanceHeuristicBlend;
         NeckLengthCompensation = defaults.NeckLengthCompensation;
         NeckShoulderBlendStrength = defaults.NeckShoulderBlendStrength;
         ClavicleShoulderSmoothing = defaults.ClavicleShoulderSmoothing;
@@ -574,6 +593,9 @@ public sealed class AdvancedBodyScalingSettings
             GuardrailMode = GuardrailMode,
             PoseValidationMode = PoseValidationMode,
             NaturalizationStrength = NaturalizationStrength,
+            ModelDerivedBoneImportanceEnabled = ModelDerivedBoneImportanceEnabled,
+            PreferTrueSkinWeightImportance = PreferTrueSkinWeightImportance,
+            BoneImportanceHeuristicBlend = BoneImportanceHeuristicBlend,
             NeckLengthCompensation = NeckLengthCompensation,
             NeckShoulderBlendStrength = NeckShoulderBlendStrength,
             ClavicleShoulderSmoothing = ClavicleShoulderSmoothing,

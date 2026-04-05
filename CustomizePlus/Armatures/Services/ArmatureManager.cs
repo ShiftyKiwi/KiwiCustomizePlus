@@ -23,6 +23,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using CustomizePlus.Core.Services;
 
 namespace CustomizePlus.Armatures.Services;
 
@@ -41,6 +42,7 @@ public unsafe sealed class ArmatureManager : IDisposable
     private readonly GPoseService _gposeService;
     private readonly ArmatureChanged _event;
     private readonly EmoteService _emoteService;
+    private readonly AdvancedBodyScalingBoneImportanceService _boneImportanceService;
 
     /// <summary>
     /// This is a movement flag for every object. Used to prevent calls to ApplyRootTranslation from both movement and render hooks.
@@ -64,7 +66,8 @@ public unsafe sealed class ArmatureManager : IDisposable
         ActorManager actorManager,
         GPoseService gposeService,
         ArmatureChanged @event,
-        EmoteService emoteService)
+        EmoteService emoteService,
+        AdvancedBodyScalingBoneImportanceService boneImportanceService)
     {
         _profileManager = profileManager;
         _objectTable = objectTable;
@@ -79,6 +82,7 @@ public unsafe sealed class ArmatureManager : IDisposable
         _gposeService = gposeService;
         _event = @event;
         _emoteService = emoteService;
+        _boneImportanceService = boneImportanceService;
 
         _templateChangedEvent.Subscribe(OnTemplateChange, TemplateChanged.Priority.ArmatureManager);
         _profileChangedEvent.Subscribe(OnProfileChange, ProfileChanged.Priority.ArmatureManager);
@@ -248,10 +252,19 @@ public unsafe sealed class ArmatureManager : IDisposable
                 }
 
                 var actorForSettings = obj.Value.Objects.Count > 0 ? obj.Value.Objects[0] : Actor.Null;
+                var advancedBodyScaling = ResolveAdvancedBodyScaling(armature.Profile, actorForSettings);
+                var boneImportance = actorForSettings
+                    ? _boneImportanceService.ResolveForActor(actorForSettings, advancedBodyScaling, armature.ActiveBoneImportanceResult.ModelSignature)
+                    : AdvancedBodyScalingBoneImportanceResult.CreateFallback(
+                        "No live actor was available during profile rebind.",
+                        enabled: advancedBodyScaling.ModelDerivedBoneImportanceEnabled,
+                        preferSkinWeights: advancedBodyScaling.PreferTrueSkinWeightImportance,
+                        heuristicBlend: advancedBodyScaling.BoneImportanceHeuristicBlend);
                 armature.RebuildBoneTemplateBinding(
                     _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
                     _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
-                    ResolveAdvancedBodyScaling(armature.Profile, actorForSettings));
+                    advancedBodyScaling,
+                    boneImportance);
 
                 //warn: might be a bit of a performance hit on profiles with a lot of templates/bones
                 //warn: this must be done after RebuildBoneTemplateBinding or it will not work
@@ -366,16 +379,32 @@ public unsafe sealed class ArmatureManager : IDisposable
         //we assume that all other objects are a copy of object #0
         var actor = actorData.Objects[0];
 
-        if (!armature.IsBuilt || armature.IsSkeletonUpdated(actor.Model.AsCharacterBase))
+        var advancedBodyScaling = ResolveAdvancedBodyScaling(armature.Profile, actor);
+        var boneImportance = _boneImportanceService.ResolveForActor(actor, advancedBodyScaling, armature.ActiveBoneImportanceResult.ModelSignature);
+        var skeletonUpdated = armature.IsSkeletonUpdated(actor.Model.AsCharacterBase);
+        var boneImportanceSignatureChanged = boneImportance.ModelSignatureChanged;
+        if (!armature.IsBuilt || skeletonUpdated || boneImportanceSignatureChanged)
         {
-            _logger.Debug($"Skeleton for actor #{actor.AsObject->ObjectIndex} tied to \"{armature}\" has changed");
-            armature.RebuildSkeleton(
-                actor.Model.AsCharacterBase,
-                _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
-                _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
-                ResolveAdvancedBodyScaling(armature.Profile, actor));
+            if (!armature.IsBuilt || skeletonUpdated)
+            {
+                _logger.Debug($"Skeleton for actor #{actor.AsObject->ObjectIndex} tied to \"{armature}\" has changed");
+                armature.RebuildSkeleton(
+                    actor.Model.AsCharacterBase,
+                    _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
+                    _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
+                    advancedBodyScaling,
+                    boneImportance);
+            }
+            else
+            {
+                _logger.Debug($"Resolved bone-importance model signature changed for actor #{actor.AsObject->ObjectIndex} tied to \"{armature}\", refreshing bindings.");
+                armature.RebuildBoneTemplateBinding(
+                    _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
+                    _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
+                    advancedBodyScaling,
+                    boneImportance);
+            }
         }
-
         return true;
     }
 
@@ -405,7 +434,7 @@ public unsafe sealed class ArmatureManager : IDisposable
             // 1. Base/profile/template transforms
             // 2. Advanced body scaling output
             // 3. Runtime safeguards
-            // 4. Pose-space corrective scale support
+            // 4. RBF pose-space corrective support
             // 5. Full IK retargeting adaptation layer
             // 6. Motion warping locomotion layer
             // 7. Full-body IK final pose solve

@@ -574,7 +574,10 @@ public class SettingsTab
                 _configuration.Save();
                 _armatureManager.RebindAllArmatures();
             }
-            CtrlHelper.AddHoverText("Biases advanced scaling and pose-space correctives toward safer, more motion-friendly behavior. It increases smoothing near joints, keeps extremities calmer, and makes corrective behavior more conservative without removing manual control.");
+            CtrlHelper.AddHoverText("Biases advanced scaling and RBF pose-space correctives toward safer, more motion-friendly behavior. It increases smoothing near joints, keeps extremities calmer, and makes corrective behavior more conservative without removing manual control.");
+
+            ImGui.Spacing();
+            DrawBoneImportanceWeightingSettings(settings);
 
             ImGui.Spacing();
             DrawNeckCompensationSettings(settings);
@@ -600,6 +603,111 @@ public class SettingsTab
             ImGui.Spacing();
             DrawAdvancedBodyScalingExplainability(settings);
         }
+    }
+
+    private void DrawBoneImportanceWeightingSettings(AdvancedBodyScalingSettings settings)
+    {
+        ImGui.Text("Bone Importance Weighting");
+        ImGui.TextDisabled("Uses supported body model skinning data, when available, to make propagation, smoothing, redistribution, and guardrails more anatomically coherent. It stays on the existing transform-based path and falls back safely.");
+
+        var enabled = settings.ModelDerivedBoneImportanceEnabled;
+        if (ImGui.Checkbox("Enable model-derived bone importance", ref enabled))
+        {
+            settings.ModelDerivedBoneImportanceEnabled = enabled;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("When enabled, live supported human actors can use resolved body-model data to weight bone importance. If model data is unavailable, the current heuristic behavior is preserved.");
+
+        using var disabled = ImRaii.Disabled(!settings.ModelDerivedBoneImportanceEnabled);
+
+        var preferSkinWeights = settings.PreferTrueSkinWeightImportance;
+        if (ImGui.Checkbox("Prefer true skin-weight aggregation", ref preferSkinWeights))
+        {
+            settings.PreferTrueSkinWeightImportance = preferSkinWeights;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Uses Stage 2 blend-weight aggregation when a supported blend-index/weight stream is available. Otherwise the system falls back to Stage 1 coarse mesh participation.");
+
+        var heuristicBlend = settings.BoneImportanceHeuristicBlend;
+        if (ImGui.SliderFloat("Model weighting blend", ref heuristicBlend, 0f, 1f, "%.2f"))
+        {
+            settings.BoneImportanceHeuristicBlend = heuristicBlend;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Blends between the current heuristic behavior and the model-derived bone-importance map. Lower values stay closer to the old behavior; higher values trust the resolved model data more.");
+
+        var liveArmature = _armatureManager.Armatures.Values
+            .FirstOrDefault(armature => armature.ActiveAdvancedBodyScalingSettings?.Enabled == true);
+        if (liveArmature != null)
+        {
+            var result = liveArmature.ActiveBoneImportanceResult;
+            DrawWrappedDisabledValue("Live source", $"{result.LiveSourceLabel} ({result.StageLabel})");
+            DrawWrappedDisabledValue("Live mode", $"{result.AggregateModeLabel} ({result.ContributingPartCount} contributing part{(result.ContributingPartCount == 1 ? string.Empty : "s")})");
+            if (!string.IsNullOrWhiteSpace(result.ResolutionDetail))
+                DrawWrappedDisabledValue("Resolution detail", result.ResolutionDetail);
+            if (!string.IsNullOrWhiteSpace(result.ModelIdentity))
+                DrawWrappedDisabledValue("Live model", $"{result.ModelIdentity} {(result.CacheHit ? "[cache hit]" : "[cache miss / fresh parse]")}");
+            if (!string.IsNullOrWhiteSpace(result.RefreshStatus))
+                DrawWrappedDisabledValue("Refresh", result.RefreshStatus);
+            if (!string.IsNullOrWhiteSpace(result.RequestedGamePath))
+                DrawWrappedDisabledValue("Requested game path", result.RequestedGamePath);
+            if (!string.IsNullOrWhiteSpace(result.ModelPath))
+                DrawWrappedDisabledValue("Resolved model path", result.ModelPath);
+            if (result.PartDetails.Count > 0)
+            {
+                ImGui.TextDisabled("Contributing slots:");
+                ImGui.Indent();
+                foreach (var part in result.PartDetails.Take(4))
+                    DrawWrappedDisabledBulletText(part);
+                ImGui.Unindent();
+            }
+            if (result.MissingPartDetails.Count > 0)
+            {
+                ImGui.TextDisabled("Missing slots:");
+                ImGui.Indent();
+                foreach (var missing in result.MissingPartDetails.Take(2))
+                    DrawWrappedDisabledBulletText(missing);
+                ImGui.Unindent();
+            }
+            if (!string.IsNullOrWhiteSpace(result.Summary))
+                DrawWrappedDisabledValue("Importance source", result.Summary);
+        }
+    }
+
+    private static void DrawWrappedDisabledValue(string label, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        ImGui.TextDisabled($"{label}:");
+        ImGui.Indent();
+        DrawWrappedTextWithColor(value, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
+        ImGui.Unindent();
+    }
+
+    private static void DrawWrappedDisabledBulletText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        ImGui.Bullet();
+        ImGui.SameLine();
+        DrawWrappedTextWithColor(value, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
+    }
+
+    private static void DrawWrappedTextWithColor(string value, Vector4 color)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        ImGui.PushStyleColor(ImGuiCol.Text, color);
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+        ImGui.TextUnformatted(value);
+        ImGui.PopTextWrapPos();
+        ImGui.PopStyleColor();
     }
 
     private void DrawNeckCompensationSettings(AdvancedBodyScalingSettings settings)
@@ -905,20 +1013,20 @@ public class SettingsTab
 
     private void DrawPoseSpaceCorrectives(AdvancedBodyScalingSettings settings)
     {
-        if (!ImGui.CollapsingHeader("Pose-space correctives"))
+        if (!ImGui.CollapsingHeader("RBF Pose-Space Correctives"))
             return;
 
         var poseCorrectives = settings.PoseCorrectives;
-        ImGui.TextDisabled("Pose-space correctives add small pose-driven corrections in common problem areas to improve transitions during stressed poses. They are conservative by default and do not replace manual control.");
+        ImGui.TextDisabled("RBF Pose-Space Correctives use pose interpolation across stored sample poses to apply smoother, more natural transform-based corrections in common problem areas. This is a transform-based corrective system, not a mesh morph backend.");
 
         var enabled = poseCorrectives.Enabled;
-        if (ImGui.Checkbox("Enable pose-space correctives", ref enabled))
+        if (ImGui.Checkbox("Enable RBF Pose-Space Correctives", ref enabled))
         {
             poseCorrectives.Enabled = enabled;
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Turns the pose-space corrective layer on or off. These corrections are small, pose-driven adjustments for common transition problems and do not replace manual control.");
+        CtrlHelper.AddHoverText("Turns the RBF pose-space corrective layer on or off. These corrections stay transform-based, use supported bones only, and interpolate between stored sample poses instead of relying on crude binary thresholds.");
 
         ImGui.SameLine();
         if (ImGui.Button("Restore corrective defaults"))
@@ -928,7 +1036,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores the shipped pose-space corrective defaults: global enable/strength plus every per-region enable, strength, threshold, deadzone, smoothing, falloff, max clamp, and blend priority value.");
+        CtrlHelper.AddHoverText("Restores the shipped RBF corrective defaults: global enable, strength, pose-map sharpness, damping, clamp, and every per-region enable, strength, threshold, deadzone, smoothing, sample falloff, max clamp, and blend priority value.");
 
         using (var disabled = ImRaii.Disabled(!poseCorrectives.Enabled))
         {
@@ -939,7 +1047,43 @@ public class SettingsTab
                 _configuration.Save();
                 _armatureManager.RebindAllArmatures();
             }
-            CtrlHelper.AddHoverText("Scales how strongly pose-space correctives participate overall. Per-region strength is layered on top of this baseline.");
+            CtrlHelper.AddHoverText("Scales how strongly the RBF pose-space corrective layer participates overall. Per-region strength is layered on top of this baseline.");
+
+            var sharpness = poseCorrectives.PoseMapSharpness;
+            if (ImGui.SliderFloat("Pose-map sharpness", ref sharpness, AdvancedBodyScalingPoseCorrectiveTuning.UiPoseMapSharpnessMin, AdvancedBodyScalingPoseCorrectiveTuning.UiPoseMapSharpnessMax, "%.2f"))
+            {
+                poseCorrectives.PoseMapSharpness = sharpness;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Controls how strongly the nearest stored sample poses dominate the solve. Lower values blend more broadly; higher values feel sharper and more selective.");
+
+            var damping = poseCorrectives.Damping;
+            if (ImGui.SliderFloat("Smoothing / damping", ref damping, 0f, 1f, "%.2f"))
+            {
+                poseCorrectives.Damping = damping;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Damps the interpolated corrective output so small pose changes do not cause abrupt or noisy transform shifts.");
+
+            var maxCorrectionClamp = poseCorrectives.MaxCorrectionClamp;
+            if (ImGui.SliderFloat("Max correction clamp", ref maxCorrectionClamp, 0f, AdvancedBodyScalingPoseCorrectiveTuning.UiMaxCorrectionClampMax, "%.3f"))
+            {
+                poseCorrectives.MaxCorrectionClamp = maxCorrectionClamp;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Global cap on transform-based RBF corrective output. Conservative values are recommended because stronger is not always better.");
+
+            var advisories = AdvancedBodyScalingPoseCorrectiveSystem.GetTuningAdvisories(settings);
+            if (advisories.Count > 0)
+            {
+                ImGui.Spacing();
+                ImGui.TextDisabled("Tuning advisories:");
+                foreach (var advisory in advisories.Take(4))
+                    ImGui.BulletText(advisory);
+            }
 
             foreach (var region in AdvancedBodyScalingPoseCorrectiveSystem.GetOrderedRegions())
             {
@@ -956,9 +1100,10 @@ public class SettingsTab
                     _configuration.Save();
                     _armatureManager.RebindAllArmatures();
                 }
-                CtrlHelper.AddHoverText($"Restore the shipped defaults for {label}, including enable, strength, threshold, deadzone, smoothing, falloff, max clamp, and blend priority.");
+                CtrlHelper.AddHoverText($"Restore the shipped defaults for {label}, including enable, strength, threshold, deadzone, damping, sample falloff, max clamp, and blend priority.");
 
                 ImGui.TextDisabled(description);
+                ImGui.TextDisabled($"Built-in pose samples: {AdvancedBodyScalingPoseCorrectiveSystem.GetRegionSampleCount(region)}");
 
                 var regionEnabled = regionSettings.Enabled;
                 if (ImGui.Checkbox($"Enable##PoseCorrectiveEnabled{region}", ref regionEnabled))
@@ -1005,16 +1150,16 @@ public class SettingsTab
                         _configuration.Save();
                         _armatureManager.RebindAllArmatures();
                     }
-                    CtrlHelper.AddHoverText("How gradually the corrective ramps in and out instead of changing abruptly.");
+                    CtrlHelper.AddHoverText("Region-level damping layered on top of the global damping value so this area ramps in and out more gradually.");
 
                     var falloff = regionSettings.Falloff;
-                    if (ImGui.SliderFloat($"Bridge falloff##PoseCorrectiveFalloff{region}", ref falloff, 0f, 1f, "%.2f"))
+                    if (ImGui.SliderFloat($"Sample falloff##PoseCorrectiveFalloff{region}", ref falloff, 0f, 1f, "%.2f"))
                     {
                         regionSettings.Falloff = falloff;
                         _configuration.Save();
                         _armatureManager.RebindAllArmatures();
                     }
-                    CtrlHelper.AddHoverText("How broadly the corrective spreads across the transition area instead of concentrating in one spot.");
+                    CtrlHelper.AddHoverText("How broadly nearby RBF pose samples are allowed to contribute in this region instead of concentrating on one very narrow pose.");
 
                     var maxCorrection = regionSettings.MaxCorrection;
                     if (ImGui.SliderFloat($"Max correction clamp##PoseCorrectiveMax{region}", ref maxCorrection, 0f, 0.10f, "%.3f"))
@@ -1060,7 +1205,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Turns the supported-bone retargeting layer on or off. It runs after pose-space correctives and before the final Full-Body IK pass.");
+        CtrlHelper.AddHoverText("Turns the supported-bone retargeting layer on or off. It runs after the RBF pose-space corrective layer and before the final Full-Body IK pass.");
 
         ImGui.SameLine();
         if (ImGui.Button("Restore retargeting defaults"))
@@ -1406,7 +1551,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Turns the final supported-bone full-body IK layer on or off. It runs after Advanced Body Scaling and pose-space correctives, then yields back to locks and pinned axes when they limit the solve.");
+        CtrlHelper.AddHoverText("Turns the final supported-bone full-body IK layer on or off. It runs after Advanced Body Scaling, RBF pose-space correctives, retargeting, and motion warping, then yields back to locks and pinned axes when they limit the solve.");
 
         ImGui.SameLine();
         if (ImGui.Button("Restore IK defaults"))
@@ -1599,6 +1744,19 @@ public class SettingsTab
             return;
         }
 
+        ImGui.TextDisabled($"Enabled: {debugState.Enabled} | Active: {debugState.Active}");
+        ImGui.TextDisabled($"Global strength: {debugState.GlobalStrength:0.00} | Sharpness: {debugState.PoseMapSharpness:0.00} | Damping: {debugState.Damping:0.00} | Clamp: {debugState.MaxCorrectionClamp:0.000}");
+
+        if (debugState.Advisories.Count > 0)
+        {
+            ImGui.TextDisabled("Advisories:");
+            foreach (var advisory in debugState.Advisories.Take(4))
+                ImGui.BulletText(advisory);
+        }
+
+        if (!string.IsNullOrWhiteSpace(debugState.Summary))
+            ImGui.TextWrapped(debugState.Summary);
+
         if (debugState.ActiveRegions.Count == 0)
         {
             ImGui.TextDisabled("No corrective region is strongly active in the current pose.");
@@ -1610,9 +1768,40 @@ public class SettingsTab
         {
             ImGui.Bullet();
             ImGui.SameLine();
-            ImGui.TextWrapped($"{region.Label}: driver {region.DriverStrength:0.00}, activation {region.Activation:0.00}, corrective {region.Strength:0.00}. {region.DriverSummary}.");
+            ImGui.TextWrapped($"{region.Label}: driver {region.DriverStrength:0.00}, raw {region.RawActivation:0.00}, activation {region.Activation:0.00}, corrective {region.Strength:0.00}, est. risk reduction {region.EstimatedRiskReduction * 100f:0}%, samples {region.InfluenceSampleCount}/{region.SampleCount}.");
             ImGui.Indent();
+            if (region.SafetyLimited || region.LocksOrPinsLimited)
+            {
+                var flags = new List<string>();
+                if (region.SafetyLimited)
+                    flags.Add("safety-limited");
+                if (region.Clamped)
+                    flags.Add("clamped");
+                if (region.Damped)
+                    flags.Add("damped");
+                if (region.LocksOrPinsLimited)
+                    flags.Add("locks/pins limited");
+
+                if (flags.Count > 0)
+                    ImGui.TextDisabled($"State: {string.Join(", ", flags)}");
+            }
+
             ImGui.TextDisabled(region.Description);
+            ImGui.TextDisabled(region.ShortlistApplied
+                ? $"Nearest-sample shortlist active. {(region.BroadInterpolation ? "Broad interpolation" : "Focused interpolation")} is using {region.InfluenceSampleCount} of {region.SampleCount} samples."
+                : $"{(region.BroadInterpolation ? "Broad interpolation" : "Focused interpolation")} is using the full {region.SampleCount}-sample library.");
+            if (!string.IsNullOrWhiteSpace(region.DriverVectorSummary))
+                ImGui.TextDisabled($"Driver vector: {region.DriverVectorSummary}");
+            if (!string.IsNullOrWhiteSpace(region.SampleSummary))
+                ImGui.TextDisabled($"Pose weights: {region.SampleSummary}");
+            if (!string.IsNullOrWhiteSpace(region.Summary))
+                ImGui.TextDisabled(region.Summary);
+            if (region.InfluentialSamples.Count > 0)
+            {
+                ImGui.TextDisabled("Dominant samples:");
+                foreach (var sample in region.InfluentialSamples.Take(3))
+                    ImGui.BulletText($"{sample.Name}: {sample.Weight:0.00} @ distance {sample.Distance:0.00} ({sample.Summary})");
+            }
             ImGui.Unindent();
         }
     }
@@ -1973,7 +2162,7 @@ public class SettingsTab
         => path switch
         {
             AdvancedBodyScalingCorrectivePath.SupportedMorph => "Supported corrective morph path",
-            _ => "Limited corrective-transform fallback",
+            _ => "RBF transform corrective path",
         };
 
     private void DrawAdvancedBodyScalingResets(AdvancedBodyScalingSettings settings)
@@ -1987,7 +2176,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores only Surface balancing strength. It does not touch pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
+        CtrlHelper.AddHoverText("Restores only Surface balancing strength. It does not touch RBF pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset Naturalization"))
@@ -1996,7 +2185,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores only Naturalization strength. It does not touch pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
+        CtrlHelper.AddHoverText("Restores only Naturalization strength. It does not touch RBF pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset Pose-Aware"))
@@ -2005,7 +2194,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores only Pose-aware validation mode. It does not touch pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
+        CtrlHelper.AddHoverText("Restores only Pose-aware validation mode. It does not touch RBF pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
 
         ImGui.SameLine();
         if (ImGui.Button("Reset All Advanced Scaling"))
@@ -2014,7 +2203,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores all Advanced Body Scaling settings to shipped defaults, including pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, animation-safe mode, and region tuning.");
+        CtrlHelper.AddHoverText("Restores all Advanced Body Scaling settings to shipped defaults, including RBF pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, animation-safe mode, and region tuning.");
     }
 
     private void DrawAdvancedBodyScalingRegionProfiles(AdvancedBodyScalingSettings settings)
@@ -2180,11 +2369,11 @@ public class SettingsTab
             "Race presets can override these neck settings for supported races, but they stay on the normal supported scale path.");
 
         DrawExplainabilityRow(
-            "Pose-space correctives",
-            "Neck/shoulder, clavicle/upper chest, and hip/upper thigh under stressful poses.",
+            "RBF pose-space correctives",
+            "Neck/shoulder, clavicle/upper chest, hip/upper thigh, and other supported transition regions under stressful poses.",
             "Detached transitions and harsh region bridges that become more visible when the body is bent, raised, or twisted.",
             settings.PoseCorrectives.Enabled ? "Active" : "Off",
-            "This is a limited supported-bone corrective layer. It uses standard pose data and falls back safely when no supported corrective morph path exists.");
+            "This is a transform-based corrective layer. It interpolates between stored sample poses on supported bones only and falls back safely when no supported corrective morph path exists.");
 
         DrawExplainabilityRow(
             "Full IK retargeting",

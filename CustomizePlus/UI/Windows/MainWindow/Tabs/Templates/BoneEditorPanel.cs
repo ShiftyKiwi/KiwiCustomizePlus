@@ -309,7 +309,7 @@ public class BoneEditorPanel
                 var col3Label = _editingAttribute == BoneAttribute.Rotation ? "Yaw" : "Z";
                 var col4Label = _editingAttribute == BoneAttribute.Scale ? "All" : "N/A";
 
-                var controlColumnWidth = (_editingAttribute == BoneAttribute.Scale ? 10.5f : 7f) * CtrlHelper.IconButtonWidth;
+                var controlColumnWidth = GetControlColumnWidth();
                 ImGui.TableSetupColumn("Bones", ImGuiTableColumnFlags.NoReorder | ImGuiTableColumnFlags.WidthFixed, controlColumnWidth);
 
                 ImGui.TableSetupColumn($"{col1Label}", ImGuiTableColumnFlags.NoReorder | ImGuiTableColumnFlags.WidthStretch);
@@ -324,10 +324,23 @@ public class BoneEditorPanel
 
                 IEnumerable<EditRowParams> relevantModelBones = null!;
                 if (_editorManager.IsEditorActive && _editorManager.EditorProfile != null && _editorManager.EditorProfile.Armatures.Count > 0)
+                {
+                    var currentTemplateBones = _editorManager.CurrentlyEditedTemplate?.Bones;
                     relevantModelBones = _isShowLiveBones && _editorManager.EditorProfile.Armatures.Count > 0
-                        ? _editorManager.EditorProfile.Armatures[0].GetAllBones().DistinctBy(x => x.BoneName).Select(x => new EditRowParams(x))
+                        ? _editorManager.EditorProfile.Armatures[0]
+                            .GetAllBones()
+                            .DistinctBy(x => x.BoneName)
+                            .Select(x =>
+                            {
+                                BoneTransform? templateTransform = null;
+                                if (currentTemplateBones != null)
+                                    currentTemplateBones.TryGetValue(x.BoneName, out templateTransform);
+
+                                return new EditRowParams(x, templateTransform);
+                            })
                         : _editorManager.EditorProfile.Armatures[0].BoneTemplateBinding.Where(x => x.Value.Bones.ContainsKey(x.Key))
                             .Select(x => new EditRowParams(x.Key, x.Value.Bones[x.Key])); //todo: this is awful
+                }
                 else
                     relevantModelBones = _templateFileSystemSelector.Selected!.Bones.Select(x => new EditRowParams(x.Key, x.Value));
 
@@ -1300,6 +1313,23 @@ public class BoneEditorPanel
         }
     }
 
+    private float GetControlColumnWidth()
+    {
+        var iconWidth = CtrlHelper.IconButtonWidth;
+        var spacing = ImGui.GetStyle().ItemSpacing.X;
+
+        if (_editingAttribute == BoneAttribute.Scale)
+        {
+            var fixedWidths = (0.75f * iconWidth) + (5f * iconWidth) + (0.25f * iconWidth) + (3f * iconWidth * 0.8f);
+            var spacingWidth = 9f * spacing;
+            return fixedWidths + spacingWidth + (iconWidth * 0.75f);
+        }
+
+        var compactWidths = (0.75f * iconWidth) + (5f * iconWidth);
+        var compactSpacing = 5f * spacing;
+        return compactWidths + compactSpacing + (iconWidth * 0.5f);
+    }
+
     #endregion
 }
 
@@ -1314,10 +1344,12 @@ internal struct EditRowParams
     public BoneTransform Transform;
     public ModelBone? Basis = null;
 
-    public EditRowParams(ModelBone mb)
+    public EditRowParams(ModelBone mb, BoneTransform? overrideTransform = null)
     {
         BoneCodeName = mb.BoneName;
-        Transform = mb.CustomizedTransform ?? new BoneTransform();
+        Transform = overrideTransform != null
+            ? new BoneTransform(overrideTransform)
+            : mb.CustomizedTransform ?? new BoneTransform();
         Basis = mb;
     }
 

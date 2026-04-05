@@ -7,6 +7,7 @@ using OtterGui.Log;
 using Penumbra.Api.Helpers;
 using Penumbra.Api.IpcSubscribers;
 using System;
+using System.Collections.Generic;
 
 namespace CustomizePlus.Interop.Ipc;
 
@@ -17,6 +18,8 @@ public sealed class PenumbraIpcHandler : IIpcSubscriber
 
     private readonly EventSubscriber<JObject, ushort, string> _pcpCreated;
     private readonly EventSubscriber<JObject, string, Guid> _pcpParsed;
+    private readonly ResolveGameObjectPath _resolveGameObjectPath;
+    private readonly GetGameObjectResourcePaths _getGameObjectResourcePaths;
     private readonly IDisposable _penumbraInit;
     private readonly IDisposable _penumbraDisp;
 
@@ -37,6 +40,8 @@ public sealed class PenumbraIpcHandler : IIpcSubscriber
 
         _pcpCreated = CreatingPcp.Subscriber(pi);
         _pcpParsed = ParsingPcp.Subscriber(pi);
+        _resolveGameObjectPath = new ResolveGameObjectPath(pi);
+        _getGameObjectResourcePaths = new GetGameObjectResourcePaths(pi);
 
         _penumbraInit = Initialized.Subscriber(pi, Initialize);
         _penumbraDisp = Disposed.Subscriber(pi, Disable);
@@ -54,6 +59,47 @@ public sealed class PenumbraIpcHandler : IIpcSubscriber
     {
         add => _pcpParsed.Event += value;
         remove => _pcpParsed.Event -= value;
+    }
+
+    public bool TryResolveGameObjectPath(string gamePath, int gameObjectIndex, out string resolvedPath)
+    {
+        resolvedPath = string.Empty;
+        if (!_available || string.IsNullOrWhiteSpace(gamePath) || gameObjectIndex < 0)
+            return false;
+
+        try
+        {
+            resolvedPath = _resolveGameObjectPath.Invoke(gamePath, gameObjectIndex);
+            return !string.IsNullOrWhiteSpace(resolvedPath);
+        }
+        catch
+        {
+            resolvedPath = string.Empty;
+            return false;
+        }
+    }
+
+    public bool TryGetGameObjectResourcePaths(ushort gameObjectIndex, out Dictionary<string, HashSet<string>> resourcePaths)
+    {
+        resourcePaths = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        if (!_available)
+            return false;
+
+        try
+        {
+            var paths = _getGameObjectResourcePaths.Invoke(gameObjectIndex);
+            var first = paths.Length > 0 ? paths[0] : null;
+            if (first == null || first.Count == 0)
+                return false;
+
+            resourcePaths = first;
+            return true;
+        }
+        catch
+        {
+            resourcePaths = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            return false;
+        }
     }
 
     public bool CheckApiVersion()

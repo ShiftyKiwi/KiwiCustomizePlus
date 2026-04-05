@@ -306,7 +306,7 @@ public class ProfilePanel
             _manager.UpdateAdvancedBodyScalingOverrides(profile, settings => settings.UseProfileOverrides = false);
 
         ImGui.SameLine();
-        ImGuiComponents.HelpMarker("Uses the Settings-tab Advanced Body Scaling configuration for this profile, including automation, neck and shoulder baselines, race presets, pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, and region tuning, until profile overrides are enabled.");
+        ImGuiComponents.HelpMarker("Uses the Settings-tab Advanced Body Scaling configuration for this profile, including automation, neck and shoulder baselines, race presets, RBF pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, and region tuning, until profile overrides are enabled.");
 
         ImGui.SameLine();
         if (ImGui.RadioButton("Use Profile Overrides", useOverrides))
@@ -314,7 +314,7 @@ public class ProfilePanel
 
         if (!profile.AdvancedBodyScalingOverrides.UseProfileOverrides)
         {
-            ImGui.TextDisabled("Using the Settings-tab Advanced Body Scaling config, including automation, neck and shoulder baselines, race presets, pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, and region tuning, until overrides are enabled.");
+            ImGui.TextDisabled("Using the Settings-tab Advanced Body Scaling config, including automation, neck and shoulder baselines, race presets, RBF pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, and region tuning, until overrides are enabled.");
             return;
         }
 
@@ -737,9 +737,9 @@ public class ProfilePanel
         }
 
         ImGui.Spacing();
-        if (ImGui.CollapsingHeader("Pose-space Corrective Overrides"))
+        if (ImGui.CollapsingHeader("RBF Pose-Space Corrective Overrides"))
         {
-            ImGui.TextDisabled("Override the pose-space corrective baseline for this profile. Disabled fields inherit the global corrective settings.");
+            ImGui.TextDisabled("Override the RBF pose-space corrective baseline for this profile. Disabled fields inherit the global corrective settings.");
             var globalCorrectives = globalSettings.PoseCorrectives;
 
             using (var correctiveTable = ImRaii.Table(
@@ -759,7 +759,7 @@ public class ProfilePanel
                     ImGui.TableNextRow();
                     ImGui.TableNextColumn();
                     ImGui.AlignTextToFramePadding();
-                    ImGui.TextUnformatted("Enable pose-space correctives");
+                    ImGui.TextUnformatted("Enable RBF pose-space correctives");
                     ImGui.TableNextColumn();
                     if (overrides.PoseCorrectivesEnabled.HasValue)
                     {
@@ -773,7 +773,7 @@ public class ProfilePanel
                         using (ImRaii.Disabled())
                             ImGui.Checkbox("##ProfilePoseCorrectivesEnabled", ref enabled);
                     }
-                    CtrlHelper.AddHoverText("Overrides whether the pose-space corrective layer is active for this profile.");
+                    CtrlHelper.AddHoverText("Overrides whether the RBF pose-space corrective layer is active for this profile.");
                     ImGui.TableNextColumn();
                     var poseCorrectivesEnabledOverride = overrides.PoseCorrectivesEnabled.HasValue;
                     if (ImGui.Checkbox("##ProfilePoseCorrectivesEnabledOverride", ref poseCorrectivesEnabledOverride))
@@ -805,6 +805,87 @@ public class ProfilePanel
                     var poseCorrectiveStrengthOverride = overrides.PoseCorrectiveStrength.HasValue;
                     if (ImGui.Checkbox("##ProfilePoseCorrectiveStrengthOverride", ref poseCorrectiveStrengthOverride))
                         ToggleOverride(o => o.PoseCorrectiveStrength = poseCorrectiveStrengthOverride ? globalCorrectives.Strength : null);
+
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.TextUnformatted("Pose-map sharpness");
+                    ImGui.TableNextColumn();
+                    if (overrides.PoseCorrectivePoseMapSharpness.HasValue)
+                    {
+                        var value = overrides.PoseCorrectivePoseMapSharpness.Value;
+                        ImGui.SetNextItemWidth(-1);
+                        if (ImGui.SliderFloat("##ProfilePoseCorrectiveSharpness", ref value, AdvancedBodyScalingPoseCorrectiveTuning.UiPoseMapSharpnessMin, AdvancedBodyScalingPoseCorrectiveTuning.UiPoseMapSharpnessMax, "%.2f"))
+                            ToggleOverride(o => o.PoseCorrectivePoseMapSharpness = value);
+                    }
+                    else
+                    {
+                        var value = globalCorrectives.PoseMapSharpness;
+                        using (ImRaii.Disabled())
+                        {
+                            ImGui.SetNextItemWidth(-1);
+                            ImGui.SliderFloat("##ProfilePoseCorrectiveSharpness", ref value, AdvancedBodyScalingPoseCorrectiveTuning.UiPoseMapSharpnessMin, AdvancedBodyScalingPoseCorrectiveTuning.UiPoseMapSharpnessMax, "%.2f");
+                        }
+                    }
+                    CtrlHelper.AddHoverText("Overrides how sharply the stored RBF pose samples dominate nearby poses for this profile.");
+                    ImGui.TableNextColumn();
+                    var poseCorrectiveSharpnessOverride = overrides.PoseCorrectivePoseMapSharpness.HasValue;
+                    if (ImGui.Checkbox("##ProfilePoseCorrectiveSharpnessOverride", ref poseCorrectiveSharpnessOverride))
+                        ToggleOverride(o => o.PoseCorrectivePoseMapSharpness = poseCorrectiveSharpnessOverride ? globalCorrectives.PoseMapSharpness : null);
+
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.TextUnformatted("Smoothing / damping");
+                    ImGui.TableNextColumn();
+                    if (overrides.PoseCorrectiveDamping.HasValue)
+                    {
+                        var value = overrides.PoseCorrectiveDamping.Value;
+                        ImGui.SetNextItemWidth(-1);
+                        if (ImGui.SliderFloat("##ProfilePoseCorrectiveDamping", ref value, 0f, 1f, "%.2f"))
+                            ToggleOverride(o => o.PoseCorrectiveDamping = value);
+                    }
+                    else
+                    {
+                        var value = globalCorrectives.Damping;
+                        using (ImRaii.Disabled())
+                        {
+                            ImGui.SetNextItemWidth(-1);
+                            ImGui.SliderFloat("##ProfilePoseCorrectiveDamping", ref value, 0f, 1f, "%.2f");
+                        }
+                    }
+                    CtrlHelper.AddHoverText("Overrides how strongly this profile damps RBF pose-space corrective output to avoid abrupt motion.");
+                    ImGui.TableNextColumn();
+                    var poseCorrectiveDampingOverride = overrides.PoseCorrectiveDamping.HasValue;
+                    if (ImGui.Checkbox("##ProfilePoseCorrectiveDampingOverride", ref poseCorrectiveDampingOverride))
+                        ToggleOverride(o => o.PoseCorrectiveDamping = poseCorrectiveDampingOverride ? globalCorrectives.Damping : null);
+
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.TextUnformatted("Max correction clamp");
+                    ImGui.TableNextColumn();
+                    if (overrides.PoseCorrectiveMaxCorrectionClamp.HasValue)
+                    {
+                        var value = overrides.PoseCorrectiveMaxCorrectionClamp.Value;
+                        ImGui.SetNextItemWidth(-1);
+                        if (ImGui.SliderFloat("##ProfilePoseCorrectiveClamp", ref value, 0f, AdvancedBodyScalingPoseCorrectiveTuning.UiMaxCorrectionClampMax, "%.3f"))
+                            ToggleOverride(o => o.PoseCorrectiveMaxCorrectionClamp = value);
+                    }
+                    else
+                    {
+                        var value = globalCorrectives.MaxCorrectionClamp;
+                        using (ImRaii.Disabled())
+                        {
+                            ImGui.SetNextItemWidth(-1);
+                            ImGui.SliderFloat("##ProfilePoseCorrectiveClamp", ref value, 0f, AdvancedBodyScalingPoseCorrectiveTuning.UiMaxCorrectionClampMax, "%.3f");
+                        }
+                    }
+                    CtrlHelper.AddHoverText("Overrides the global cap on transform-based RBF corrective output for this profile.");
+                    ImGui.TableNextColumn();
+                    var poseCorrectiveClampOverride = overrides.PoseCorrectiveMaxCorrectionClamp.HasValue;
+                    if (ImGui.Checkbox("##ProfilePoseCorrectiveClampOverride", ref poseCorrectiveClampOverride))
+                        ToggleOverride(o => o.PoseCorrectiveMaxCorrectionClamp = poseCorrectiveClampOverride ? globalCorrectives.MaxCorrectionClamp : null);
                 }
             }
 
