@@ -41,6 +41,17 @@ internal sealed class AdvancedBodyScalingDebugReport
     public string BoneImportanceResolutionTrace { get; set; } = string.Empty;
     public string BoneImportanceRefreshStatus { get; set; } = string.Empty;
     public bool BoneImportanceSignatureChanged { get; set; }
+    public bool BoneImportanceAreaAwareRefinementActive { get; set; }
+    public bool BoneImportanceClassificationRefinementActive { get; set; }
+    public bool BoneImportanceConfidenceWeightedAggregationActive { get; set; }
+    public string BoneImportanceRefinementSummary { get; set; } = string.Empty;
+    public string BoneImportanceConfidenceSummary { get; set; } = string.Empty;
+    public string BoneImportanceRuntimeMode { get; set; } = "skipped";
+    public string BoneImportanceActorTier { get; set; } = "other actor";
+    public bool BoneImportanceFullQualityEligible { get; set; }
+    public bool BoneImportanceCrowdSafeDowngraded { get; set; }
+    public bool BoneImportanceStableThrottled { get; set; }
+    public string BoneImportanceRuntimeSummary { get; set; } = string.Empty;
     public string BoneImportanceSummary { get; set; } = string.Empty;
     public List<string> BoneImportanceSamples { get; } = new();
     public List<string> BoneImportancePartDetails { get; } = new();

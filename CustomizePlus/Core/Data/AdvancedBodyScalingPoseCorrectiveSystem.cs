@@ -18,6 +18,8 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
     private const int MaxShortlistedInfluenceSamples = 8;
     private const int MinShortlistedInfluenceSamples = 5;
     private const float MinimumShortlistedRawWeight = 0.012f;
+    private const int AdaptiveShortlistAbsoluteMin = 4;
+    private const int AdaptiveShortlistAbsoluteMax = 9;
 
     private static readonly string[] NeckBones = { "j_kubi" };
     private static readonly string[] UpperSpineBones = { "j_sebo_c" };
@@ -36,6 +38,47 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
     private readonly record struct DriverCondition(AdvancedBodyScalingCorrectiveDriverType Type, float Weight);
     private readonly record struct DriverSample(AdvancedBodyScalingCorrectiveDriverType Type, float Strength);
     private readonly record struct CorrectiveSignals(float Discontinuity, float ContinuityStress, float TaperStress);
+    private readonly record struct RegionLibraryStats(
+        float AverageNearestNeighborDistance,
+        float AveragePairDistance,
+        float AverageDriverSpan,
+        float DensityScore,
+        float SpreadScore);
+    private readonly record struct AdaptiveRegionProfile(
+        string Label,
+        int BaseShortlistMax,
+        int BaseShortlistFloor,
+        float SelectivityBias,
+        float TransitionBias,
+        float DampingBias);
+    private readonly record struct AdaptiveSolveTuning(
+        string ModeLabel,
+        int ShortlistMax,
+        int ShortlistFloor,
+        float MinimumRawWeight,
+        float DistanceRetention,
+        float PrimaryBroadWeightThreshold,
+        int PrimaryBroadCount,
+        float SecondaryBroadWeightThreshold,
+        int SecondaryBroadCount,
+        float SharpnessScale,
+        float FalloffScale,
+        float DampingScale,
+        float DensityScore,
+        float SpreadScore,
+        bool MeaningfulChange,
+        string Summary);
+    private readonly record struct PoseHistorySolveState(
+        IReadOnlyList<float> SmoothedDriverVector,
+        float Retention,
+        float ChangeMagnitude,
+        bool Active,
+        string Summary);
+    private readonly record struct ActivationSolveState(
+        float Activation,
+        bool IsActive,
+        bool HysteresisHeld,
+        string Summary);
     private readonly record struct PoseSampleOutput(
         float Activation,
         float GroupABlend,
@@ -93,11 +136,15 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
         public required float DriverStrength { get; init; }
         public required float RawActivation { get; init; }
         public required PoseSampleOutput Output { get; init; }
+        public required AdaptiveSolveTuning Tuning { get; init; }
         public required IReadOnlyList<SampleInfluence> Influences { get; init; }
         public required int TotalSampleCount { get; init; }
         public required int InfluenceSampleCount { get; init; }
         public required bool ShortlistApplied { get; init; }
         public required bool BroadInterpolation { get; init; }
+        public required bool DominantSamplePersistenceUsed { get; init; }
+        public required bool BroadModeMemoryUsed { get; init; }
+        public required PoseHistorySolveState History { get; init; }
         public required bool SafetyLimited { get; init; }
         public required string Summary { get; init; }
     }
@@ -254,6 +301,8 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
 
     private static readonly IReadOnlyDictionary<AdvancedBodyScalingCorrectiveRegion, CorrectiveDefinition> DefinitionMap =
         Definitions.ToDictionary(definition => definition.Region);
+    private static readonly IReadOnlyDictionary<AdvancedBodyScalingCorrectiveRegion, RegionLibraryStats> LibraryStatsMap =
+        Definitions.ToDictionary(definition => definition.Region, BuildRegionLibraryStats);
 
     public static IReadOnlyList<AdvancedBodyScalingCorrectiveRegion> GetOrderedRegions()
         => Definitions.Select(definition => definition.Region).ToArray();
@@ -313,7 +362,7 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
         CharacterBase* cBase,
         AdvancedBodyScalingSettings settings,
         bool profileOverridesActive,
-        Dictionary<AdvancedBodyScalingCorrectiveRegion, float> activationState,
+        Dictionary<AdvancedBodyScalingCorrectiveRegion, AdvancedBodyScalingCorrectiveRuntimeState> runtimeState,
         Dictionary<string, Vector3> scaleMultipliers,
         AdvancedBodyScalingPoseCorrectiveDebugState debugState)
     {
@@ -333,22 +382,20 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
 
         if (cBase == null || !settings.Enabled || settings.Mode == AdvancedBodyScalingMode.Manual)
         {
-            activationState.Clear();
+            runtimeState.Clear();
             debugState.FinalizeState(false, "RBF pose-space correctives are inactive.");
             return;
         }
 
         if (!poseSettings.Enabled || poseSettings.Strength <= 0f)
         {
-            activationState.Clear();
+            runtimeState.Clear();
             debugState.FinalizeState(false, "RBF pose-space correctives are disabled.");
             return;
         }
 
         var advisories = GetTuningAdvisories(settings);
-        var previousState = activationState.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-        activationState.Clear();
-
+        var evaluatedRegions = new HashSet<AdvancedBodyScalingCorrectiveRegion>();
         var anyActive = false;
         var anySafetyLimited = false;
         var anyLocksLimited = false;
@@ -359,18 +406,29 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
             if (!regionSettings.Enabled || regionSettings.Strength <= 0f || !HasUsableScaleData(armature.GetAppliedBoneTransform, definition))
                 continue;
 
+            evaluatedRegions.Add(definition.Region);
+            if (!runtimeState.TryGetValue(definition.Region, out var regionState))
+            {
+                regionState = new AdvancedBodyScalingCorrectiveRuntimeState();
+                runtimeState[definition.Region] = regionState;
+            }
+
             var signals = BuildSignals(armature.GetAppliedBoneTransform, definition);
             var driverSamples = BuildLiveDriverSamples(armature, cBase, definition, signals);
             var driverVector = driverSamples.Select(sample => sample.Strength).ToArray();
+            var history = ApplyPoseHistorySmoothing(definition, driverVector, regionState);
             var driverStrength = WeightedAverage(driverSamples, definition.Drivers);
-            var rbf = SolveRbf(definition, poseSettings, regionSettings, driverVector);
-            var previousActivation = previousState.TryGetValue(definition.Region, out var cached) ? cached : 0f;
-            var activation = ComputeActivation(rbf.RawActivation, previousActivation, poseSettings, regionSettings);
-            if (activation > 0.001f)
-                activationState[definition.Region] = activation;
+            var rbf = SolveRbf(definition, poseSettings, regionSettings, history, regionState);
+            var activationState = ComputeActivation(rbf.RawActivation, regionState, poseSettings, regionSettings, rbf.Tuning);
+            regionState.Activation = activationState.Activation;
+            regionState.RawActivation = rbf.RawActivation;
+            regionState.IsActive = activationState.IsActive;
+            regionState.BroadInterpolation = rbf.BroadInterpolation;
+            regionState.DominantSampleName = rbf.Influences.FirstOrDefault().Sample?.Name ?? string.Empty;
+            regionState.DominantSampleWeight = rbf.Influences.FirstOrDefault().Weight;
 
             var tuningFactor = GetRegionTuningFactor(settings, definition.RelatedRegions);
-            var correctionStrength = ComputeCorrectionStrength(settings, poseSettings, regionSettings, activation, tuningFactor);
+            var correctionStrength = ComputeCorrectionStrength(settings, poseSettings, regionSettings, activationState.Activation, tuningFactor);
             if (correctionStrength <= 0.005f)
                 continue;
 
@@ -381,8 +439,11 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
             anySafetyLimited |= rbf.SafetyLimited || metrics.Clamped;
             anyLocksLimited |= metrics.LocksOrPinsLimited;
 
-            debugState.ActiveRegions.Add(BuildDebugState(definition, driverStrength, signals, activation, correctionStrength, driverSamples, rbf, metrics, regionSettings, poseSettings));
+            debugState.ActiveRegions.Add(BuildDebugState(definition, driverStrength, signals, activationState, correctionStrength, driverSamples, rbf, metrics, regionSettings, poseSettings));
         }
+
+        foreach (var staleRegion in runtimeState.Keys.Except(evaluatedRegions).ToList())
+            runtimeState.Remove(staleRegion);
 
         debugState.FinalizeState(anyActive, BuildOverallSummary(debugState.ActiveRegions, anySafetyLimited, anyLocksLimited), advisories);
     }
@@ -412,14 +473,15 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
             var driverSamples = BuildStaticDriverSamples(definition, staticPoseWeight, signals);
             var driverVector = driverSamples.Select(sample => sample.Strength).ToArray();
             var driverStrength = WeightedAverage(driverSamples, definition.Drivers);
-            var rbf = SolveRbf(definition, settings.PoseCorrectives, regionSettings, driverVector);
-            var activation = ComputeActivation(rbf.RawActivation, 0f, settings.PoseCorrectives, regionSettings, useDeadzone: false);
+            var history = new PoseHistorySolveState(driverVector, 0f, 0f, false, "Static estimate uses the current driver vector without temporal history.");
+            var rbf = SolveRbf(definition, settings.PoseCorrectives, regionSettings, history, new AdvancedBodyScalingCorrectiveRuntimeState());
+            var activationState = ComputeActivation(rbf.RawActivation, new AdvancedBodyScalingCorrectiveRuntimeState(), settings.PoseCorrectives, regionSettings, rbf.Tuning, useDeadzone: false);
             var tuningFactor = GetRegionTuningFactor(settings, definition.RelatedRegions);
-            var correctionStrength = ComputeCorrectionStrength(settings, settings.PoseCorrectives, regionSettings, activation, tuningFactor);
+            var correctionStrength = ComputeCorrectionStrength(settings, settings.PoseCorrectives, regionSettings, activationState.Activation, tuningFactor);
             if (correctionStrength <= 0.005f)
                 continue;
 
-            estimates.Add(BuildDebugState(definition, driverStrength, signals, activation, correctionStrength, driverSamples, rbf, new CorrectionApplicationMetrics(), regionSettings, settings.PoseCorrectives));
+            estimates.Add(BuildDebugState(definition, driverStrength, signals, activationState, correctionStrength, driverSamples, rbf, new CorrectionApplicationMetrics(), regionSettings, settings.PoseCorrectives));
         }
 
         return estimates
@@ -466,15 +528,18 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
         CorrectiveDefinition definition,
         AdvancedBodyScalingPoseCorrectiveSettings settings,
         AdvancedBodyScalingCorrectiveRegionSettings regionSettings,
-        IReadOnlyList<float> driverVector)
+        PoseHistorySolveState history,
+        AdvancedBodyScalingCorrectiveRuntimeState runtimeState)
     {
+        var driverVector = history.SmoothedDriverVector;
+        var tuning = BuildAdaptiveSolveTuning(definition, settings, regionSettings, driverVector);
         var influences = new List<SampleInfluence>(definition.Samples.Count);
         foreach (var sample in definition.Samples.Where(sample => sample.Enabled))
         {
             if (sample.Key.Count != driverVector.Count)
                 continue;
 
-            var weight = ComputeSampleWeight(driverVector, definition, sample, settings, regionSettings, out var distance);
+            var weight = ComputeSampleWeight(driverVector, definition, sample, settings, regionSettings, tuning, out var distance);
             influences.Add(new SampleInfluence(sample, 0f, weight, distance));
         }
 
@@ -485,36 +550,41 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
                 DriverStrength = 0f,
                 RawActivation = 0f,
                 Output = default,
+                Tuning = tuning,
+                History = history,
                 Influences = Array.Empty<SampleInfluence>(),
                 TotalSampleCount = 0,
                 InfluenceSampleCount = 0,
                 ShortlistApplied = false,
                 BroadInterpolation = false,
+                DominantSamplePersistenceUsed = false,
+                BroadModeMemoryUsed = false,
                 SafetyLimited = true,
                 Summary = "No RBF pose samples were available for this region.",
             };
         }
 
         var totalSampleCount = influences.Count;
+        var dominantSamplePersistenceUsed = ApplyDominantSamplePersistence(influences, runtimeState, history, tuning);
         influences = influences
             .OrderByDescending(entry => entry.RawWeight)
             .ThenBy(entry => entry.Distance)
             .ToList();
 
-        if (influences.Count > MaxShortlistedInfluenceSamples)
+        if (influences.Count > tuning.ShortlistMax)
         {
-            var shortlisted = influences.Take(MaxShortlistedInfluenceSamples).ToList();
-            var retainedFloorIndex = Math.Min(shortlisted.Count - 1, MinShortlistedInfluenceSamples - 1);
+            var shortlisted = influences.Take(tuning.ShortlistMax).ToList();
+            var retainedFloorIndex = Math.Min(shortlisted.Count - 1, tuning.ShortlistFloor - 1);
             var retainedFloor = MathF.Max(
-                MinimumShortlistedRawWeight,
+                tuning.MinimumRawWeight,
                 shortlisted[retainedFloorIndex].RawWeight * 0.25f);
 
             shortlisted = shortlisted
-                .Where((entry, index) => index < MinShortlistedInfluenceSamples || entry.RawWeight >= retainedFloor || entry.Distance <= 0.16f)
-                .Take(MaxShortlistedInfluenceSamples)
+                .Where((entry, index) => index < tuning.ShortlistFloor || entry.RawWeight >= retainedFloor || entry.Distance <= tuning.DistanceRetention)
+                .Take(tuning.ShortlistMax)
                 .ToList();
 
-            while (shortlisted.Count < Math.Min(MinShortlistedInfluenceSamples, influences.Count))
+            while (shortlisted.Count < Math.Min(tuning.ShortlistFloor, influences.Count))
                 shortlisted.Add(influences[shortlisted.Count]);
 
             influences = shortlisted;
@@ -539,7 +609,7 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
             }
         }
 
-        var broadInterpolation = influences.Count(entry => entry.Weight >= 0.14f) >= 4 || influences.Count(entry => entry.Weight >= 0.07f) >= 6;
+        var broadInterpolation = DetermineBroadInterpolation(influences, tuning, runtimeState, out var broadModeMemoryUsed);
         var blendedOutput = BlendSampleOutput(influences);
         var minDistance = influences.Min(entry => entry.Distance);
         var strongestRawWeight = influences.Max(entry => entry.RawWeight);
@@ -569,15 +639,19 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
             DriverStrength = 0f,
             RawActivation = Math.Clamp(blendedOutput.Activation * coverage, 0f, 1f),
             Output = blendedOutput,
+            Tuning = tuning,
+            History = history,
             Influences = influences,
             TotalSampleCount = totalSampleCount,
             InfluenceSampleCount = influences.Count,
             ShortlistApplied = shortlistApplied,
             BroadInterpolation = broadInterpolation,
+            DominantSamplePersistenceUsed = dominantSamplePersistenceUsed,
+            BroadModeMemoryUsed = broadModeMemoryUsed,
             SafetyLimited = safetyLimited,
             Summary = strongestNormalizedWeight <= 0.001f
                 ? "No meaningful pose sample influence was found."
-                : $"Dominant RBF samples: {BuildSampleSummary(influences, totalSampleCount, shortlistApplied, broadInterpolation)}.",
+                : $"Dominant RBF samples: {BuildSampleSummary(influences, totalSampleCount, shortlistApplied, broadInterpolation)}. {tuning.Summary}",
         };
     }
 
@@ -641,7 +715,7 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
         CorrectiveDefinition definition,
         float driverStrength,
         CorrectiveSignals signals,
-        float activation,
+        ActivationSolveState activationState,
         float correctionStrength,
         IReadOnlyList<DriverSample> driverSamples,
         RegionSolveResult rbf,
@@ -667,27 +741,59 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
             Label = definition.Label,
             DriverStrength = driverStrength,
             Discontinuity = signals.Discontinuity,
-            Activation = activation,
+            Activation = activationState.Activation,
             RawActivation = rbf.RawActivation,
             Strength = correctionStrength,
             EstimatedRiskReduction = EstimateRiskReductionFraction(settings, regionSettings, correctionStrength),
             SafetyLimited = rbf.SafetyLimited || metrics.Clamped,
             LocksOrPinsLimited = metrics.LocksOrPinsLimited,
             Clamped = metrics.Clamped,
-            Damped = activation + 0.01f < rbf.RawActivation,
+            Damped = activationState.Activation + 0.01f < rbf.RawActivation,
             SampleCount = rbf.TotalSampleCount,
             InfluenceSampleCount = rbf.InfluenceSampleCount,
             ShortlistApplied = rbf.ShortlistApplied,
             BroadInterpolation = rbf.BroadInterpolation,
+            AdaptiveMode = rbf.Tuning.ModeLabel,
+            AdaptiveShortlistMax = rbf.Tuning.ShortlistMax,
+            AdaptiveShortlistFloor = rbf.Tuning.ShortlistFloor,
+            AdaptiveSharpnessScale = rbf.Tuning.SharpnessScale,
+            AdaptiveFalloffScale = rbf.Tuning.FalloffScale,
+            AdaptiveDampingScale = rbf.Tuning.DampingScale,
+            AdaptiveMeaningfulChange = rbf.Tuning.MeaningfulChange,
+            AdaptiveSummary = rbf.Tuning.Summary,
+            PoseHistoryActive = rbf.History.Active,
+            HysteresisHeld = activationState.HysteresisHeld,
+            DominantSamplePersistenceUsed = rbf.DominantSamplePersistenceUsed,
+            BroadModeMemoryUsed = rbf.BroadModeMemoryUsed,
+            DriverHistoryRetention = rbf.History.Retention,
+            DriverHistoryChangeMagnitude = rbf.History.ChangeMagnitude,
+            TransitionSummary = BuildTransitionSummary(activationState, rbf),
             DriverSummary = BuildDriverSummary(driverSamples),
             DriverVectorSummary = BuildDriverVectorSummary(driverSamples),
             SampleSummary = BuildSampleSummary(rbf.Influences, rbf.TotalSampleCount, rbf.ShortlistApplied, rbf.BroadInterpolation),
-            Summary = BuildRegionSummary(activation, correctionStrength, rbf, metrics),
+            Summary = BuildRegionSummary(activationState.Activation, correctionStrength, rbf, metrics),
             Description = definition.Description,
         };
 
         debugState.InfluentialSamples.AddRange(dominant);
         return debugState;
+    }
+
+    private static string BuildTransitionSummary(ActivationSolveState activationState, RegionSolveResult rbf)
+    {
+        var notes = new List<string>();
+        if (rbf.History.Active)
+            notes.Add($"pose history retained {rbf.History.Retention:0.00} with driver change {rbf.History.ChangeMagnitude:0.00}");
+        if (activationState.HysteresisHeld)
+            notes.Add("activation hysteresis held the region in its transition band");
+        if (rbf.DominantSamplePersistenceUsed)
+            notes.Add("dominant-sample persistence biased the shortlist");
+        if (rbf.BroadModeMemoryUsed)
+            notes.Add($"mode memory kept the solve {(rbf.BroadInterpolation ? "broad" : "focused")}");
+
+        return notes.Count == 0
+            ? string.Empty
+            : string.Join("; ", notes) + ".";
     }
 
     private static string BuildOverallSummary(
@@ -717,6 +823,109 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
         return $"RBF pose-space correctives are active around {focusText}.";
     }
 
+    private static PoseHistorySolveState ApplyPoseHistorySmoothing(
+        CorrectiveDefinition definition,
+        IReadOnlyList<float> driverVector,
+        AdvancedBodyScalingCorrectiveRuntimeState runtimeState)
+    {
+        if (driverVector.Count == 0)
+        {
+            runtimeState.SmoothedDriverVector = Array.Empty<float>();
+            return new PoseHistorySolveState(Array.Empty<float>(), 0f, 0f, false, "No driver history was available.");
+        }
+
+        if (runtimeState.SmoothedDriverVector.Length != driverVector.Count)
+        {
+            runtimeState.SmoothedDriverVector = driverVector.ToArray();
+            return new PoseHistorySolveState(runtimeState.SmoothedDriverVector, 0f, 0f, false, "Pose-history smoothing initialized from the current driver vector.");
+        }
+
+        var previous = runtimeState.SmoothedDriverVector;
+        var changeMagnitude = ComputeWeightedDriverDistance(driverVector, previous, definition);
+        var peakDriver = driverVector.Max();
+        var historyRetention = Math.Clamp(
+            0.30f +
+            (GetAdaptiveRegionProfile(definition.Region).TransitionBias * 0.24f) +
+            ((1f - Math.Clamp(changeMagnitude / 0.36f, 0f, 1f)) * 0.28f) +
+            ((1f - peakDriver) * 0.08f),
+            0.18f,
+            0.78f);
+        var response = 1f - historyRetention;
+        var smoothed = new float[driverVector.Count];
+        for (var i = 0; i < driverVector.Count; ++i)
+            smoothed[i] = previous[i] + ((driverVector[i] - previous[i]) * response);
+
+        runtimeState.SmoothedDriverVector = smoothed;
+        return new PoseHistorySolveState(
+            SmoothedDriverVector: smoothed,
+            Retention: historyRetention,
+            ChangeMagnitude: changeMagnitude,
+            Active: true,
+            Summary: $"Pose-history smoothing retained {historyRetention:0.00} of the prior driver vector across a {changeMagnitude:0.00} driver change.");
+    }
+
+    private static bool ApplyDominantSamplePersistence(
+        List<SampleInfluence> influences,
+        AdvancedBodyScalingCorrectiveRuntimeState runtimeState,
+        PoseHistorySolveState history,
+        AdaptiveSolveTuning tuning)
+    {
+        if (string.IsNullOrWhiteSpace(runtimeState.DominantSampleName) || influences.Count == 0)
+            return false;
+
+        var persistentIndex = influences.FindIndex(entry => string.Equals(entry.Sample.Name, runtimeState.DominantSampleName, StringComparison.Ordinal));
+        if (persistentIndex < 0)
+            return false;
+
+        var persistent = influences[persistentIndex];
+        var strongest = influences.Max(entry => entry.RawWeight);
+        if (persistent.Distance > tuning.DistanceRetention + 0.08f ||
+            persistent.RawWeight < Math.Max(MinimumShortlistedRawWeight * 0.75f, strongest * 0.62f) ||
+            history.ChangeMagnitude > 0.28f)
+        {
+            return false;
+        }
+
+        var persistenceBoost = Math.Clamp(1.06f + (history.Retention * 0.10f) + ((1f - history.ChangeMagnitude / 0.28f) * 0.06f), 1.04f, 1.18f);
+        influences[persistentIndex] = persistent with { RawWeight = Math.Clamp(persistent.RawWeight * persistenceBoost, 0f, 1f) };
+        return true;
+    }
+
+    private static bool DetermineBroadInterpolation(
+        IReadOnlyList<SampleInfluence> influences,
+        AdaptiveSolveTuning tuning,
+        AdvancedBodyScalingCorrectiveRuntimeState runtimeState,
+        out bool memoryUsed)
+    {
+        var primaryBroad = influences.Count(entry => entry.Weight >= tuning.PrimaryBroadWeightThreshold) >= tuning.PrimaryBroadCount;
+        var secondaryBroad = influences.Count(entry => entry.Weight >= tuning.SecondaryBroadWeightThreshold) >= tuning.SecondaryBroadCount;
+        var topWeight = influences.Count == 0 ? 0f : influences[0].Weight;
+        var runnerUpWeight = influences.Count < 2 ? 0f : influences[1].Weight;
+        var baseBroad = primaryBroad || secondaryBroad;
+        memoryUsed = false;
+
+        if (runtimeState.BroadInterpolation)
+        {
+            var strongFocusEvidence = topWeight >= tuning.PrimaryBroadWeightThreshold + 0.18f && runnerUpWeight <= tuning.SecondaryBroadWeightThreshold * 0.85f;
+            if (!baseBroad && !strongFocusEvidence)
+            {
+                memoryUsed = true;
+                return true;
+            }
+
+            return baseBroad;
+        }
+
+        var borderlineBroad = baseBroad && topWeight > 0.48f && runnerUpWeight < tuning.SecondaryBroadWeightThreshold + 0.02f;
+        if (borderlineBroad)
+        {
+            memoryUsed = true;
+            return false;
+        }
+
+        return baseBroad;
+    }
+
     private static string BuildRegionSummary(
         float activation,
         float correctionStrength,
@@ -736,30 +945,183 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
         return builder.ToString();
     }
 
+    private static AdaptiveSolveTuning BuildAdaptiveSolveTuning(
+        CorrectiveDefinition definition,
+        AdvancedBodyScalingPoseCorrectiveSettings settings,
+        AdvancedBodyScalingCorrectiveRegionSettings regionSettings,
+        IReadOnlyList<float> driverVector)
+    {
+        var profile = GetAdaptiveRegionProfile(definition.Region);
+        var stats = LibraryStatsMap.TryGetValue(definition.Region, out var value)
+            ? value
+            : new RegionLibraryStats(0.26f, 0.44f, 0.55f, 0.50f, 0.50f);
+        var peakDriver = driverVector.Count == 0 ? 0f : driverVector.Max();
+        var mixedDriverCount = driverVector.Count == 0
+            ? 0
+            : driverVector.Count(entry => entry >= 0.18f && entry <= 0.74f);
+        var mixedness = driverVector.Count == 0 ? 0f : (float)mixedDriverCount / driverVector.Count;
+        var focusScore = Math.Clamp(
+            (stats.DensityScore * 0.44f) +
+            (peakDriver * 0.22f) +
+            (profile.SelectivityBias * 0.22f) +
+            ((1f - mixedness) * 0.12f),
+            0f,
+            1f);
+        var bridgeScore = Math.Clamp(
+            (stats.SpreadScore * 0.34f) +
+            (mixedness * 0.28f) +
+            (profile.TransitionBias * 0.26f) +
+            ((1f - peakDriver) * 0.12f),
+            0f,
+            1f);
+        var modeLabel = focusScore - bridgeScore > 0.12f
+            ? $"{profile.Label} selective"
+            : bridgeScore - focusScore > 0.12f
+                ? $"{profile.Label} bridge-support"
+                : $"{profile.Label} balanced";
+
+        var shortlistMax = ClampInt(
+            (int)MathF.Round(profile.BaseShortlistMax + (bridgeScore * 1.8f) - (focusScore * 1.4f)),
+            AdaptiveShortlistAbsoluteMin,
+            AdaptiveShortlistAbsoluteMax);
+        var shortlistFloor = ClampInt(
+            (int)MathF.Round(profile.BaseShortlistFloor + (bridgeScore * 0.8f) - (focusScore * 0.5f)),
+            3,
+            Math.Min(shortlistMax, AdaptiveShortlistAbsoluteMax - 1));
+        var minimumRawWeight = Math.Clamp(0.010f + (focusScore * 0.010f) - (bridgeScore * 0.004f), 0.008f, 0.020f);
+        var distanceRetention = Math.Clamp(0.14f + (bridgeScore * 0.07f) - (focusScore * 0.03f), 0.12f, 0.24f);
+        var sharpnessScale = Math.Clamp(1f + (focusScore * 0.16f) - (bridgeScore * 0.10f), 0.88f, 1.18f);
+        var falloffScale = Math.Clamp(1f + (bridgeScore * 0.16f) - (focusScore * 0.08f), 0.88f, 1.18f);
+        var dampingScale = Math.Clamp(1f + (bridgeScore * 0.10f) + (profile.DampingBias * 0.08f) - (focusScore * 0.05f), 0.90f, 1.16f);
+        var primaryBroadThreshold = Math.Clamp(0.15f + (focusScore * 0.03f) - (bridgeScore * 0.04f), 0.10f, 0.19f);
+        var primaryBroadCount = ClampInt((int)MathF.Round(4f + (bridgeScore * 1.5f) - (focusScore * 1.2f)), 3, 6);
+        var secondaryBroadThreshold = Math.Clamp(0.08f + (focusScore * 0.02f) - (bridgeScore * 0.025f), 0.05f, 0.11f);
+        var secondaryBroadCount = ClampInt((int)MathF.Round(6f + (bridgeScore * 1.4f) - (focusScore * 0.9f)), 5, 8);
+        var meaningfulChange =
+            shortlistMax != MaxShortlistedInfluenceSamples ||
+            shortlistFloor != MinShortlistedInfluenceSamples ||
+            MathF.Abs(minimumRawWeight - MinimumShortlistedRawWeight) >= 0.002f ||
+            MathF.Abs(sharpnessScale - 1f) >= 0.05f ||
+            MathF.Abs(falloffScale - 1f) >= 0.05f ||
+            MathF.Abs(dampingScale - 1f) >= 0.05f;
+
+        return new AdaptiveSolveTuning(
+            ModeLabel: modeLabel,
+            ShortlistMax: shortlistMax,
+            ShortlistFloor: shortlistFloor,
+            MinimumRawWeight: minimumRawWeight,
+            DistanceRetention: distanceRetention,
+            PrimaryBroadWeightThreshold: primaryBroadThreshold,
+            PrimaryBroadCount: primaryBroadCount,
+            SecondaryBroadWeightThreshold: secondaryBroadThreshold,
+            SecondaryBroadCount: secondaryBroadCount,
+            SharpnessScale: sharpnessScale,
+            FalloffScale: falloffScale,
+            DampingScale: dampingScale,
+            DensityScore: stats.DensityScore,
+            SpreadScore: stats.SpreadScore,
+            MeaningfulChange: meaningfulChange,
+            Summary: $"{modeLabel} solve keeps shortlist {shortlistFloor}-{shortlistMax}, sharpness x{sharpnessScale:0.00}, falloff x{falloffScale:0.00}, damping x{dampingScale:0.00}, library density {stats.DensityScore:0.00}, spread {stats.SpreadScore:0.00}.");
+    }
+
+    private static AdaptiveRegionProfile GetAdaptiveRegionProfile(AdvancedBodyScalingCorrectiveRegion region)
+        => region switch
+        {
+            AdvancedBodyScalingCorrectiveRegion.NeckShoulder => new AdaptiveRegionProfile("neck/shoulder", 7, 5, 0.44f, 0.68f, 0.35f),
+            AdvancedBodyScalingCorrectiveRegion.ClavicleUpperChest => new AdaptiveRegionProfile("clavicle/upper-chest", 6, 4, 0.72f, 0.28f, 0.18f),
+            AdvancedBodyScalingCorrectiveRegion.ShoulderUpperArm => new AdaptiveRegionProfile("shoulder/upper-arm", 6, 4, 0.76f, 0.26f, 0.12f),
+            AdvancedBodyScalingCorrectiveRegion.ElbowForearm => new AdaptiveRegionProfile("elbow/forearm", 5, 4, 0.60f, 0.22f, 0.10f),
+            AdvancedBodyScalingCorrectiveRegion.WaistHips => new AdaptiveRegionProfile("waist/hips", 6, 4, 0.36f, 0.58f, 0.24f),
+            AdvancedBodyScalingCorrectiveRegion.HipUpperThigh => new AdaptiveRegionProfile("hip/upper-thigh", 7, 5, 0.34f, 0.70f, 0.28f),
+            AdvancedBodyScalingCorrectiveRegion.ThighKneeCalf => new AdaptiveRegionProfile("thigh/knee/calf", 6, 4, 0.46f, 0.50f, 0.20f),
+            _ => new AdaptiveRegionProfile("balanced", MaxShortlistedInfluenceSamples, MinShortlistedInfluenceSamples, 0.50f, 0.50f, 0.20f),
+        };
+
+    private static RegionLibraryStats BuildRegionLibraryStats(CorrectiveDefinition definition)
+    {
+        var samples = definition.Samples.Where(static sample => sample.Enabled).ToArray();
+        if (samples.Length <= 1)
+            return new RegionLibraryStats(0.30f, 0.46f, 0.50f, 0.40f, 0.50f);
+
+        var nearestDistances = new List<float>(samples.Length);
+        var pairDistanceTotal = 0f;
+        var pairDistanceCount = 0;
+        for (var i = 0; i < samples.Length; ++i)
+        {
+            var nearest = float.MaxValue;
+            for (var j = 0; j < samples.Length; ++j)
+            {
+                if (i == j)
+                    continue;
+
+                var distance = ComputeWeightedDriverDistance(samples[i].Key, samples[j].Key, definition);
+                nearest = MathF.Min(nearest, distance);
+                pairDistanceTotal += distance;
+                pairDistanceCount++;
+            }
+
+            nearestDistances.Add(nearest == float.MaxValue ? 0f : nearest);
+        }
+
+        var totalDriverWeight = definition.Drivers.Sum(static driver => driver.Weight);
+        var weightedSpan = 0f;
+        for (var dimension = 0; dimension < definition.Drivers.Count; ++dimension)
+        {
+            var min = 1f;
+            var max = 0f;
+            foreach (var sample in samples)
+            {
+                var value = dimension < sample.Key.Count ? sample.Key[dimension] : 0f;
+                min = MathF.Min(min, value);
+                max = MathF.Max(max, value);
+            }
+
+            var weight = definition.Drivers[dimension].Weight;
+            weightedSpan += (max - min) * weight;
+        }
+
+        var averageNearest = nearestDistances.Count == 0 ? 0.30f : nearestDistances.Average();
+        var averagePair = pairDistanceCount == 0 ? averageNearest : pairDistanceTotal / pairDistanceCount;
+        var averageSpan = totalDriverWeight <= 0f ? 0.50f : weightedSpan / totalDriverWeight;
+        var densityScore = Math.Clamp((0.34f - averageNearest) / 0.18f, 0f, 1f);
+        var spreadScore = Math.Clamp(((averageSpan * 0.60f) + (averagePair * 0.40f) - 0.28f) / 0.36f, 0f, 1f);
+        return new RegionLibraryStats(averageNearest, averagePair, averageSpan, densityScore, spreadScore);
+    }
+
+    private static float ComputeWeightedDriverDistance(
+        IReadOnlyList<float> left,
+        IReadOnlyList<float> right,
+        CorrectiveDefinition definition)
+    {
+        var weightedDistance = 0f;
+        var totalWeight = 0f;
+        for (var i = 0; i < definition.Drivers.Count && i < left.Count && i < right.Count; ++i)
+        {
+            var delta = left[i] - right[i];
+            var weight = definition.Drivers[i].Weight;
+            weightedDistance += delta * delta * weight;
+            totalWeight += weight;
+        }
+
+        return totalWeight <= 0f
+            ? 0f
+            : MathF.Sqrt(weightedDistance / totalWeight);
+    }
+
     private static float ComputeSampleWeight(
         IReadOnlyList<float> driverVector,
         CorrectiveDefinition definition,
         PoseSample sample,
         AdvancedBodyScalingPoseCorrectiveSettings settings,
         AdvancedBodyScalingCorrectiveRegionSettings regionSettings,
+        AdaptiveSolveTuning tuning,
         out float distance)
     {
-        var weightedDistance = 0f;
-        var totalWeight = 0f;
-        for (var i = 0; i < definition.Drivers.Count && i < driverVector.Count; ++i)
-        {
-            var delta = driverVector[i] - sample.Key[i];
-            var weight = definition.Drivers[i].Weight;
-            weightedDistance += delta * delta * weight;
-            totalWeight += weight;
-        }
-
-        distance = totalWeight <= 0f
-            ? 0f
-            : MathF.Sqrt(weightedDistance / totalWeight);
+        distance = ComputeWeightedDriverDistance(driverVector, sample.Key, definition);
 
         var sharpnessScale = Lerp(1.20f, 0.58f, Math.Clamp(settings.PoseMapSharpness / AdvancedBodyScalingPoseCorrectiveTuning.UiPoseMapSharpnessMax, 0f, 1f));
-        var falloffScale = Lerp(0.65f, 1.35f, regionSettings.Falloff);
+        sharpnessScale *= tuning.SharpnessScale;
+        var falloffScale = Lerp(0.65f, 1.35f, regionSettings.Falloff) * tuning.FalloffScale;
         var radius = MathF.Max(0.12f, sample.Radius * sharpnessScale * falloffScale);
         var gaussian = MathF.Exp(-(distance * distance) / (2f * radius * radius));
         return Math.Clamp(gaussian * sample.Weight, 0f, 1f);
@@ -895,25 +1257,69 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
         return new CorrectiveSignals(discontinuity, continuityStress, taperStress);
     }
 
-    private static float ComputeActivation(
+    private static ActivationSolveState ComputeActivation(
         float rawActivation,
-        float previousActivation,
+        AdvancedBodyScalingCorrectiveRuntimeState runtimeState,
         AdvancedBodyScalingPoseCorrectiveSettings settings,
         AdvancedBodyScalingCorrectiveRegionSettings regionSettings,
+        AdaptiveSolveTuning tuning,
         bool useDeadzone = true)
     {
-        var combinedDamping = Math.Clamp((settings.Damping * 0.45f) + (regionSettings.Smoothing * 0.55f), 0f, 0.97f);
+        var previousActivation = runtimeState.Activation;
+        var wasActive = runtimeState.IsActive || previousActivation > 0.01f;
+        var activateThreshold = Math.Clamp(
+            regionSettings.ActivationThreshold + (useDeadzone ? regionSettings.ActivationDeadzone * 0.28f : 0f),
+            0f,
+            0.98f);
+        var deactivateThreshold = Math.Clamp(
+            regionSettings.ActivationThreshold - Math.Clamp((regionSettings.ActivationDeadzone * 0.55f) + (tuning.SpreadScore * 0.03f), 0.025f, 0.12f),
+            0f,
+            activateThreshold);
+        var combinedDamping = Math.Clamp(((settings.Damping * 0.45f) + (regionSettings.Smoothing * 0.55f)) * tuning.DampingScale, 0f, 0.97f);
         var response = Math.Clamp(1f - combinedDamping, 0.10f, 1f);
+        var hysteresisHeld = false;
+        var targetActive = rawActivation >= activateThreshold;
 
-        if (rawActivation <= regionSettings.ActivationThreshold)
-            return previousActivation > 0f ? previousActivation * (1f - Math.Clamp(response * 0.85f, 0.12f, 0.55f)) : 0f;
+        if (wasActive && rawActivation >= deactivateThreshold)
+        {
+            targetActive = true;
+            hysteresisHeld = rawActivation < activateThreshold;
+        }
 
-        if (useDeadzone && previousActivation <= 0.001f && rawActivation < regionSettings.ActivationThreshold + regionSettings.ActivationDeadzone)
-            return 0f;
+        if (!targetActive)
+        {
+            var faded = previousActivation > 0f
+                ? previousActivation * (1f - Math.Clamp(response * 0.85f, 0.12f, 0.55f))
+                : 0f;
+            return new ActivationSolveState(
+                Activation: faded < 0.003f ? 0f : Math.Clamp(faded, 0f, 1f),
+                IsActive: false,
+                HysteresisHeld: false,
+                Summary: "Activation fell below the release threshold, so the region is fading out.");
+        }
 
-        var target = Remap(rawActivation, regionSettings.ActivationThreshold, 1f);
+        if (useDeadzone && !wasActive && rawActivation < activateThreshold)
+        {
+            return new ActivationSolveState(
+                Activation: 0f,
+                IsActive: false,
+                HysteresisHeld: false,
+                Summary: "Activation stayed below the entry threshold.");
+        }
+
+        var target = Remap(rawActivation, hysteresisHeld ? deactivateThreshold : activateThreshold, 1f);
+        if (hysteresisHeld)
+            target = MathF.Max(target, previousActivation * 0.92f);
+
         var smoothed = previousActivation + ((target - previousActivation) * response);
-        return smoothed < 0.003f ? 0f : Math.Clamp(smoothed, 0f, 1f);
+        var activation = smoothed < 0.003f ? 0f : Math.Clamp(smoothed, 0f, 1f);
+        return new ActivationSolveState(
+            Activation: activation,
+            IsActive: activation > 0.003f,
+            HysteresisHeld: hysteresisHeld,
+            Summary: hysteresisHeld
+                ? "Activation hysteresis kept the region active through a transition band."
+                : "Activation responded directly to the current stabilized pose.");
     }
 
     private static float ComputeCorrectionStrength(
@@ -1155,6 +1561,13 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
 
         return Math.Clamp((value - start) / (full - start), 0f, 1f);
     }
+
+    private static int ClampInt(int value, int min, int max)
+        => value < min
+            ? min
+            : value > max
+                ? max
+                : value;
 
     private static float Lerp(float a, float b, float t)
         => a + ((b - a) * t);

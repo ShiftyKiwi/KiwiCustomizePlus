@@ -336,6 +336,14 @@ public sealed class AdvancedBodyScalingSettings
 
     public bool PreferTrueSkinWeightImportance { get; set; } = true;
 
+    public bool FullBoneImportanceOnSelf { get; set; } = true;
+
+    public bool FullBoneImportanceOnProfiledActors { get; set; } = true;
+
+    public bool FullBoneImportanceOnTargetOrFocus { get; set; } = true;
+
+    public bool FullBoneImportanceOnNearbyNonProfiledActors { get; set; } = false;
+
     private float _boneImportanceHeuristicBlend = 0.55f;
 
     public float BoneImportanceHeuristicBlend
@@ -569,6 +577,10 @@ public sealed class AdvancedBodyScalingSettings
         NaturalizationStrength = defaults.NaturalizationStrength;
         ModelDerivedBoneImportanceEnabled = defaults.ModelDerivedBoneImportanceEnabled;
         PreferTrueSkinWeightImportance = defaults.PreferTrueSkinWeightImportance;
+        FullBoneImportanceOnSelf = defaults.FullBoneImportanceOnSelf;
+        FullBoneImportanceOnProfiledActors = defaults.FullBoneImportanceOnProfiledActors;
+        FullBoneImportanceOnTargetOrFocus = defaults.FullBoneImportanceOnTargetOrFocus;
+        FullBoneImportanceOnNearbyNonProfiledActors = defaults.FullBoneImportanceOnNearbyNonProfiledActors;
         BoneImportanceHeuristicBlend = defaults.BoneImportanceHeuristicBlend;
         NeckLengthCompensation = defaults.NeckLengthCompensation;
         NeckShoulderBlendStrength = defaults.NeckShoulderBlendStrength;
@@ -595,6 +607,10 @@ public sealed class AdvancedBodyScalingSettings
             NaturalizationStrength = NaturalizationStrength,
             ModelDerivedBoneImportanceEnabled = ModelDerivedBoneImportanceEnabled,
             PreferTrueSkinWeightImportance = PreferTrueSkinWeightImportance,
+            FullBoneImportanceOnSelf = FullBoneImportanceOnSelf,
+            FullBoneImportanceOnProfiledActors = FullBoneImportanceOnProfiledActors,
+            FullBoneImportanceOnTargetOrFocus = FullBoneImportanceOnTargetOrFocus,
+            FullBoneImportanceOnNearbyNonProfiledActors = FullBoneImportanceOnNearbyNonProfiledActors,
             BoneImportanceHeuristicBlend = BoneImportanceHeuristicBlend,
             NeckLengthCompensation = NeckLengthCompensation,
             NeckShoulderBlendStrength = NeckShoulderBlendStrength,

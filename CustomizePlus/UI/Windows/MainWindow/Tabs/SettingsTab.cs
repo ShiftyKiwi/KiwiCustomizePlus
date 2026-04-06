@@ -608,7 +608,7 @@ public class SettingsTab
     private void DrawBoneImportanceWeightingSettings(AdvancedBodyScalingSettings settings)
     {
         ImGui.Text("Bone Importance Weighting");
-        ImGui.TextDisabled("Uses supported body model skinning data, when available, to make propagation, smoothing, redistribution, and guardrails more anatomically coherent. It stays on the existing transform-based path and falls back safely.");
+        ImGui.TextDisabled("Uses supported body model skinning data, when available, to make propagation, smoothing, redistribution, and guardrails more anatomically coherent. It now refines the map with approximate surface coverage and structural bone classification, stays on the existing transform-based path, and falls back safely.");
 
         var enabled = settings.ModelDerivedBoneImportanceEnabled;
         if (ImGui.Checkbox("Enable model-derived bone importance", ref enabled))
@@ -630,6 +630,42 @@ public class SettingsTab
         }
         CtrlHelper.AddHoverText("Uses Stage 2 blend-weight aggregation when a supported blend-index/weight stream is available. Otherwise the system falls back to Stage 1 coarse mesh participation.");
 
+        var fullOnSelf = settings.FullBoneImportanceOnSelf;
+        if (ImGui.Checkbox("Always run full BIW on self", ref fullOnSelf))
+        {
+            settings.FullBoneImportanceOnSelf = fullOnSelf;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Self stays the highest-priority BIW actor. When disabled, the crowd-safe policy can still fall back to cached or heuristic behavior.");
+
+        var fullOnProfiledActors = settings.FullBoneImportanceOnProfiledActors;
+        if (ImGui.Checkbox("Run full BIW on actors assigned to a profile", ref fullOnProfiledActors))
+        {
+            settings.FullBoneImportanceOnProfiledActors = fullOnProfiledActors;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Actors with an explicit Kiwi profile stay ahead of crowd-safe downgrades. Default-profile-only actors do not count as explicitly profiled here.");
+
+        var fullOnTargetFocus = settings.FullBoneImportanceOnTargetOrFocus;
+        if (ImGui.Checkbox("Run full BIW on target / focus target", ref fullOnTargetFocus))
+        {
+            settings.FullBoneImportanceOnTargetOrFocus = fullOnTargetFocus;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("Lets your current target or focus target keep full BIW priority when possible, even in busier scenes.");
+
+        var fullOnNearby = settings.FullBoneImportanceOnNearbyNonProfiledActors;
+        if (ImGui.Checkbox("Allow full BIW on nearby non-profiled actors", ref fullOnNearby))
+        {
+            settings.FullBoneImportanceOnNearbyNonProfiledActors = fullOnNearby;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+        }
+        CtrlHelper.AddHoverText("When disabled, nearby actors without an explicit profile are hard-skipped back to heuristic fallback. Even when enabled, they are still the first group to lose active BIW work under crowd pressure.");
+
         var heuristicBlend = settings.BoneImportanceHeuristicBlend;
         if (ImGui.SliderFloat("Model weighting blend", ref heuristicBlend, 0f, 1f, "%.2f"))
         {
@@ -646,12 +682,19 @@ public class SettingsTab
             var result = liveArmature.ActiveBoneImportanceResult;
             DrawWrappedDisabledValue("Live source", $"{result.LiveSourceLabel} ({result.StageLabel})");
             DrawWrappedDisabledValue("Live mode", $"{result.AggregateModeLabel} ({result.ContributingPartCount} contributing part{(result.ContributingPartCount == 1 ? string.Empty : "s")})");
+            DrawWrappedDisabledValue("Crowd-safe mode", $"{result.VisibleRuntimeModeLabel} on {result.VisibleActorTierLabel} (full eligible {result.VisibleFullQualityEligible}, downgraded {result.VisibleCrowdSafeDowngraded}, stable-throttled {result.VisibleStableThrottled})");
             if (!string.IsNullOrWhiteSpace(result.ResolutionDetail))
                 DrawWrappedDisabledValue("Resolution detail", result.ResolutionDetail);
             if (!string.IsNullOrWhiteSpace(result.ModelIdentity))
                 DrawWrappedDisabledValue("Live model", $"{result.ModelIdentity} {(result.CacheHit ? "[cache hit]" : "[cache miss / fresh parse]")}");
             if (!string.IsNullOrWhiteSpace(result.RefreshStatus))
                 DrawWrappedDisabledValue("Refresh", result.RefreshStatus);
+            if (!string.IsNullOrWhiteSpace(result.VisibleRuntimeSummary))
+                DrawWrappedDisabledValue("Runtime policy", result.VisibleRuntimeSummary);
+            if (!string.IsNullOrWhiteSpace(result.RefinementSummary))
+                DrawWrappedDisabledValue("Refinement", result.RefinementSummary);
+            if (!string.IsNullOrWhiteSpace(result.ConfidenceSummary))
+                DrawWrappedDisabledValue("Slot confidence", result.ConfidenceSummary);
             if (!string.IsNullOrWhiteSpace(result.RequestedGamePath))
                 DrawWrappedDisabledValue("Requested game path", result.RequestedGamePath);
             if (!string.IsNullOrWhiteSpace(result.ModelPath))
@@ -674,6 +717,14 @@ public class SettingsTab
             }
             if (!string.IsNullOrWhiteSpace(result.Summary))
                 DrawWrappedDisabledValue("Importance source", result.Summary);
+            if (result.SampleValues.Count > 0)
+            {
+                ImGui.TextDisabled("Sample bones:");
+                ImGui.Indent();
+                foreach (var sample in result.SampleValues.Take(4))
+                    DrawWrappedDisabledBulletText(sample);
+                ImGui.Unindent();
+            }
         }
     }
 
@@ -1757,6 +1808,14 @@ public class SettingsTab
         if (!string.IsNullOrWhiteSpace(debugState.Summary))
             ImGui.TextWrapped(debugState.Summary);
 
+        var historyActiveCount = debugState.ActiveRegions.Count(region => region.PoseHistoryActive);
+        var hysteresisCount = debugState.ActiveRegions.Count(region => region.HysteresisHeld);
+        var persistenceCount = debugState.ActiveRegions.Count(region => region.DominantSamplePersistenceUsed || region.BroadModeMemoryUsed);
+        if (historyActiveCount > 0 || hysteresisCount > 0 || persistenceCount > 0)
+        {
+            ImGui.TextDisabled($"Transition stabilization: pose history active in {historyActiveCount} region{(historyActiveCount == 1 ? string.Empty : "s")}, hysteresis held {hysteresisCount}, memory-biased sample/mode transitions in {persistenceCount}.");
+        }
+
         if (debugState.ActiveRegions.Count == 0)
         {
             ImGui.TextDisabled("No corrective region is strongly active in the current pose.");
@@ -1790,6 +1849,14 @@ public class SettingsTab
             ImGui.TextDisabled(region.ShortlistApplied
                 ? $"Nearest-sample shortlist active. {(region.BroadInterpolation ? "Broad interpolation" : "Focused interpolation")} is using {region.InfluenceSampleCount} of {region.SampleCount} samples."
                 : $"{(region.BroadInterpolation ? "Broad interpolation" : "Focused interpolation")} is using the full {region.SampleCount}-sample library.");
+            if (!string.IsNullOrWhiteSpace(region.AdaptiveSummary))
+                ImGui.TextDisabled($"Adaptive tuning: {region.AdaptiveSummary}");
+            else
+                ImGui.TextDisabled($"Adaptive tuning: {region.AdaptiveMode}, shortlist {region.AdaptiveShortlistFloor}-{region.AdaptiveShortlistMax}, sharpness x{region.AdaptiveSharpnessScale:0.00}, falloff x{region.AdaptiveFalloffScale:0.00}, damping x{region.AdaptiveDampingScale:0.00}.");
+            if (region.AdaptiveMeaningfulChange)
+                ImGui.TextDisabled("Adaptive solve materially changed shortlist/falloff/damping from the global baseline for this region.");
+            if (!string.IsNullOrWhiteSpace(region.TransitionSummary))
+                ImGui.TextDisabled($"Transition memory: {region.TransitionSummary}");
             if (!string.IsNullOrWhiteSpace(region.DriverVectorSummary))
                 ImGui.TextDisabled($"Driver vector: {region.DriverVectorSummary}");
             if (!string.IsNullOrWhiteSpace(region.SampleSummary))

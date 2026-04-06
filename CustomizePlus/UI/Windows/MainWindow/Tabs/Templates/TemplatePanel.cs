@@ -752,9 +752,15 @@ public class TemplatePanel : IDisposable
             DrawWrappedBulletValue("Source", $"{debug.BoneImportanceSource} ({debug.BoneImportanceStage})");
             DrawWrappedBulletValue("Resolution", debug.BoneImportanceResolution);
             DrawWrappedBulletValue("Aggregate mode", $"{debug.BoneImportanceAggregateMode} ({debug.BoneImportanceContributingPartCount} contributing part{(debug.BoneImportanceContributingPartCount == 1 ? string.Empty : "s")})");
+            DrawWrappedBulletValue("Crowd-safe mode", $"{debug.BoneImportanceRuntimeMode} on {debug.BoneImportanceActorTier} (full eligible {debug.BoneImportanceFullQualityEligible}, downgraded {debug.BoneImportanceCrowdSafeDowngraded}, stable-throttled {debug.BoneImportanceStableThrottled})");
             DrawWrappedBulletValue("Cache", debug.BoneImportanceCacheHit ? "hit" : "miss / not cached");
             DrawWrappedBulletValue("Refresh", debug.BoneImportanceRefreshStatus);
             DrawWrappedBulletValue("Blend bias", $"{debug.BoneImportanceHeuristicBlend:0.00}");
+            DrawWrappedBulletValue("Refinements", $"{(debug.BoneImportanceAreaAwareRefinementActive ? "area-aware on" : "area-aware off")}, {(debug.BoneImportanceClassificationRefinementActive ? "classification-aware on" : "classification-aware off")}, {(debug.BoneImportanceConfidenceWeightedAggregationActive ? "confidence-weighted aggregation on" : "confidence-weighted aggregation off")}");
+            if (!string.IsNullOrWhiteSpace(debug.BoneImportanceConfidenceSummary))
+                DrawWrappedBulletValue("Slot confidence", debug.BoneImportanceConfidenceSummary);
+            if (!string.IsNullOrWhiteSpace(debug.BoneImportanceRuntimeSummary))
+                DrawWrappedBulletValue("Runtime policy", debug.BoneImportanceRuntimeSummary);
             DrawWrappedBulletText(debug.BoneImportanceFallbackUsed
                 ? "Pipeline fell back to the current heuristic behavior for this preview."
                 : "Model-derived importance influenced propagation, smoothing, and guardrails in this preview.");
@@ -768,6 +774,8 @@ public class TemplatePanel : IDisposable
                 DrawWrappedDisabledValue("Resolved model path", debug.BoneImportanceModelPath);
             if (!string.IsNullOrWhiteSpace(debug.BoneImportanceSummary))
                 DrawWrappedDisabledValue("Importance source", debug.BoneImportanceSummary);
+            if (!string.IsNullOrWhiteSpace(debug.BoneImportanceRefinementSummary))
+                DrawWrappedDisabledValue("Refinement detail", debug.BoneImportanceRefinementSummary);
             if (!string.IsNullOrWhiteSpace(debug.BoneImportanceResolutionTrace) &&
                 !string.Equals(debug.BoneImportanceResolutionTrace, debug.BoneImportanceSummary, StringComparison.Ordinal))
                 DrawWrappedDisabledValue("Resolution trace", debug.BoneImportanceResolutionTrace);
@@ -792,6 +800,7 @@ public class TemplatePanel : IDisposable
 
             ImGui.Spacing();
             ImGui.Text("Estimated RBF pose-space correctives:");
+            ImGui.TextDisabled("Static preview shows adaptive RBF behavior, but live pose-history hysteresis only appears in the runtime armature debug readout.");
             if (debug.EstimatedPoseCorrectives.Count == 0)
             {
                 ImGui.Text("None");
@@ -808,6 +817,12 @@ public class TemplatePanel : IDisposable
                     ImGui.TextDisabled(entry.ShortlistApplied
                         ? $"Nearest-sample shortlist active. {(entry.BroadInterpolation ? "Broad interpolation" : "Focused interpolation")} is using {entry.InfluenceSampleCount} of {entry.SampleCount} samples."
                         : $"{(entry.BroadInterpolation ? "Broad interpolation" : "Focused interpolation")} is using the full {entry.SampleCount}-sample library.");
+                    if (!string.IsNullOrWhiteSpace(entry.AdaptiveSummary))
+                        ImGui.TextDisabled($"Adaptive tuning: {entry.AdaptiveSummary}");
+                    else
+                        ImGui.TextDisabled($"Adaptive tuning: {entry.AdaptiveMode}, shortlist {entry.AdaptiveShortlistFloor}-{entry.AdaptiveShortlistMax}, sharpness x{entry.AdaptiveSharpnessScale:0.00}, falloff x{entry.AdaptiveFalloffScale:0.00}, damping x{entry.AdaptiveDampingScale:0.00}.");
+                    if (entry.AdaptiveMeaningfulChange)
+                        ImGui.TextDisabled("Adaptive solve materially changed shortlist/falloff/damping for this region.");
                     if (!string.IsNullOrWhiteSpace(entry.DriverVectorSummary))
                         ImGui.TextDisabled($"Driver vector: {entry.DriverVectorSummary}");
                     if (!string.IsNullOrWhiteSpace(entry.SampleSummary))

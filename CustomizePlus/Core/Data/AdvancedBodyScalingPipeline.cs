@@ -361,6 +361,17 @@ internal static class AdvancedBodyScalingPipeline
         debug.BoneImportanceResolutionTrace = result?.ResolutionTrace ?? string.Empty;
         debug.BoneImportanceRefreshStatus = result?.RefreshStatus ?? string.Empty;
         debug.BoneImportanceSignatureChanged = result?.ModelSignatureChanged ?? false;
+        debug.BoneImportanceAreaAwareRefinementActive = result?.AreaAwareRefinementActive ?? false;
+        debug.BoneImportanceClassificationRefinementActive = result?.ClassificationRefinementActive ?? false;
+        debug.BoneImportanceConfidenceWeightedAggregationActive = result?.ConfidenceWeightedAggregationActive ?? false;
+        debug.BoneImportanceRefinementSummary = result?.RefinementSummary ?? string.Empty;
+        debug.BoneImportanceConfidenceSummary = result?.ConfidenceSummary ?? string.Empty;
+        debug.BoneImportanceRuntimeMode = result?.VisibleRuntimeModeLabel ?? "skipped";
+        debug.BoneImportanceActorTier = result?.VisibleActorTierLabel ?? "other actor";
+        debug.BoneImportanceFullQualityEligible = result?.VisibleFullQualityEligible ?? false;
+        debug.BoneImportanceCrowdSafeDowngraded = result?.VisibleCrowdSafeDowngraded ?? false;
+        debug.BoneImportanceStableThrottled = result?.VisibleStableThrottled ?? false;
+        debug.BoneImportanceRuntimeSummary = result?.VisibleRuntimeSummary ?? string.Empty;
         debug.BoneImportanceCacheHit = result?.CacheHit ?? false;
         debug.BoneImportanceFallbackUsed = !context.Active;
         debug.BoneImportanceSummary = result?.Summary

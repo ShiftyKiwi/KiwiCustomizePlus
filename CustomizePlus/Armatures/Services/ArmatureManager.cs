@@ -43,6 +43,21 @@ public unsafe sealed class ArmatureManager : IDisposable
     private readonly ArmatureChanged _event;
     private readonly EmoteService _emoteService;
     private readonly AdvancedBodyScalingBoneImportanceService _boneImportanceService;
+    private const float NearbyFullBoneImportanceDistance = 12f;
+    private const float NearbyFullBoneImportanceDistanceSquared = NearbyFullBoneImportanceDistance * NearbyFullBoneImportanceDistance;
+    private const float ActiveBoneImportanceBlendEpsilon = 0.0001f;
+    private const int SelfProbeIntervalMs = 250;
+    private const int ProfiledProbeIntervalMs = 500;
+    private const int TargetProbeIntervalMs = 500;
+    private const int NearbyProbeIntervalMs = 1200;
+    private const int OtherProbeIntervalMs = 2200;
+    private const int SelfResolveIntervalMs = 500;
+    private const int ProfiledResolveIntervalMs = 1100;
+    private const int TargetResolveIntervalMs = 1400;
+    private const int NearbyResolveIntervalMs = 2600;
+    private const int OtherResolveIntervalMs = 4200;
+    private const int BoneImportanceVisibleStateDebounceMs = 900;
+    private const int BoneImportanceVisibleLowActivityDebounceMs = 1200;
 
     /// <summary>
     /// This is a movement flag for every object. Used to prevent calls to ApplyRootTranslation from both movement and render hooks.
@@ -50,6 +65,73 @@ public unsafe sealed class ArmatureManager : IDisposable
     /// </summary>
     private bool[] _objectMovementFlagsArr = new bool[1024];
     private DateTime _lastRenderAtUtc;
+
+    private sealed class BoneImportanceFrameBudgetState
+    {
+        private int _profiledFullRemaining;
+        private int _targetFullRemaining;
+        private int _nearbyFullRemaining;
+        private int _targetReducedRemaining;
+        private int _nearbyReducedRemaining;
+
+        public BoneImportanceFrameBudgetState(int crowdActorCount)
+        {
+            CrowdActorCount = Math.Max(crowdActorCount, 1);
+            HighCrowdPressure = CrowdActorCount >= 8;
+            ExtremeCrowdPressure = CrowdActorCount >= 14;
+
+            _profiledFullRemaining = ExtremeCrowdPressure ? 1 : HighCrowdPressure ? 2 : 3;
+            _targetFullRemaining = 1;
+            _nearbyFullRemaining = CrowdActorCount >= 8 ? 0 : 1;
+            _targetReducedRemaining = 1;
+            _nearbyReducedRemaining = HighCrowdPressure ? 0 : 1;
+        }
+
+        public int CrowdActorCount { get; }
+        public bool HighCrowdPressure { get; }
+        public bool ExtremeCrowdPressure { get; }
+
+        public bool TryConsumeFull(AdvancedBodyScalingBoneImportanceActorTier tier)
+            => tier switch
+            {
+                AdvancedBodyScalingBoneImportanceActorTier.Self => true,
+                AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => Consume(ref _profiledFullRemaining),
+                AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus => Consume(ref _targetFullRemaining),
+                AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled => Consume(ref _nearbyFullRemaining),
+                _ => false,
+            };
+
+        public bool TryConsumeReduced(AdvancedBodyScalingBoneImportanceActorTier tier)
+            => tier switch
+            {
+                AdvancedBodyScalingBoneImportanceActorTier.Self => true,
+                AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => true,
+                AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus => Consume(ref _targetReducedRemaining),
+                AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled => Consume(ref _nearbyReducedRemaining),
+                _ => false,
+            };
+
+        private static bool Consume(ref int remaining)
+        {
+            if (remaining <= 0)
+                return false;
+
+            remaining--;
+            return true;
+        }
+    }
+
+    private readonly record struct BoneImportanceVisibleRuntimeState(
+        string RuntimeModeLabel,
+        string ActorTierLabel,
+        bool FullQualityEligible,
+        bool CrowdSafeDowngraded,
+        bool StableThrottled,
+        string RuntimeSummary)
+    {
+        public string Key
+            => $"{RuntimeModeLabel}|{ActorTierLabel}|{FullQualityEligible}|{CrowdSafeDowngraded}|{StableThrottled}";
+    }
 
     public Dictionary<ActorIdentifier, Armature> Armatures { get; private set; } = new();
 
@@ -190,14 +272,20 @@ public unsafe sealed class ArmatureManager : IDisposable
             armature.IsVisible = armature.LastSeen.AddSeconds(1) >= currentTime;
         }
 
-        foreach (var obj in _objectManager)
-        {
-            var actorIdentifier = obj.Key.CreatePermanent();
+        var renderableEntries = _objectManager
+            .Where(obj => obj.Value.Objects != null
+                && obj.Value.Objects.Count > 0
+                && obj.Value.Objects.Any(x => x.IsRenderedByGame()))
+            .ToList();
+        var boneImportanceBudget = new BoneImportanceFrameBudgetState(renderableEntries.Count);
 
-            //warn: in cutscenes the game creates a copy of your character and object #0,
-            //so we need to check if there is at least one object being rendered
-            if (obj.Value.Objects == null || obj.Value.Objects.Count == 0 || !obj.Value.Objects.Any(x => x.IsRenderedByGame()))
+        foreach (var obj in renderableEntries)
+        {
+            var objects = obj.Value.Objects;
+            if (objects == null || objects.Count == 0)
                 continue;
+
+            var actorIdentifier = obj.Key.CreatePermanent();
 
             if (!Armatures.ContainsKey(actorIdentifier))
             {
@@ -206,7 +294,7 @@ public unsafe sealed class ArmatureManager : IDisposable
                     continue;
 
                 var newArm = new Armature(actorIdentifier, activeProfile);
-                TryLinkSkeleton(newArm);
+                TryLinkSkeleton(newArm, boneImportanceBudget);
                 Armatures.Add(actorIdentifier, newArm);
                 _logger.Debug($"Added '{newArm}' for {actorIdentifier.IncognitoDebug()} to cache");
                 _event.Invoke(ArmatureChanged.Type.Created, newArm, activeProfile);
@@ -247,14 +335,14 @@ public unsafe sealed class ArmatureManager : IDisposable
                     }
 
                     armature.Profile.Armatures.Remove(armature);
-                    armature.Profile = activeProfile;
+                    armature.Profile = activeProfile!;
                     activeProfile.Armatures.Add(armature);
                 }
 
-                var actorForSettings = obj.Value.Objects.Count > 0 ? obj.Value.Objects[0] : Actor.Null;
+                var actorForSettings = objects[0];
                 var advancedBodyScaling = ResolveAdvancedBodyScaling(armature.Profile, actorForSettings);
                 var boneImportance = actorForSettings
-                    ? _boneImportanceService.ResolveForActor(actorForSettings, advancedBodyScaling, armature.ActiveBoneImportanceResult.ModelSignature)
+                    ? EvaluateBoneImportanceForArmature(armature, actorForSettings, advancedBodyScaling, boneImportanceBudget, forceRefresh: true)
                     : AdvancedBodyScalingBoneImportanceResult.CreateFallback(
                         "No live actor was available during profile rebind.",
                         enabled: advancedBodyScaling.ModelDerivedBoneImportanceEnabled,
@@ -294,7 +382,7 @@ public unsafe sealed class ArmatureManager : IDisposable
             //Needed because:
             //* Skeleton sometimes appears to be not ready when armature is created
             //* We want to keep armature up to date with any character skeleton changes
-            TryLinkSkeleton(armature);
+            TryLinkSkeleton(armature, boneImportanceBudget);
         }
     }
 
@@ -365,11 +453,614 @@ public unsafe sealed class ArmatureManager : IDisposable
         Array.Resize(ref _objectMovementFlagsArr, newSize);
     }
 
+    private AdvancedBodyScalingBoneImportanceResult EvaluateBoneImportanceForArmature(
+        Armature armature,
+        Actor actor,
+        AdvancedBodyScalingSettings settings,
+        BoneImportanceFrameBudgetState budget,
+        bool forceRefresh = false)
+    {
+        var tier = ClassifyBoneImportanceTier(armature, actor);
+        var fullEligible = IsFullBoneImportanceEligible(settings, tier);
+        var activelyManaged = ShouldActivelyManageBoneImportance(settings, tier, budget);
+        var runtimeState = armature.BoneImportanceRuntimeState;
+        var activeResult = armature.ActiveBoneImportanceResult;
+        var hasCachedModelResult = activeResult.ModelDerivedActive;
+        var now = Environment.TickCount64;
+
+        if (!settings.ModelDerivedBoneImportanceEnabled)
+        {
+            runtimeState.LastMode = AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped;
+            return ApplyRuntimePolicy(
+                AdvancedBodyScalingBoneImportanceResult.CreateFallback(
+                    "Model-derived bone importance is disabled for this evaluation.",
+                    enabled: false,
+                    preferSkinWeights: settings.PreferTrueSkinWeightImportance,
+                    heuristicBlend: settings.BoneImportanceHeuristicBlend,
+                    modelSignature: activeResult.ModelSignature),
+                settings,
+                runtimeState,
+                now,
+                AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped,
+                tier,
+                fullEligible,
+                crowdSafeDowngraded: false,
+                stableThrottled: false,
+                runtimeSummary: "BIW was skipped because model-derived weighting is disabled.");
+        }
+
+        if (!activelyManaged)
+        {
+            if (!string.IsNullOrWhiteSpace(activeResult.ModelSignature))
+                runtimeState.LastProbedModelSignature = activeResult.ModelSignature;
+
+            runtimeState.StableProbeCount = 0;
+            var refreshStatus = BuildHardSkipRefreshStatus(tier, settings, budget, hasCachedModelResult);
+            return ApplyRuntimePolicy(
+                AdvancedBodyScalingBoneImportanceResult.CreateFallback(
+                    BuildHardSkipFallbackReason(tier, settings, budget, hasCachedModelResult),
+                    enabled: true,
+                    preferSkinWeights: settings.PreferTrueSkinWeightImportance,
+                    heuristicBlend: settings.BoneImportanceHeuristicBlend,
+                    modelSignature: runtimeState.LastProbedModelSignature,
+                    refreshStatus: refreshStatus),
+                settings,
+                runtimeState,
+                now,
+                AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped,
+                tier,
+                fullEligible,
+                crowdSafeDowngraded: true,
+                stableThrottled: true,
+                runtimeSummary: refreshStatus);
+        }
+
+        var probeInterval = GetBoneImportanceProbeIntervalMs(tier, runtimeState.StableProbeCount);
+        var resolveInterval = GetBoneImportanceResolveIntervalMs(tier, runtimeState.StableProbeCount);
+        var priorityRefresh = forceRefresh
+            || runtimeState.LastMode == AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped
+            || !hasCachedModelResult;
+        var probeDue = priorityRefresh
+            || runtimeState.LastProbeAtMs == 0
+            || now - runtimeState.LastProbeAtMs >= probeInterval
+            || string.IsNullOrWhiteSpace(runtimeState.LastProbedModelSignature);
+
+        if (!probeDue)
+        {
+            if (hasCachedModelResult)
+            {
+                return ApplyRuntimePolicy(
+                    activeResult,
+                    settings,
+                    runtimeState,
+                    now,
+                    AdvancedBodyScalingBoneImportanceRuntimeMode.Cached,
+                    tier,
+                    fullEligible,
+                    crowdSafeDowngraded: !fullEligible,
+                    stableThrottled: true,
+                    runtimeSummary: "Cached BIW was reused while the actor stayed within the current stable-check window.");
+            }
+
+            runtimeState.LastMode = AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped;
+            return ApplyRuntimePolicy(
+                AdvancedBodyScalingBoneImportanceResult.CreateFallback(
+                    "Crowd-safe BIW skipped this actor until the next scheduled model-signature probe.",
+                    enabled: true,
+                    preferSkinWeights: settings.PreferTrueSkinWeightImportance,
+                    heuristicBlend: settings.BoneImportanceHeuristicBlend,
+                    modelSignature: runtimeState.LastProbedModelSignature),
+                settings,
+                runtimeState,
+                now,
+                AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped,
+                tier,
+                fullEligible,
+                crowdSafeDowngraded: true,
+                stableThrottled: true,
+                runtimeSummary: "BIW was skipped until the next scheduled probe because this actor is currently low-priority.");
+        }
+
+        var probe = _boneImportanceService.ProbeActorModelSignature(actor, settings, runtimeState.LastProbedModelSignature);
+        runtimeState.LastProbeAtMs = now;
+        if (probe.HasResolvedModelSet)
+        {
+            runtimeState.StableProbeCount = probe.ModelSignatureChanged
+                ? 0
+                : Math.Min(runtimeState.StableProbeCount + 1, 24);
+            runtimeState.LastProbedModelSignature = probe.ModelSignature;
+        }
+        else
+        {
+            runtimeState.StableProbeCount = 0;
+            runtimeState.LastProbedModelSignature = probe.ModelSignature;
+        }
+
+        var resolveDue = priorityRefresh
+            || !hasCachedModelResult
+            || probe.ModelSignatureChanged
+            || runtimeState.LastResolveAtMs == 0
+            || now - runtimeState.LastResolveAtMs >= resolveInterval;
+
+        if (probe.HasResolvedModelSet && !resolveDue && hasCachedModelResult)
+        {
+            return ApplyRuntimePolicy(
+                activeResult,
+                settings,
+                runtimeState,
+                now,
+                AdvancedBodyScalingBoneImportanceRuntimeMode.Cached,
+                tier,
+                fullEligible,
+                crowdSafeDowngraded: !fullEligible,
+                stableThrottled: true,
+                runtimeSummary: "Resolved model signature was unchanged, so cached BIW stayed active and the expensive rebuild was deferred.");
+        }
+
+        if (probe.HasResolvedModelSet && fullEligible && budget.TryConsumeFull(tier))
+        {
+            var resolved = _boneImportanceService.ResolveForActor(actor, settings, activeResult.ModelSignature);
+            runtimeState.LastResolveAtMs = now;
+            runtimeState.LastProbedModelSignature = resolved.ModelSignature;
+            return ApplyRuntimePolicy(
+                resolved,
+                settings,
+                runtimeState,
+                now,
+                AdvancedBodyScalingBoneImportanceRuntimeMode.Full,
+                tier,
+                fullEligible,
+                crowdSafeDowngraded: false,
+                stableThrottled: false,
+                runtimeSummary: probe.ModelSignatureChanged
+                    ? "Full BIW was refreshed because the actor’s resolved model signature changed."
+                    : "Full BIW was refreshed on schedule for a high-priority actor.");
+        }
+
+        if (probe.HasResolvedModelSet &&
+            ShouldUseReducedBoneImportance(tier, fullEligible) &&
+            budget.TryConsumeReduced(tier))
+        {
+            var reduced = _boneImportanceService.ResolveForActor(actor, CreateReducedBoneImportanceSettings(settings), activeResult.ModelSignature);
+            runtimeState.LastResolveAtMs = now;
+            runtimeState.LastProbedModelSignature = reduced.ModelSignature;
+            return ApplyRuntimePolicy(
+                reduced,
+                settings,
+                runtimeState,
+                now,
+                AdvancedBodyScalingBoneImportanceRuntimeMode.Reduced,
+                tier,
+                fullEligible,
+                crowdSafeDowngraded: true,
+                stableThrottled: false,
+                runtimeSummary: "Crowd-safe BIW applied a reduced/coarse refresh because full-quality budget was not available for this actor.");
+        }
+
+        if (hasCachedModelResult)
+        {
+            return ApplyRuntimePolicy(
+                activeResult,
+                settings,
+                runtimeState,
+                now,
+                AdvancedBodyScalingBoneImportanceRuntimeMode.Cached,
+                tier,
+                fullEligible,
+                crowdSafeDowngraded: true,
+                stableThrottled: !probe.ModelSignatureChanged,
+                runtimeSummary: probe.HasResolvedModelSet
+                    ? "Crowd-safe BIW reused the cached result because the actor was deprioritized under the current frame budget."
+                    : "Crowd-safe BIW reused the cached result because the current model probe did not return a usable slot set.");
+        }
+
+        runtimeState.LastMode = AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped;
+        return ApplyRuntimePolicy(
+            AdvancedBodyScalingBoneImportanceResult.CreateFallback(
+                probe.HasResolvedModelSet
+                    ? "Crowd-safe BIW skipped this actor because the current frame budget was reserved for higher-priority actors."
+                    : probe.Summary,
+                enabled: true,
+                preferSkinWeights: settings.PreferTrueSkinWeightImportance,
+                heuristicBlend: settings.BoneImportanceHeuristicBlend,
+                modelSignature: probe.ModelSignature,
+                modelSignatureChanged: probe.ModelSignatureChanged,
+                refreshStatus: probe.Summary),
+            settings,
+            runtimeState,
+            now,
+            AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped,
+            tier,
+            fullEligible,
+            crowdSafeDowngraded: true,
+            stableThrottled: false,
+            runtimeSummary: probe.HasResolvedModelSet
+                ? "BIW was skipped for this actor because the internal crowd-safe budget prioritized higher-value actors this frame."
+                : "BIW was skipped because the actor did not expose a usable resolved whole-body model set during the current probe.");
+    }
+
+    private static AdvancedBodyScalingSettings CreateReducedBoneImportanceSettings(AdvancedBodyScalingSettings settings)
+        => new()
+        {
+            ModelDerivedBoneImportanceEnabled = settings.ModelDerivedBoneImportanceEnabled,
+            PreferTrueSkinWeightImportance = false,
+            BoneImportanceHeuristicBlend = settings.BoneImportanceHeuristicBlend,
+        };
+
+    private AdvancedBodyScalingBoneImportanceResult ApplyRuntimePolicy(
+        AdvancedBodyScalingBoneImportanceResult result,
+        AdvancedBodyScalingSettings settings,
+        AdvancedBodyScalingBoneImportanceRuntimeState runtimeState,
+        long now,
+        AdvancedBodyScalingBoneImportanceRuntimeMode mode,
+        AdvancedBodyScalingBoneImportanceActorTier tier,
+        bool fullEligible,
+        bool crowdSafeDowngraded,
+        bool stableThrottled,
+        string runtimeSummary)
+    {
+        result.RuntimeMode = result.Source == AdvancedBodyScalingBoneImportanceSource.HeuristicFallback
+            ? AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped
+            : mode;
+        result.ActorTier = tier;
+        result.FullQualityEligible = fullEligible;
+        result.CrowdSafeDowngraded = crowdSafeDowngraded;
+        result.StableThrottled = stableThrottled;
+        result.RuntimeSummary = runtimeSummary;
+        runtimeState.LastMode = result.RuntimeMode;
+        ApplyVisibleRuntimeState(result, settings, runtimeState, now);
+        return result;
+    }
+
+    private static void ApplyVisibleRuntimeState(
+        AdvancedBodyScalingBoneImportanceResult result,
+        AdvancedBodyScalingSettings settings,
+        AdvancedBodyScalingBoneImportanceRuntimeState runtimeState,
+        long now)
+    {
+        var candidate = BuildVisibleRuntimeState(result, settings);
+        if (!runtimeState.HasVisibleRuntimeState)
+        {
+            CommitVisibleRuntimeState(result, runtimeState, candidate);
+            return;
+        }
+
+        if (string.Equals(runtimeState.VisibleStateKey, candidate.Key, StringComparison.Ordinal))
+        {
+            ApplyVisibleRuntimeStateToResult(result, runtimeState);
+            runtimeState.PendingVisibleStateKey = string.Empty;
+            runtimeState.PendingVisibleStateAtMs = 0;
+            return;
+        }
+
+        if (ShouldApplyVisibleRuntimeStateImmediately(runtimeState, candidate))
+        {
+            CommitVisibleRuntimeState(result, runtimeState, candidate);
+            runtimeState.PendingVisibleStateKey = string.Empty;
+            runtimeState.PendingVisibleStateAtMs = 0;
+            return;
+        }
+
+        if (!string.Equals(runtimeState.PendingVisibleStateKey, candidate.Key, StringComparison.Ordinal))
+        {
+            runtimeState.PendingVisibleStateKey = candidate.Key;
+            runtimeState.PendingVisibleStateAtMs = now;
+        }
+        else if (now - runtimeState.PendingVisibleStateAtMs >= GetVisibleRuntimeStateDebounceMs(runtimeState.VisibleRuntimeModeLabel, candidate.RuntimeModeLabel))
+        {
+            CommitVisibleRuntimeState(result, runtimeState, candidate);
+            runtimeState.PendingVisibleStateKey = string.Empty;
+            runtimeState.PendingVisibleStateAtMs = 0;
+            return;
+        }
+
+        ApplyVisibleRuntimeStateToResult(result, runtimeState);
+    }
+
+    private static BoneImportanceVisibleRuntimeState BuildVisibleRuntimeState(
+        AdvancedBodyScalingBoneImportanceResult result,
+        AdvancedBodyScalingSettings settings)
+    {
+        if (result.ActorTier == AdvancedBodyScalingBoneImportanceActorTier.Self &&
+            settings.FullBoneImportanceOnSelf &&
+            result.ModelDerivedActive)
+        {
+            var summary = result.RuntimeMode switch
+            {
+                AdvancedBodyScalingBoneImportanceRuntimeMode.Full => "Self BIW is pinned to full-priority mode.",
+                AdvancedBodyScalingBoneImportanceRuntimeMode.Cached => "Self BIW is pinned to full-priority mode; cached model data was reused internally instead of rebuilding.",
+                _ => "Self BIW is pinned to full-priority mode while internal crowd-safe bookkeeping reuses the current model-derived state."
+            };
+
+            return new BoneImportanceVisibleRuntimeState(
+                "full",
+                "self",
+                true,
+                false,
+                false,
+                summary);
+        }
+
+        return new BoneImportanceVisibleRuntimeState(
+            result.RuntimeModeLabel,
+            result.ActorTierLabel,
+            result.FullQualityEligible,
+            result.CrowdSafeDowngraded,
+            result.StableThrottled,
+            result.RuntimeSummary);
+    }
+
+    private static bool ShouldApplyVisibleRuntimeStateImmediately(
+        AdvancedBodyScalingBoneImportanceRuntimeState runtimeState,
+        BoneImportanceVisibleRuntimeState candidate)
+    {
+        if (!string.Equals(runtimeState.VisibleActorTierLabel, candidate.ActorTierLabel, StringComparison.Ordinal))
+            return true;
+
+        if (IsHighSignalVisibleMode(runtimeState.VisibleRuntimeModeLabel) || IsHighSignalVisibleMode(candidate.RuntimeModeLabel))
+            return true;
+
+        return false;
+    }
+
+    private static bool IsHighSignalVisibleMode(string modeLabel)
+        => string.Equals(modeLabel, "full", StringComparison.Ordinal)
+           || string.Equals(modeLabel, "reduced/coarse", StringComparison.Ordinal)
+           || string.Equals(modeLabel, "heuristic fallback", StringComparison.Ordinal);
+
+    private static int GetVisibleRuntimeStateDebounceMs(string currentModeLabel, string candidateModeLabel)
+    {
+        var currentLowActivity = IsLowActivityVisibleMode(currentModeLabel);
+        var candidateLowActivity = IsLowActivityVisibleMode(candidateModeLabel);
+        return currentLowActivity && candidateLowActivity
+            ? BoneImportanceVisibleLowActivityDebounceMs
+            : BoneImportanceVisibleStateDebounceMs;
+    }
+
+    private static bool IsLowActivityVisibleMode(string modeLabel)
+        => string.Equals(modeLabel, "cached", StringComparison.Ordinal)
+           || string.Equals(modeLabel, "cached-frozen", StringComparison.Ordinal)
+           || string.Equals(modeLabel, "skipped", StringComparison.Ordinal)
+           || string.Equals(modeLabel, "hard-skipped", StringComparison.Ordinal);
+
+    private static void CommitVisibleRuntimeState(
+        AdvancedBodyScalingBoneImportanceResult result,
+        AdvancedBodyScalingBoneImportanceRuntimeState runtimeState,
+        BoneImportanceVisibleRuntimeState state)
+    {
+        runtimeState.HasVisibleRuntimeState = true;
+        runtimeState.VisibleStateKey = state.Key;
+        runtimeState.VisibleRuntimeModeLabel = state.RuntimeModeLabel;
+        runtimeState.VisibleActorTierLabel = state.ActorTierLabel;
+        runtimeState.VisibleFullQualityEligible = state.FullQualityEligible;
+        runtimeState.VisibleCrowdSafeDowngraded = state.CrowdSafeDowngraded;
+        runtimeState.VisibleStableThrottled = state.StableThrottled;
+        runtimeState.VisibleRuntimeSummary = state.RuntimeSummary;
+        ApplyVisibleRuntimeStateToResult(result, runtimeState);
+    }
+
+    private static void ApplyVisibleRuntimeStateToResult(
+        AdvancedBodyScalingBoneImportanceResult result,
+        AdvancedBodyScalingBoneImportanceRuntimeState runtimeState)
+    {
+        result.UseVisibleRuntimeState = runtimeState.HasVisibleRuntimeState;
+        result.DisplayRuntimeModeLabel = runtimeState.VisibleRuntimeModeLabel;
+        result.DisplayActorTierLabel = runtimeState.VisibleActorTierLabel;
+        result.DisplayFullQualityEligible = runtimeState.VisibleFullQualityEligible;
+        result.DisplayCrowdSafeDowngraded = runtimeState.VisibleCrowdSafeDowngraded;
+        result.DisplayStableThrottled = runtimeState.VisibleStableThrottled;
+        result.DisplayRuntimeSummary = runtimeState.VisibleRuntimeSummary;
+    }
+
+    private bool ShouldActivelyManageBoneImportance(
+        AdvancedBodyScalingSettings settings,
+        AdvancedBodyScalingBoneImportanceActorTier tier,
+        BoneImportanceFrameBudgetState budget)
+        => tier switch
+        {
+            AdvancedBodyScalingBoneImportanceActorTier.Self => true,
+            AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => true,
+            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus => settings.FullBoneImportanceOnTargetOrFocus,
+            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled => settings.FullBoneImportanceOnNearbyNonProfiledActors && !budget.HighCrowdPressure,
+            _ => false,
+        };
+
+    private static bool ShouldUseReducedBoneImportance(
+        AdvancedBodyScalingBoneImportanceActorTier tier,
+        bool fullEligible)
+        => tier switch
+        {
+            AdvancedBodyScalingBoneImportanceActorTier.Self => !fullEligible,
+            AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => true,
+            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus => true,
+            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled => true,
+            _ => false,
+        };
+
+    private static string BuildHardSkipFallbackReason(
+        AdvancedBodyScalingBoneImportanceActorTier tier,
+        AdvancedBodyScalingSettings settings,
+        BoneImportanceFrameBudgetState budget,
+        bool hadCachedModelResult)
+        => tier switch
+        {
+            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus when !settings.FullBoneImportanceOnTargetOrFocus
+                => "Target/focus BIW full-quality processing is disabled, so this actor was returned to heuristic fallback.",
+            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled when !settings.FullBoneImportanceOnNearbyNonProfiledActors
+                => "Nearby non-profiled actors are not allowed to receive active BIW, so this actor was returned to heuristic fallback.",
+            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled when budget.HighCrowdPressure
+                => "Crowd pressure is high, so nearby non-profiled actors were hard-skipped back to heuristic fallback.",
+            AdvancedBodyScalingBoneImportanceActorTier.Other when hadCachedModelResult
+                => "This actor is outside the active BIW priority set, so its cached model-derived result was detached and heuristic fallback resumed.",
+            _ => "This actor is outside the active BIW priority set, so crowd-safe BIW fell back to heuristics until relevance changes.",
+        };
+
+    private static string BuildHardSkipRefreshStatus(
+        AdvancedBodyScalingBoneImportanceActorTier tier,
+        AdvancedBodyScalingSettings settings,
+        BoneImportanceFrameBudgetState budget,
+        bool hadCachedModelResult)
+        => tier switch
+        {
+            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus when !settings.FullBoneImportanceOnTargetOrFocus
+                => "Target/focus BIW is disabled here, so no live model-signature probe was scheduled.",
+            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled when !settings.FullBoneImportanceOnNearbyNonProfiledActors
+                => "Nearby non-profiled actors are outside the active BIW set, so no live model-signature probe was scheduled.",
+            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled when budget.HighCrowdPressure
+                => "Crowd pressure is high, so nearby non-profiled actors were hard-skipped and left on heuristic fallback until relevance changes.",
+            AdvancedBodyScalingBoneImportanceActorTier.Other when hadCachedModelResult
+                => "This non-important actor kept no active BIW work; its previous model-derived result was frozen out and no probe was scheduled until relevance changes.",
+            _ => "This actor is outside the active BIW set, so no live model-signature probe was scheduled until relevance changes.",
+        };
+
+    private int GetBoneImportanceProbeIntervalMs(AdvancedBodyScalingBoneImportanceActorTier tier, int stableProbeCount)
+    {
+        var baseInterval = tier switch
+        {
+            AdvancedBodyScalingBoneImportanceActorTier.Self => SelfProbeIntervalMs,
+            AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => ProfiledProbeIntervalMs,
+            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus => TargetProbeIntervalMs,
+            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled => NearbyProbeIntervalMs,
+            _ => OtherProbeIntervalMs,
+        };
+
+        return ApplyStableProbeMultiplier(baseInterval, stableProbeCount);
+    }
+
+    private int GetBoneImportanceResolveIntervalMs(AdvancedBodyScalingBoneImportanceActorTier tier, int stableProbeCount)
+    {
+        var baseInterval = tier switch
+        {
+            AdvancedBodyScalingBoneImportanceActorTier.Self => SelfResolveIntervalMs,
+            AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => ProfiledResolveIntervalMs,
+            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus => TargetResolveIntervalMs,
+            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled => NearbyResolveIntervalMs,
+            _ => OtherResolveIntervalMs,
+        };
+
+        return ApplyStableProbeMultiplier(baseInterval, stableProbeCount);
+    }
+
+    private static int ApplyStableProbeMultiplier(int baseInterval, int stableProbeCount)
+    {
+        var multiplier = stableProbeCount switch
+        {
+            >= 6 => 2.5f,
+            >= 3 => 1.6f,
+            _ => 1f,
+        };
+
+        return (int)MathF.Round(baseInterval * multiplier);
+    }
+
+    private AdvancedBodyScalingBoneImportanceActorTier ClassifyBoneImportanceTier(Armature armature, Actor actor)
+    {
+        if (AreSameActor(actor, _objectManager.Player))
+            return AdvancedBodyScalingBoneImportanceActorTier.Self;
+
+        if (IsExplicitlyProfiledActor(armature))
+            return AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor;
+
+        if (IsTargetOrFocusActor(actor))
+            return AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus;
+
+        if (IsNearbyNonProfiledActor(actor))
+            return AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled;
+
+        return AdvancedBodyScalingBoneImportanceActorTier.Other;
+    }
+
+    private bool IsFullBoneImportanceEligible(
+        AdvancedBodyScalingSettings settings,
+        AdvancedBodyScalingBoneImportanceActorTier tier)
+        => tier switch
+        {
+            AdvancedBodyScalingBoneImportanceActorTier.Self => settings.FullBoneImportanceOnSelf,
+            AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => settings.FullBoneImportanceOnProfiledActors,
+            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus => settings.FullBoneImportanceOnTargetOrFocus,
+            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled => settings.FullBoneImportanceOnNearbyNonProfiledActors,
+            _ => false,
+        };
+
+    private bool IsExplicitlyProfiledActor(Armature armature)
+        => armature.Profile != _profileManager.DefaultProfile
+           && armature.Profile != _profileManager.DefaultLocalPlayerProfile;
+
+    private bool IsTargetOrFocusActor(Actor actor)
+        => AreSameActor(actor, _objectManager.Target) || AreSameActor(actor, _objectManager.Focus);
+
+    private bool IsNearbyNonProfiledActor(Actor actor)
+    {
+        var player = _objectManager.Player;
+        if (!actor || !player || actor.AsObject == null || player.AsObject == null || AreSameActor(actor, player))
+            return false;
+
+        var dx = actor.AsObject->Position.X - player.AsObject->Position.X;
+        var dy = actor.AsObject->Position.Y - player.AsObject->Position.Y;
+        var dz = actor.AsObject->Position.Z - player.AsObject->Position.Z;
+        var distanceSquared = (dx * dx) + (dy * dy) + (dz * dz);
+        return distanceSquared <= NearbyFullBoneImportanceDistanceSquared;
+    }
+
+    private static bool AreSameActor(Actor left, Actor right)
+        => left
+           && right
+           && left.AsObject != null
+           && right.AsObject != null
+           && left.AsObject->ObjectIndex == right.AsObject->ObjectIndex;
+
+    private static string BuildAppliedBoneImportanceBindingIdentity(
+        AdvancedBodyScalingSettings? settings,
+        AdvancedBodyScalingBoneImportanceResult? result)
+    {
+        if (settings == null ||
+            !settings.Enabled ||
+            settings.Mode == AdvancedBodyScalingMode.Manual ||
+            !settings.ModelDerivedBoneImportanceEnabled ||
+            settings.BoneImportanceHeuristicBlend <= ActiveBoneImportanceBlendEpsilon ||
+            result == null ||
+            !result.ModelDerivedActive ||
+            result.Scores.Count == 0)
+        {
+            return "inactive";
+        }
+
+        var signature = string.IsNullOrWhiteSpace(result.ModelSignature)
+            ? "nosignature"
+            : result.ModelSignature;
+
+        return $"{(int)result.Source}|{signature}|{settings.BoneImportanceHeuristicBlend:0.000}";
+    }
+
+    private static string BuildBoneImportanceBindingRefreshReason(
+        string previousBindingIdentity,
+        AdvancedBodyScalingBoneImportanceResult previousResult,
+        string currentBindingIdentity,
+        AdvancedBodyScalingBoneImportanceResult currentResult)
+    {
+        if (string.IsNullOrWhiteSpace(previousBindingIdentity))
+            return "initial binding state";
+
+        if (previousBindingIdentity == "inactive" && currentBindingIdentity != "inactive")
+            return "model-derived BIW became active";
+
+        if (previousBindingIdentity != "inactive" && currentBindingIdentity == "inactive")
+            return "model-derived BIW became inactive";
+
+        if (!string.Equals(previousResult.ModelSignature, currentResult.ModelSignature, StringComparison.OrdinalIgnoreCase))
+            return "resolved model signature changed";
+
+        if (previousResult.Source != currentResult.Source)
+            return $"BIW source changed to {currentResult.SourceLabel}";
+
+        return "effective BIW binding identity changed";
+    }
+
     /// <summary>
     /// Returns whether or not a link can be established between the armature and an in-game object.
     /// If unbuilt, the armature will be rebuilded.
     /// </summary>
-    private bool TryLinkSkeleton(Armature armature)
+    private bool TryLinkSkeleton(Armature armature, BoneImportanceFrameBudgetState boneImportanceBudget)
     {
         if (!_objectManager.TryGetValue(armature.ActorIdentifier, out var actorData) ||
             actorData.Objects == null ||
@@ -380,10 +1071,12 @@ public unsafe sealed class ArmatureManager : IDisposable
         var actor = actorData.Objects[0];
 
         var advancedBodyScaling = ResolveAdvancedBodyScaling(armature.Profile, actor);
-        var boneImportance = _boneImportanceService.ResolveForActor(actor, advancedBodyScaling, armature.ActiveBoneImportanceResult.ModelSignature);
+        var boneImportance = EvaluateBoneImportanceForArmature(armature, actor, advancedBodyScaling, boneImportanceBudget, forceRefresh: !armature.IsBuilt);
         var skeletonUpdated = armature.IsSkeletonUpdated(actor.Model.AsCharacterBase);
-        var boneImportanceSignatureChanged = boneImportance.ModelSignatureChanged;
-        if (!armature.IsBuilt || skeletonUpdated || boneImportanceSignatureChanged)
+        var previousBindingIdentity = BuildAppliedBoneImportanceBindingIdentity(armature.ActiveAdvancedBodyScalingSettings, armature.ActiveBoneImportanceResult);
+        var currentBindingIdentity = BuildAppliedBoneImportanceBindingIdentity(advancedBodyScaling, boneImportance);
+        var boneImportanceBindingChanged = !string.Equals(previousBindingIdentity, currentBindingIdentity, StringComparison.Ordinal);
+        if (!armature.IsBuilt || skeletonUpdated || boneImportanceBindingChanged)
         {
             if (!armature.IsBuilt || skeletonUpdated)
             {
@@ -397,7 +1090,12 @@ public unsafe sealed class ArmatureManager : IDisposable
             }
             else
             {
-                _logger.Debug($"Resolved bone-importance model signature changed for actor #{actor.AsObject->ObjectIndex} tied to \"{armature}\", refreshing bindings.");
+                var refreshReason = BuildBoneImportanceBindingRefreshReason(
+                    previousBindingIdentity,
+                    armature.ActiveBoneImportanceResult,
+                    currentBindingIdentity,
+                    boneImportance);
+                _logger.Debug($"Refreshing bone-importance bindings for actor #{actor.AsObject->ObjectIndex} tied to \"{armature}\" because {refreshReason} ({boneImportance.VisibleRuntimeModeLabel}, {boneImportance.VisibleActorTierLabel}).");
                 armature.RebuildBoneTemplateBinding(
                     _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
                     _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,

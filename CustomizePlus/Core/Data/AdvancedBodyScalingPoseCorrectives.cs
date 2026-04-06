@@ -268,6 +268,17 @@ internal sealed class AdvancedBodyScalingCorrectiveSampleDebugState
     public string Summary { get; init; } = string.Empty;
 }
 
+internal sealed class AdvancedBodyScalingCorrectiveRuntimeState
+{
+    public float Activation { get; set; }
+    public float RawActivation { get; set; }
+    public bool IsActive { get; set; }
+    public bool BroadInterpolation { get; set; }
+    public string DominantSampleName { get; set; } = string.Empty;
+    public float DominantSampleWeight { get; set; }
+    public float[] SmoothedDriverVector { get; set; } = Array.Empty<float>();
+}
+
 internal sealed class AdvancedBodyScalingCorrectiveDebugRegionState
 {
     public AdvancedBodyScalingCorrectiveRegion Region { get; init; }
@@ -286,6 +297,21 @@ internal sealed class AdvancedBodyScalingCorrectiveDebugRegionState
     public int InfluenceSampleCount { get; init; }
     public bool ShortlistApplied { get; init; }
     public bool BroadInterpolation { get; init; }
+    public string AdaptiveMode { get; init; } = string.Empty;
+    public int AdaptiveShortlistMax { get; init; }
+    public int AdaptiveShortlistFloor { get; init; }
+    public float AdaptiveSharpnessScale { get; init; }
+    public float AdaptiveFalloffScale { get; init; }
+    public float AdaptiveDampingScale { get; init; }
+    public bool AdaptiveMeaningfulChange { get; init; }
+    public string AdaptiveSummary { get; init; } = string.Empty;
+    public bool PoseHistoryActive { get; init; }
+    public bool HysteresisHeld { get; init; }
+    public bool DominantSamplePersistenceUsed { get; init; }
+    public bool BroadModeMemoryUsed { get; init; }
+    public float DriverHistoryRetention { get; init; }
+    public float DriverHistoryChangeMagnitude { get; init; }
+    public string TransitionSummary { get; init; } = string.Empty;
     public string DriverSummary { get; init; } = string.Empty;
     public string DriverVectorSummary { get; init; } = string.Empty;
     public string SampleSummary { get; init; } = string.Empty;
