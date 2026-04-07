@@ -607,7 +607,9 @@ public class SettingsTab
 
     private void DrawBoneImportanceWeightingSettings(AdvancedBodyScalingSettings settings)
     {
-        ImGui.Text("Bone Importance Weighting");
+        if (!ImGui.CollapsingHeader("Bone Importance Weighting"))
+            return;
+
         ImGui.TextDisabled("Uses supported body model skinning data, when available, to make propagation, smoothing, redistribution, and guardrails more anatomically coherent. It now refines the map with approximate surface coverage and structural bone classification, stays on the existing transform-based path, and falls back safely.");
 
         var enabled = settings.ModelDerivedBoneImportanceEnabled;

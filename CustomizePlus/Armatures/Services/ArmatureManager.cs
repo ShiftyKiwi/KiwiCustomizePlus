@@ -46,18 +46,24 @@ public unsafe sealed class ArmatureManager : IDisposable
     private const float NearbyFullBoneImportanceDistance = 12f;
     private const float NearbyFullBoneImportanceDistanceSquared = NearbyFullBoneImportanceDistance * NearbyFullBoneImportanceDistance;
     private const float ActiveBoneImportanceBlendEpsilon = 0.0001f;
-    private const int SelfProbeIntervalMs = 250;
-    private const int ProfiledProbeIntervalMs = 500;
+    private const int SelfProbeIntervalMs = 450;
+    private const int ProfiledProbeIntervalMs = 700;
     private const int TargetProbeIntervalMs = 500;
     private const int NearbyProbeIntervalMs = 1200;
     private const int OtherProbeIntervalMs = 2200;
-    private const int SelfResolveIntervalMs = 500;
-    private const int ProfiledResolveIntervalMs = 1100;
+    private const int SelfResolveIntervalMs = 850;
+    private const int ProfiledResolveIntervalMs = 1300;
     private const int TargetResolveIntervalMs = 1400;
     private const int NearbyResolveIntervalMs = 2600;
     private const int OtherResolveIntervalMs = 4200;
     private const int BoneImportanceVisibleStateDebounceMs = 900;
     private const int BoneImportanceVisibleLowActivityDebounceMs = 1200;
+    private const int SelfSignatureChangeDebounceMs = 950;
+    private const int ProfiledSignatureChangeDebounceMs = 1250;
+    private const int StableSignatureConfirmationProbeCount = 2;
+    private const int TransitionalSlotBaselineDebounceMs = 6500;
+    private const int TransitionalSlotBaselineProbeCount = 6;
+    private const int TransitionalSlotBaselineSettleHoldMs = 1750;
 
     /// <summary>
     /// This is a movement flag for every object. Used to prevent calls to ApplyRootTranslation from both movement and render hooks.
@@ -341,8 +347,9 @@ public unsafe sealed class ArmatureManager : IDisposable
 
                 var actorForSettings = objects[0];
                 var advancedBodyScaling = ResolveAdvancedBodyScaling(armature.Profile, actorForSettings);
+                var actorSkeletonUpdated = actorForSettings && armature.IsSkeletonUpdated(actorForSettings.Model.AsCharacterBase);
                 var boneImportance = actorForSettings
-                    ? EvaluateBoneImportanceForArmature(armature, actorForSettings, advancedBodyScaling, boneImportanceBudget, forceRefresh: true)
+                    ? EvaluateBoneImportanceForArmature(armature, actorForSettings, advancedBodyScaling, boneImportanceBudget, actorSkeletonUpdated, forceRefresh: true)
                     : AdvancedBodyScalingBoneImportanceResult.CreateFallback(
                         "No live actor was available during profile rebind.",
                         enabled: advancedBodyScaling.ModelDerivedBoneImportanceEnabled,
@@ -458,6 +465,7 @@ public unsafe sealed class ArmatureManager : IDisposable
         Actor actor,
         AdvancedBodyScalingSettings settings,
         BoneImportanceFrameBudgetState budget,
+        bool skeletonUpdated,
         bool forceRefresh = false)
     {
         var tier = ClassifyBoneImportanceTier(armature, actor);
@@ -467,9 +475,17 @@ public unsafe sealed class ArmatureManager : IDisposable
         var activeResult = armature.ActiveBoneImportanceResult;
         var hasCachedModelResult = activeResult.ModelDerivedActive;
         var now = Environment.TickCount64;
+        if (string.IsNullOrWhiteSpace(runtimeState.LastConfirmedModelSignature) &&
+            !string.IsNullOrWhiteSpace(activeResult.ModelSignature))
+        {
+            runtimeState.LastConfirmedModelSignature = activeResult.ModelSignature;
+        }
+
+        var stableSignature = GetStableBoneImportanceSignature(runtimeState, activeResult);
 
         if (!settings.ModelDerivedBoneImportanceEnabled)
         {
+            ResetPendingBoneImportanceSignature(runtimeState);
             runtimeState.LastMode = AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped;
             return ApplyRuntimePolicy(
                 AdvancedBodyScalingBoneImportanceResult.CreateFallback(
@@ -477,7 +493,7 @@ public unsafe sealed class ArmatureManager : IDisposable
                     enabled: false,
                     preferSkinWeights: settings.PreferTrueSkinWeightImportance,
                     heuristicBlend: settings.BoneImportanceHeuristicBlend,
-                    modelSignature: activeResult.ModelSignature),
+                    modelSignature: stableSignature),
                 settings,
                 runtimeState,
                 now,
@@ -492,8 +508,12 @@ public unsafe sealed class ArmatureManager : IDisposable
         if (!activelyManaged)
         {
             if (!string.IsNullOrWhiteSpace(activeResult.ModelSignature))
+            {
                 runtimeState.LastProbedModelSignature = activeResult.ModelSignature;
+                runtimeState.LastConfirmedModelSignature = activeResult.ModelSignature;
+            }
 
+            ResetPendingBoneImportanceSignature(runtimeState);
             runtimeState.StableProbeCount = 0;
             var refreshStatus = BuildHardSkipRefreshStatus(tier, settings, budget, hasCachedModelResult);
             return ApplyRuntimePolicy(
@@ -523,7 +543,7 @@ public unsafe sealed class ArmatureManager : IDisposable
         var probeDue = priorityRefresh
             || runtimeState.LastProbeAtMs == 0
             || now - runtimeState.LastProbeAtMs >= probeInterval
-            || string.IsNullOrWhiteSpace(runtimeState.LastProbedModelSignature);
+            || string.IsNullOrWhiteSpace(stableSignature);
 
         if (!probeDue)
         {
@@ -561,29 +581,32 @@ public unsafe sealed class ArmatureManager : IDisposable
                 runtimeSummary: "BIW was skipped until the next scheduled probe because this actor is currently low-priority.");
         }
 
-        var probe = _boneImportanceService.ProbeActorModelSignature(actor, settings, runtimeState.LastProbedModelSignature);
+        var probe = _boneImportanceService.ProbeActorModelSignature(actor, settings, stableSignature);
         runtimeState.LastProbeAtMs = now;
-        if (probe.HasResolvedModelSet)
-        {
-            runtimeState.StableProbeCount = probe.ModelSignatureChanged
-                ? 0
-                : Math.Min(runtimeState.StableProbeCount + 1, 24);
-            runtimeState.LastProbedModelSignature = probe.ModelSignature;
-        }
-        else
-        {
-            runtimeState.StableProbeCount = 0;
-            runtimeState.LastProbedModelSignature = probe.ModelSignature;
-        }
+        runtimeState.LastProbedModelSignature = probe.ModelSignature;
+        var signatureChanged = EvaluateBoneImportanceSignatureChange(
+            runtimeState,
+            tier,
+            now,
+            forceRefresh,
+            hasCachedModelResult,
+            stableSignature,
+            probe,
+            skeletonUpdated,
+            out var confirmedAfterDebounce,
+            out var pendingSignatureSummary);
 
         var resolveDue = priorityRefresh
             || !hasCachedModelResult
-            || probe.ModelSignatureChanged
+            || signatureChanged
             || runtimeState.LastResolveAtMs == 0
             || now - runtimeState.LastResolveAtMs >= resolveInterval;
 
         if (probe.HasResolvedModelSet && !resolveDue && hasCachedModelResult)
         {
+            var cachedSummary = !string.IsNullOrWhiteSpace(pendingSignatureSummary)
+                ? pendingSignatureSummary
+                : "Resolved model signature was unchanged, so cached BIW stayed active and the expensive rebuild was deferred.";
             return ApplyRuntimePolicy(
                 activeResult,
                 settings,
@@ -594,14 +617,16 @@ public unsafe sealed class ArmatureManager : IDisposable
                 fullEligible,
                 crowdSafeDowngraded: !fullEligible,
                 stableThrottled: true,
-                runtimeSummary: "Resolved model signature was unchanged, so cached BIW stayed active and the expensive rebuild was deferred.");
+                runtimeSummary: cachedSummary);
         }
 
         if (probe.HasResolvedModelSet && fullEligible && budget.TryConsumeFull(tier))
         {
-            var resolved = _boneImportanceService.ResolveForActor(actor, settings, activeResult.ModelSignature);
+            var resolved = _boneImportanceService.ResolveForActor(actor, settings, stableSignature);
             runtimeState.LastResolveAtMs = now;
             runtimeState.LastProbedModelSignature = resolved.ModelSignature;
+            runtimeState.LastConfirmedModelSignature = resolved.ModelSignature;
+            ResetPendingBoneImportanceSignature(runtimeState);
             return ApplyRuntimePolicy(
                 resolved,
                 settings,
@@ -612,8 +637,10 @@ public unsafe sealed class ArmatureManager : IDisposable
                 fullEligible,
                 crowdSafeDowngraded: false,
                 stableThrottled: false,
-                runtimeSummary: probe.ModelSignatureChanged
-                    ? "Full BIW was refreshed because the actor’s resolved model signature changed."
+                runtimeSummary: signatureChanged
+                    ? confirmedAfterDebounce
+                        ? "Full BIW was refreshed because a new resolved model signature persisted long enough to confirm a real high-priority actor change."
+                        : "Full BIW was refreshed because the actor’s resolved model signature changed."
                     : "Full BIW was refreshed on schedule for a high-priority actor.");
         }
 
@@ -621,9 +648,11 @@ public unsafe sealed class ArmatureManager : IDisposable
             ShouldUseReducedBoneImportance(tier, fullEligible) &&
             budget.TryConsumeReduced(tier))
         {
-            var reduced = _boneImportanceService.ResolveForActor(actor, CreateReducedBoneImportanceSettings(settings), activeResult.ModelSignature);
+            var reduced = _boneImportanceService.ResolveForActor(actor, CreateReducedBoneImportanceSettings(settings), stableSignature);
             runtimeState.LastResolveAtMs = now;
             runtimeState.LastProbedModelSignature = reduced.ModelSignature;
+            runtimeState.LastConfirmedModelSignature = reduced.ModelSignature;
+            ResetPendingBoneImportanceSignature(runtimeState);
             return ApplyRuntimePolicy(
                 reduced,
                 settings,
@@ -634,11 +663,18 @@ public unsafe sealed class ArmatureManager : IDisposable
                 fullEligible,
                 crowdSafeDowngraded: true,
                 stableThrottled: false,
-                runtimeSummary: "Crowd-safe BIW applied a reduced/coarse refresh because full-quality budget was not available for this actor.");
+                runtimeSummary: signatureChanged && confirmedAfterDebounce
+                    ? "Crowd-safe BIW applied a reduced/coarse refresh after a new resolved model signature persisted long enough to confirm a real change."
+                    : "Crowd-safe BIW applied a reduced/coarse refresh because full-quality budget was not available for this actor.");
         }
 
         if (hasCachedModelResult)
         {
+            var cachedSummary = !string.IsNullOrWhiteSpace(pendingSignatureSummary)
+                ? pendingSignatureSummary
+                : probe.HasResolvedModelSet
+                    ? "Crowd-safe BIW reused the cached result because the actor was deprioritized under the current frame budget."
+                    : "Crowd-safe BIW reused the cached result because the current model probe did not return a usable slot set.";
             return ApplyRuntimePolicy(
                 activeResult,
                 settings,
@@ -648,10 +684,8 @@ public unsafe sealed class ArmatureManager : IDisposable
                 tier,
                 fullEligible,
                 crowdSafeDowngraded: true,
-                stableThrottled: !probe.ModelSignatureChanged,
-                runtimeSummary: probe.HasResolvedModelSet
-                    ? "Crowd-safe BIW reused the cached result because the actor was deprioritized under the current frame budget."
-                    : "Crowd-safe BIW reused the cached result because the current model probe did not return a usable slot set.");
+                stableThrottled: !signatureChanged,
+                runtimeSummary: cachedSummary);
         }
 
         runtimeState.LastMode = AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped;
@@ -664,8 +698,8 @@ public unsafe sealed class ArmatureManager : IDisposable
                 preferSkinWeights: settings.PreferTrueSkinWeightImportance,
                 heuristicBlend: settings.BoneImportanceHeuristicBlend,
                 modelSignature: probe.ModelSignature,
-                modelSignatureChanged: probe.ModelSignatureChanged,
-                refreshStatus: probe.Summary),
+                modelSignatureChanged: signatureChanged,
+                refreshStatus: !string.IsNullOrWhiteSpace(pendingSignatureSummary) ? pendingSignatureSummary : probe.Summary),
             settings,
             runtimeState,
             now,
@@ -686,6 +720,156 @@ public unsafe sealed class ArmatureManager : IDisposable
             PreferTrueSkinWeightImportance = false,
             BoneImportanceHeuristicBlend = settings.BoneImportanceHeuristicBlend,
         };
+
+    private static string GetStableBoneImportanceSignature(
+        AdvancedBodyScalingBoneImportanceRuntimeState runtimeState,
+        AdvancedBodyScalingBoneImportanceResult activeResult)
+    {
+        if (!string.IsNullOrWhiteSpace(runtimeState.LastConfirmedModelSignature))
+            return runtimeState.LastConfirmedModelSignature;
+
+        if (!string.IsNullOrWhiteSpace(activeResult.ModelSignature))
+            return activeResult.ModelSignature;
+
+        return runtimeState.LastProbedModelSignature;
+    }
+
+    private static void ResetPendingBoneImportanceSignature(AdvancedBodyScalingBoneImportanceRuntimeState runtimeState)
+    {
+        runtimeState.PendingModelSignature = string.Empty;
+        runtimeState.PendingModelSignatureAtMs = 0;
+        runtimeState.PendingModelSignatureProbeCount = 0;
+        runtimeState.PendingModelSignatureSettleHoldUntilMs = 0;
+    }
+
+    private static bool ShouldDebounceBoneImportanceSignatureChange(
+        AdvancedBodyScalingBoneImportanceActorTier tier,
+        bool forceRefresh,
+        bool hasCachedModelResult)
+        => !forceRefresh
+           && hasCachedModelResult
+           && (tier == AdvancedBodyScalingBoneImportanceActorTier.Self
+               || tier == AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor);
+
+    private static int GetBoneImportanceSignatureChangeDebounceMs(AdvancedBodyScalingBoneImportanceActorTier tier)
+        => tier switch
+        {
+            AdvancedBodyScalingBoneImportanceActorTier.Self => SelfSignatureChangeDebounceMs,
+            AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => ProfiledSignatureChangeDebounceMs,
+            _ => 0,
+        };
+
+    private static int GetBoneImportanceSignatureConfirmationProbeCount(AdvancedBodyScalingBoneImportanceActorTier tier)
+        => tier switch
+        {
+            AdvancedBodyScalingBoneImportanceActorTier.Self => StableSignatureConfirmationProbeCount,
+            AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => StableSignatureConfirmationProbeCount,
+            _ => 1,
+        };
+
+    private static bool EvaluateBoneImportanceSignatureChange(
+        AdvancedBodyScalingBoneImportanceRuntimeState runtimeState,
+        AdvancedBodyScalingBoneImportanceActorTier tier,
+        long now,
+        bool forceRefresh,
+        bool hasCachedModelResult,
+        string stableSignature,
+        AdvancedBodyScalingBoneImportanceProbeResult probe,
+        bool skeletonUpdated,
+        out bool confirmedAfterDebounce,
+        out string pendingSummary)
+    {
+        confirmedAfterDebounce = false;
+        pendingSummary = string.Empty;
+
+        if (!probe.HasResolvedModelSet)
+        {
+            runtimeState.StableProbeCount = 0;
+            ResetPendingBoneImportanceSignature(runtimeState);
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(probe.ModelSignature) ||
+            !probe.ModelSignatureChanged ||
+            string.Equals(probe.ModelSignature, stableSignature, StringComparison.OrdinalIgnoreCase))
+        {
+            runtimeState.StableProbeCount = Math.Min(runtimeState.StableProbeCount + 1, 24);
+            runtimeState.LastConfirmedModelSignature = probe.ModelSignature;
+            ResetPendingBoneImportanceSignature(runtimeState);
+            return false;
+        }
+
+        if (!ShouldDebounceBoneImportanceSignatureChange(tier, forceRefresh, hasCachedModelResult))
+        {
+            runtimeState.StableProbeCount = 0;
+            ResetPendingBoneImportanceSignature(runtimeState);
+            return true;
+        }
+
+        if (!string.Equals(runtimeState.PendingModelSignature, probe.ModelSignature, StringComparison.OrdinalIgnoreCase))
+        {
+            runtimeState.PendingModelSignature = probe.ModelSignature;
+            runtimeState.PendingModelSignatureAtMs = now;
+            runtimeState.PendingModelSignatureProbeCount = 1;
+            runtimeState.PendingModelSignatureSettleHoldUntilMs = 0;
+        }
+        else
+        {
+            runtimeState.PendingModelSignatureProbeCount++;
+        }
+
+        runtimeState.StableProbeCount = Math.Min(runtimeState.StableProbeCount + 1, 24);
+
+        var transitionalSlotBaseline = IsTransitionalSlotBaselineSignatureChange(stableSignature, probe.ModelSignature);
+        if (transitionalSlotBaseline && skeletonUpdated)
+        {
+            pendingSummary = "A transitional all-slot e0000 baseline was observed while the actor skeleton was rebuilding, so BIW kept the previous settled slot signature until the final slot winners finished loading.";
+            return false;
+        }
+
+        var debounceMs = transitionalSlotBaseline
+            ? TransitionalSlotBaselineDebounceMs
+            : GetBoneImportanceSignatureChangeDebounceMs(tier);
+        var requiredProbeCount = transitionalSlotBaseline
+            ? TransitionalSlotBaselineProbeCount
+            : GetBoneImportanceSignatureConfirmationProbeCount(tier);
+        var pendingDurationMs = now - runtimeState.PendingModelSignatureAtMs;
+        var confirmed = transitionalSlotBaseline
+            ? pendingDurationMs >= debounceMs && runtimeState.PendingModelSignatureProbeCount >= requiredProbeCount
+            : pendingDurationMs >= debounceMs || runtimeState.PendingModelSignatureProbeCount >= requiredProbeCount;
+        if (confirmed)
+        {
+            if (transitionalSlotBaseline)
+            {
+                if (runtimeState.PendingModelSignatureSettleHoldUntilMs == 0)
+                {
+                    runtimeState.PendingModelSignatureSettleHoldUntilMs = now + TransitionalSlotBaselineSettleHoldMs;
+                    pendingSummary = $"A transitional all-slot e0000 baseline persisted long enough to look real, but BIW is holding one final settle window for the actual slot winners to arrive before refreshing (~{TransitionalSlotBaselineSettleHoldMs} ms hold).";
+                    return false;
+                }
+
+                if (now < runtimeState.PendingModelSignatureSettleHoldUntilMs)
+                {
+                    var settleRemainingMs = runtimeState.PendingModelSignatureSettleHoldUntilMs - now;
+                    pendingSummary = $"A transitional all-slot e0000 baseline is in a final settle hold so BIW can prefer the real post-swap slot winners if they appear (~{settleRemainingMs} ms remaining).";
+                    return false;
+                }
+            }
+
+            runtimeState.StableProbeCount = 0;
+            confirmedAfterDebounce = true;
+            pendingSummary = transitionalSlotBaseline
+                ? "A transitional all-slot e0000 baseline persisted through the final settle hold, so BIW treated it as the actor's settled slot set."
+                : "A new resolved model signature persisted long enough to confirm a real BIW refresh for this high-priority actor.";
+            return true;
+        }
+
+        var remainingMs = Math.Max(0L, debounceMs - pendingDurationMs);
+        pendingSummary = transitionalSlotBaseline
+            ? $"A transitional all-slot e0000 baseline was observed during a likely outfit/model swap, so BIW is waiting for the final slot winners to settle before refreshing ({runtimeState.PendingModelSignatureProbeCount}/{requiredProbeCount} probe{(requiredProbeCount == 1 ? string.Empty : "s")}, ~{remainingMs} ms remaining)."
+            : $"A new resolved model signature was observed, but BIW is waiting for it to persist before refreshing this high-priority actor ({runtimeState.PendingModelSignatureProbeCount}/{requiredProbeCount} probe{(requiredProbeCount == 1 ? string.Empty : "s")}, ~{remainingMs} ms remaining).";
+        return false;
+    }
 
     private AdvancedBodyScalingBoneImportanceResult ApplyRuntimePolicy(
         AdvancedBodyScalingBoneImportanceResult result,
@@ -1056,6 +1240,161 @@ public unsafe sealed class ArmatureManager : IDisposable
         return "effective BIW binding identity changed";
     }
 
+    private static string BuildBoneImportanceSignatureChangeDetail(
+        string previousModelSignature,
+        string currentModelSignature)
+    {
+        if (string.IsNullOrWhiteSpace(previousModelSignature) || string.IsNullOrWhiteSpace(currentModelSignature))
+            return string.Empty;
+
+        if (string.Equals(previousModelSignature, currentModelSignature, StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        var previousParts = ParseBoneImportanceSignature(previousModelSignature);
+        var currentParts = ParseBoneImportanceSignature(currentModelSignature);
+        if (previousParts.Count == 0 || currentParts.Count == 0)
+            return string.Empty;
+
+        var changedParts = previousParts.Keys
+            .Concat(currentParts.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(key =>
+            {
+                previousParts.TryGetValue(key, out var previousPart);
+                currentParts.TryGetValue(key, out var currentPart);
+                if (string.Equals(previousPart.RawSegment, currentPart.RawSegment, StringComparison.OrdinalIgnoreCase))
+                    return string.Empty;
+
+                return $"{key}: {previousPart.DisplayLabel} -> {currentPart.DisplayLabel}";
+            })
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Take(4)
+            .ToList();
+
+        return changedParts.Count == 0
+            ? string.Empty
+            : string.Join(" | ", changedParts);
+    }
+
+    private static bool IsTransitionalSlotBaselineSignatureChange(
+        string previousModelSignature,
+        string currentModelSignature)
+    {
+        var previousParts = ParseBoneImportanceSignature(previousModelSignature);
+        var currentParts = ParseBoneImportanceSignature(currentModelSignature);
+        if (previousParts.Count == 0 || currentParts.Count == 0)
+            return false;
+
+        var currentResolvedParts = currentParts.Values
+            .Where(static part => !part.IsMissing)
+            .ToList();
+        if (currentResolvedParts.Count < 3)
+            return false;
+
+        if (!currentResolvedParts.All(static part => part.IsE0000SlotModel))
+            return false;
+
+        var previousResolvedParts = previousParts.Values
+            .Where(static part => !part.IsMissing)
+            .ToList();
+        if (previousResolvedParts.Count == 0)
+            return false;
+
+        return previousResolvedParts.Any(static part => !part.IsE0000SlotModel);
+    }
+
+    private static Dictionary<string, BoneImportanceSignaturePart> ParseBoneImportanceSignature(string signature)
+    {
+        var parts = new Dictionary<string, BoneImportanceSignaturePart>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(signature))
+            return parts;
+
+        foreach (var segment in signature.Split("||", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var parsed = ParseBoneImportanceSignaturePart(segment);
+            parts[parsed.PartKey] = parsed;
+        }
+
+        return parts;
+    }
+
+    private static BoneImportanceSignaturePart ParseBoneImportanceSignaturePart(string segment)
+    {
+        if (string.IsNullOrWhiteSpace(segment))
+            return BoneImportanceSignaturePart.Missing("unknown");
+
+        var firstColon = segment.IndexOf(':');
+        if (firstColon < 0)
+            return new BoneImportanceSignaturePart(segment, segment, segment, false, IsE0000SlotModelSignatureDetail(segment));
+
+        var partKey = segment[..firstColon];
+        var remainder = segment[(firstColon + 1)..];
+        if (string.Equals(remainder, "missing", StringComparison.OrdinalIgnoreCase))
+            return BoneImportanceSignaturePart.Missing(partKey);
+
+        var secondColonOffset = remainder.IndexOf(':');
+        if (secondColonOffset < 0)
+            return new BoneImportanceSignaturePart(partKey, segment, remainder, false, IsE0000SlotModelSignatureDetail(remainder));
+
+        var source = remainder[..secondColonOffset];
+        var detail = remainder[(secondColonOffset + 1)..];
+        var displayDetail = detail;
+
+        var stage2Index = detail.LastIndexOf(':');
+        if (stage2Index > 0)
+        {
+            var maybeStage2 = detail[(stage2Index + 1)..];
+            var stage1Slice = detail[..stage2Index];
+            var stage1Index = stage1Slice.LastIndexOf(':');
+            if (stage1Index > 0)
+            {
+                var maybeStage1 = stage1Slice[(stage1Index + 1)..];
+                if (bool.TryParse(maybeStage1, out _) && bool.TryParse(maybeStage2, out _))
+                    displayDetail = stage1Slice[..stage1Index];
+            }
+        }
+
+        displayDetail = SummarizeBoneImportanceSignatureValue(displayDetail);
+        return new BoneImportanceSignaturePart(
+            partKey,
+            segment,
+            $"{source}/{displayDetail}",
+            false,
+            IsE0000SlotModelSignatureDetail(displayDetail));
+    }
+
+    private static string SummarizeBoneImportanceSignatureValue(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "none";
+
+        var normalized = value.Replace('\\', '/');
+        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Length == 0)
+            return value;
+
+        if (segments.Length == 1)
+            return segments[0];
+
+        return $"{segments[^2]}/{segments[^1]}";
+    }
+
+    private static bool IsE0000SlotModelSignatureDetail(string value)
+        => !string.IsNullOrWhiteSpace(value)
+           && (value.Contains("e0000_", StringComparison.OrdinalIgnoreCase)
+               || value.Contains("/e0000/", StringComparison.OrdinalIgnoreCase));
+
+    private readonly record struct BoneImportanceSignaturePart(
+        string PartKey,
+        string RawSegment,
+        string DisplayLabel,
+        bool IsMissing,
+        bool IsE0000SlotModel)
+    {
+        public static BoneImportanceSignaturePart Missing(string partKey)
+            => new(partKey, $"{partKey}:missing", "missing", true, false);
+    }
+
     /// <summary>
     /// Returns whether or not a link can be established between the armature and an in-game object.
     /// If unbuilt, the armature will be rebuilded.
@@ -1071,8 +1410,8 @@ public unsafe sealed class ArmatureManager : IDisposable
         var actor = actorData.Objects[0];
 
         var advancedBodyScaling = ResolveAdvancedBodyScaling(armature.Profile, actor);
-        var boneImportance = EvaluateBoneImportanceForArmature(armature, actor, advancedBodyScaling, boneImportanceBudget, forceRefresh: !armature.IsBuilt);
         var skeletonUpdated = armature.IsSkeletonUpdated(actor.Model.AsCharacterBase);
+        var boneImportance = EvaluateBoneImportanceForArmature(armature, actor, advancedBodyScaling, boneImportanceBudget, skeletonUpdated, forceRefresh: !armature.IsBuilt);
         var previousBindingIdentity = BuildAppliedBoneImportanceBindingIdentity(armature.ActiveAdvancedBodyScalingSettings, armature.ActiveBoneImportanceResult);
         var currentBindingIdentity = BuildAppliedBoneImportanceBindingIdentity(advancedBodyScaling, boneImportance);
         var boneImportanceBindingChanged = !string.Equals(previousBindingIdentity, currentBindingIdentity, StringComparison.Ordinal);
@@ -1095,7 +1434,12 @@ public unsafe sealed class ArmatureManager : IDisposable
                     armature.ActiveBoneImportanceResult,
                     currentBindingIdentity,
                     boneImportance);
-                _logger.Debug($"Refreshing bone-importance bindings for actor #{actor.AsObject->ObjectIndex} tied to \"{armature}\" because {refreshReason} ({boneImportance.VisibleRuntimeModeLabel}, {boneImportance.VisibleActorTierLabel}).");
+                var signatureChangeDetail = string.Equals(refreshReason, "resolved model signature changed", StringComparison.Ordinal)
+                    ? BuildBoneImportanceSignatureChangeDetail(
+                        armature.ActiveBoneImportanceResult.ModelSignature,
+                        boneImportance.ModelSignature)
+                    : string.Empty;
+                _logger.Debug($"Refreshing bone-importance bindings for actor #{actor.AsObject->ObjectIndex} tied to \"{armature}\" because {refreshReason}{(string.IsNullOrWhiteSpace(signatureChangeDetail) ? string.Empty : $" [{signatureChangeDetail}]")} ({boneImportance.VisibleRuntimeModeLabel}, {boneImportance.VisibleActorTierLabel}).");
                 armature.RebuildBoneTemplateBinding(
                     _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
                     _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,

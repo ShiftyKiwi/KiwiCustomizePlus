@@ -66,6 +66,11 @@ internal sealed class AdvancedBodyScalingBoneImportanceProbeResult
 internal sealed class AdvancedBodyScalingBoneImportanceRuntimeState
 {
     public string LastProbedModelSignature { get; set; } = string.Empty;
+    public string LastConfirmedModelSignature { get; set; } = string.Empty;
+    public string PendingModelSignature { get; set; } = string.Empty;
+    public long PendingModelSignatureAtMs { get; set; }
+    public int PendingModelSignatureProbeCount { get; set; }
+    public long PendingModelSignatureSettleHoldUntilMs { get; set; }
     public long LastProbeAtMs { get; set; }
     public long LastResolveAtMs { get; set; }
     public int StableProbeCount { get; set; }
