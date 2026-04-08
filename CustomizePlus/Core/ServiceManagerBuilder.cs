@@ -170,12 +170,14 @@ public static class ServiceManagerBuilder
     {
         services
             .AddSingleton<PenumbraIpcHandler>()
+            .AddSingleton<GlamourerIpcHandler>()
             .AddSingleton<PcpService>()
             .AddSingleton<IpcHandler>(provider =>
             {
                 var subscribers = new List<IIpcSubscriber>
                 {
                 provider.GetRequiredService<PenumbraIpcHandler>(),
+                provider.GetRequiredService<GlamourerIpcHandler>(),
                 };
 
                 return new IpcHandler(subscribers);

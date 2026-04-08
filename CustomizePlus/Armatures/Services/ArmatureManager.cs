@@ -13,6 +13,7 @@ using CustomizePlus.Profiles.Data;
 using CustomizePlus.Profiles.Events;
 using CustomizePlus.Templates.Events;
 using CustomizePlus.Configuration.Data;
+using CustomizePlus.Interop.Ipc;
 using Dalamud.Plugin.Services;
 using OtterGui.Classes;
 using OtterGui.Log;
@@ -43,6 +44,7 @@ public unsafe sealed class ArmatureManager : IDisposable
     private readonly ArmatureChanged _event;
     private readonly EmoteService _emoteService;
     private readonly AdvancedBodyScalingBoneImportanceService _boneImportanceService;
+    private readonly GlamourerIpcHandler _glamourerIpcHandler;
     private const float NearbyFullBoneImportanceDistance = 12f;
     private const float NearbyFullBoneImportanceDistanceSquared = NearbyFullBoneImportanceDistance * NearbyFullBoneImportanceDistance;
     private const float ActiveBoneImportanceBlendEpsilon = 0.0001f;
@@ -155,7 +157,8 @@ public unsafe sealed class ArmatureManager : IDisposable
         GPoseService gposeService,
         ArmatureChanged @event,
         EmoteService emoteService,
-        AdvancedBodyScalingBoneImportanceService boneImportanceService)
+        AdvancedBodyScalingBoneImportanceService boneImportanceService,
+        GlamourerIpcHandler glamourerIpcHandler)
     {
         _profileManager = profileManager;
         _objectTable = objectTable;
@@ -171,6 +174,7 @@ public unsafe sealed class ArmatureManager : IDisposable
         _event = @event;
         _emoteService = emoteService;
         _boneImportanceService = boneImportanceService;
+        _glamourerIpcHandler = glamourerIpcHandler;
 
         _templateChangedEvent.Subscribe(OnTemplateChange, TemplateChanged.Priority.ArmatureManager);
         _profileChangedEvent.Subscribe(OnProfileChange, ProfileChanged.Priority.ArmatureManager);
@@ -482,6 +486,7 @@ public unsafe sealed class ArmatureManager : IDisposable
         }
 
         var stableSignature = GetStableBoneImportanceSignature(runtimeState, activeResult);
+        var glamourerAppearanceTransition = TryGetGlamourerAppearanceTransition(actor);
 
         if (!settings.ModelDerivedBoneImportanceEnabled)
         {
@@ -535,8 +540,9 @@ public unsafe sealed class ArmatureManager : IDisposable
                 runtimeSummary: refreshStatus);
         }
 
-        var probeInterval = GetBoneImportanceProbeIntervalMs(tier, runtimeState.StableProbeCount);
-        var resolveInterval = GetBoneImportanceResolveIntervalMs(tier, runtimeState.StableProbeCount);
+        var probeStability = glamourerAppearanceTransition.Active ? 0 : runtimeState.StableProbeCount;
+        var probeInterval = GetBoneImportanceProbeIntervalMs(tier, probeStability);
+        var resolveInterval = GetBoneImportanceResolveIntervalMs(tier, probeStability);
         var priorityRefresh = forceRefresh
             || runtimeState.LastMode == AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped
             || !hasCachedModelResult;
@@ -549,6 +555,9 @@ public unsafe sealed class ArmatureManager : IDisposable
         {
             if (hasCachedModelResult)
             {
+                var cachedSummary = glamourerAppearanceTransition.Active
+                    ? glamourerAppearanceTransition.Summary
+                    : "Cached BIW was reused while the actor stayed within the current stable-check window.";
                 return ApplyRuntimePolicy(
                     activeResult,
                     settings,
@@ -559,7 +568,7 @@ public unsafe sealed class ArmatureManager : IDisposable
                     fullEligible,
                     crowdSafeDowngraded: !fullEligible,
                     stableThrottled: true,
-                    runtimeSummary: "Cached BIW was reused while the actor stayed within the current stable-check window.");
+                    runtimeSummary: cachedSummary);
             }
 
             runtimeState.LastMode = AdvancedBodyScalingBoneImportanceRuntimeMode.Skipped;
@@ -592,6 +601,7 @@ public unsafe sealed class ArmatureManager : IDisposable
             hasCachedModelResult,
             stableSignature,
             probe,
+            glamourerAppearanceTransition,
             skeletonUpdated,
             out var confirmedAfterDebounce,
             out var pendingSignatureSummary);
@@ -606,7 +616,9 @@ public unsafe sealed class ArmatureManager : IDisposable
         {
             var cachedSummary = !string.IsNullOrWhiteSpace(pendingSignatureSummary)
                 ? pendingSignatureSummary
-                : "Resolved model signature was unchanged, so cached BIW stayed active and the expensive rebuild was deferred.";
+                : glamourerAppearanceTransition.Active
+                    ? glamourerAppearanceTransition.Summary
+                    : "Resolved model signature was unchanged, so cached BIW stayed active and the expensive rebuild was deferred.";
             return ApplyRuntimePolicy(
                 activeResult,
                 settings,
@@ -672,9 +684,11 @@ public unsafe sealed class ArmatureManager : IDisposable
         {
             var cachedSummary = !string.IsNullOrWhiteSpace(pendingSignatureSummary)
                 ? pendingSignatureSummary
-                : probe.HasResolvedModelSet
-                    ? "Crowd-safe BIW reused the cached result because the actor was deprioritized under the current frame budget."
-                    : "Crowd-safe BIW reused the cached result because the current model probe did not return a usable slot set.";
+                : glamourerAppearanceTransition.Active
+                    ? glamourerAppearanceTransition.Summary
+                    : probe.HasResolvedModelSet
+                        ? "Crowd-safe BIW reused the cached result because the actor was deprioritized under the current frame budget."
+                        : "Crowd-safe BIW reused the cached result because the current model probe did not return a usable slot set.";
             return ApplyRuntimePolicy(
                 activeResult,
                 settings,
@@ -775,6 +789,7 @@ public unsafe sealed class ArmatureManager : IDisposable
         bool hasCachedModelResult,
         string stableSignature,
         AdvancedBodyScalingBoneImportanceProbeResult probe,
+        GlamourerAppearanceTransitionSnapshot glamourerAppearanceTransition,
         bool skeletonUpdated,
         out bool confirmedAfterDebounce,
         out string pendingSummary)
@@ -821,6 +836,18 @@ public unsafe sealed class ArmatureManager : IDisposable
         runtimeState.StableProbeCount = Math.Min(runtimeState.StableProbeCount + 1, 24);
 
         var transitionalSlotBaseline = IsTransitionalSlotBaselineSignatureChange(stableSignature, probe.ModelSignature);
+        if (glamourerAppearanceTransition.AwaitingFinalization)
+        {
+            pendingSummary = glamourerAppearanceTransition.Summary;
+            return false;
+        }
+
+        if (transitionalSlotBaseline && glamourerAppearanceTransition.FinalizationSettling)
+        {
+            pendingSummary = glamourerAppearanceTransition.Summary;
+            return false;
+        }
+
         if (transitionalSlotBaseline && skeletonUpdated)
         {
             pendingSummary = "A transitional all-slot e0000 baseline was observed while the actor skeleton was rebuilding, so BIW kept the previous settled slot signature until the final slot winners finished loading.";
@@ -1135,6 +1162,16 @@ public unsafe sealed class ArmatureManager : IDisposable
         };
 
         return (int)MathF.Round(baseInterval * multiplier);
+    }
+
+    private GlamourerAppearanceTransitionSnapshot TryGetGlamourerAppearanceTransition(Actor actor)
+    {
+        if (actor.AsObject == null)
+            return GlamourerAppearanceTransitionSnapshot.None;
+
+        return _glamourerIpcHandler.TryGetAppearanceTransitionSnapshot(actor.AsObject->ObjectIndex, (nint)actor.AsObject, out var snapshot)
+            ? snapshot
+            : GlamourerAppearanceTransitionSnapshot.None;
     }
 
     private AdvancedBodyScalingBoneImportanceActorTier ClassifyBoneImportanceTier(Armature armature, Actor actor)

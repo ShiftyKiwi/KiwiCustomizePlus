@@ -391,12 +391,24 @@ public class SettingsTab
             "These are advanced settings. Enable them at your own risk.");
         ImGui.NewLine();
 
+        DrawRuntimeAndSafetySettings();
+        ImGui.Spacing();
+        DrawAdvancedBodyScalingSettings();
+        ImGui.Spacing();
+        DrawDebugModeCheckbox();
+    }
+
+    private void DrawRuntimeAndSafetySettings()
+    {
+        if (!ImGui.CollapsingHeader("Runtime & Safety", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        ImGui.TextDisabled("General runtime editing, transition, and safety controls.");
+
         DrawEnableRootPositionCheckbox();
         DrawTransitionSpeedSlider();
         DrawSoftScaleLimitsCheckbox();
         DrawAutomaticChildScaleCompensationCheckbox();
-        DrawAdvancedBodyScalingSettings();
-        DrawDebugModeCheckbox();
     }
 
     private void DrawEnableRootPositionCheckbox()
@@ -464,10 +476,15 @@ public class SettingsTab
 
     private void DrawAdvancedBodyScalingSettings()
     {
+        if (!ImGui.CollapsingHeader("Advanced Body Scaling", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
         var settings = _configuration.AdvancedBodyScalingSettings;
         var isEnabled = settings.Enabled;
 
-        if (CtrlHelper.CheckboxWithTextAndHelp("##advancedbodyscaling", "Advanced body scaling",
+        ImGui.TextDisabled("Automation, balancing, validation, and advanced body-scaling subsystems.");
+
+        if (CtrlHelper.CheckboxWithTextAndHelp("##advancedbodyscaling", "Enable advanced body scaling",
                 "Enable the advanced body scaling pipeline with influence propagation, smoothing, and guardrails. Runtime only.", ref isEnabled))
         {
             settings.Enabled = isEnabled;
@@ -477,6 +494,8 @@ public class SettingsTab
 
         using (var disabled = ImRaii.Disabled(!settings.Enabled))
         {
+            DrawAdvancedSubsectionLabel("Automation & behavior");
+
             var mode = settings.Mode;
             if (ImGui.BeginCombo("Automation mode", mode.ToString()))
             {
@@ -497,6 +516,9 @@ public class SettingsTab
                 ImGui.EndCombo();
             }
             CtrlHelper.AddHoverText("Manual disables automation. Assist is light smoothing. Automatic runs full balancing. Strong is more aggressive.");
+
+            ImGui.Spacing();
+            DrawAdvancedSubsectionLabel("Balancing & naturalization");
 
             var surfaceBalancing = settings.SurfaceBalancingStrength;
             if (ImGui.SliderFloat("Surface balancing strength", ref surfaceBalancing, 0f, 1f, "%.2f"))
@@ -545,6 +567,9 @@ public class SettingsTab
                 _armatureManager.RebindAllArmatures();
             }
             CtrlHelper.AddHoverText("Blends between your edits and the balanced result. 0 keeps your edits, 1 fully balances.");
+
+            ImGui.Spacing();
+            DrawAdvancedSubsectionLabel("Guardrails & validation");
 
             var poseValidation = settings.PoseValidationMode;
             if (ImGui.BeginCombo("Pose-aware validation mode", poseValidation.ToString()))
@@ -595,14 +620,20 @@ public class SettingsTab
             DrawFullBodyIkSettings(settings);
 
             ImGui.Spacing();
-            DrawAdvancedBodyScalingResets(settings);
-
-            ImGui.Spacing();
             DrawAdvancedBodyScalingRegionProfiles(settings);
 
             ImGui.Spacing();
             DrawAdvancedBodyScalingExplainability(settings);
+
+            ImGui.Spacing();
+            DrawAdvancedBodyScalingResets(settings);
         }
+    }
+
+    private static void DrawAdvancedSubsectionLabel(string label)
+    {
+        ImGui.Separator();
+        ImGui.TextDisabled(label);
     }
 
     private void DrawBoneImportanceWeightingSettings(AdvancedBodyScalingSettings settings)
@@ -765,7 +796,9 @@ public class SettingsTab
 
     private void DrawNeckCompensationSettings(AdvancedBodyScalingSettings settings)
     {
-        ImGui.Text("Global Neck/Shoulder Baseline");
+        if (!ImGui.CollapsingHeader("Global Neck/Shoulder Baseline", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
         ImGui.TextDisabled("These are the default neck/shoulder compensation values used when no race-specific preset overrides them.");
 
         var neckLength = settings.NeckLengthCompensation;
@@ -2236,9 +2269,12 @@ public class SettingsTab
 
     private void DrawAdvancedBodyScalingResets(AdvancedBodyScalingSettings settings)
     {
+        if (!ImGui.CollapsingHeader("Quick resets"))
+            return;
+
         var defaults = new AdvancedBodyScalingSettings();
 
-        ImGui.Text("Quick resets:");
+        ImGui.TextDisabled("Restore a small part of the advanced stack or reset all advanced scaling back to defaults.");
         if (ImGui.Button("Reset Surface Balancing"))
         {
             settings.SurfaceBalancingStrength = defaults.SurfaceBalancingStrength;
