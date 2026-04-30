@@ -1,6 +1,6 @@
 [submodule "submodules/Penumbra.GameData"]
 	path = submodules/Penumbra.GameData
-	url = https://github.com/Ottermandias/Penumbra.GameData
+	url = https://github.com/ShiftyKiwi/Penumbra.GameData.git
 	branch = main
 [submodule "submodules/Penumbra.Api"]
 	path = submodules/Penumbra.Api

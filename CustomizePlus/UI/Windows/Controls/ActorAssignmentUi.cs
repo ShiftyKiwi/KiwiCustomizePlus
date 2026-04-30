@@ -93,7 +93,7 @@ public class ActorAssignmentUi
         ObjectKind.BattleNpc,
         ObjectKind.EventNpc,
         ObjectKind.Companion,
-        ObjectKind.MountType,
+        ObjectKind.Mount,
         ObjectKind.Ornament,
     };
 
@@ -102,7 +102,7 @@ public class ActorAssignmentUi
         {
             ObjectKind.BattleNpc => _bnpcCombo,
             ObjectKind.EventNpc => _enpcCombo,
-            ObjectKind.MountType => _mountCombo,
+            ObjectKind.Mount => _mountCombo,
             ObjectKind.Companion => _companionCombo,
             ObjectKind.Ornament => _ornamentCombo,
             _ => throw new NotImplementedException(),
@@ -141,7 +141,7 @@ public class ActorAssignmentUi
                 case ObjectKind.EventNpc:
                     NpcIdentifier = _actorManager.CreateNpc(_newKind, npcCombo.Selected.Ids[0]);
                     break;
-                case ObjectKind.MountType:
+                case ObjectKind.Mount:
                 case ObjectKind.Companion:
                 case ObjectKind.Ornament:
                     var currentPlayer = _actorManager.GetCurrentPlayer();

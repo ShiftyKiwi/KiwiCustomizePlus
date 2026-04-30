@@ -10,7 +10,7 @@ using Lumina.Excel.Sheets;
 namespace CustomizePlus.GameData.ReverseSearchDictionaries;
 
 /// <summary> A dictionary that matches names to ornament ids. </summary>
-public sealed class ReverseSearchDictOrnament(IDalamudPluginInterface pluginInterface, Logger log, IDataManager gameData)
+public sealed class ReverseSearchDictOrnament(IDalamudPluginInterface pluginInterface, LunaLogger log, IDataManager gameData)
     : ReverseNameDictionary(pluginInterface, log, gameData, "ReverseSearchOrnaments", Penumbra.GameData.DataContainers.Version.DictOrnament, () => CreateOrnamentData(gameData))
 {
     /// <summary> Create the data. </summary>

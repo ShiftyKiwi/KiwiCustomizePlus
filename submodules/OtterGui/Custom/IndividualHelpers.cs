@@ -33,7 +33,7 @@ public static class IndividualHelpers
             ObjectKind.None      => "Unknown",
             ObjectKind.BattleNpc => "Battle NPC",
             ObjectKind.EventNpc  => "Event NPC",
-            ObjectKind.MountType => "Mount",
+            ObjectKind.Mount => "Mount",
             ObjectKind.Companion => "Companion",
             ObjectKind.Ornament  => "Accessory",
             _                    => kind.ToString(),

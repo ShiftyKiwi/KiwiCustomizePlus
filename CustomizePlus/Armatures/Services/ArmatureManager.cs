@@ -1497,7 +1497,7 @@ public unsafe sealed class ArmatureManager : IDisposable
         var cBase = actor.Model.AsCharacterBase;
 
         var isMount = actorIdentifier.Type == IdentifierType.Owned &&
-            actorIdentifier.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.MountType;
+            actorIdentifier.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Mount;
 
         Actor? mountOwner = null;
         Armature? mountOwnerArmature = null;

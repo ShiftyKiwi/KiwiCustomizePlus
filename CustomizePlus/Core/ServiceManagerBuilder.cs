@@ -44,7 +44,7 @@ using Penumbra.GameData.Structs;
 using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
 using ImSharpDalamudContext = Luna.ImSharpDalamudContext;
-using LunaLogger = Luna.Logger;
+using LunaMainLogger = Luna.MainLogger;
 
 namespace CustomizePlus.Core;
 
@@ -54,11 +54,12 @@ public static class ServiceManagerBuilder
     {
         EventWrapperBase.ChangeLogger(logger);
 
-        var lunaLogger = new LunaLogger();
+        var lunaLogger = new LunaMainLogger();
 
         var services = new ServiceManager(logger)
             .AddExistingService(logger)
             .AddExistingService(lunaLogger)
+            .AddExistingService<Luna.LunaLogger>(lunaLogger)
             .AddExistingService<ILogger>(lunaLogger)
             .AddCore()
             .AddEvents()

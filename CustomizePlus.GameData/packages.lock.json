@@ -97,7 +97,7 @@
           "FlatSharp.Compiler": "[7.9.0, )",
           "FlatSharp.Runtime": "[7.9.0, )",
           "Luna": "[1.0.0, )",
-          "Penumbra.Api": "[5.14.0, )",
+          "Penumbra.Api": "[5.15.0, )",
           "Penumbra.String": "[1.0.7, )"
         }
       },

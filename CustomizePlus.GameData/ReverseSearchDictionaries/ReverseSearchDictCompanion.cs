@@ -12,7 +12,7 @@ namespace CustomizePlus.GameData.ReverseSearchDictionaries;
 #pragma warning disable SeStringEvaluator
 
 /// <summary> A dictionary that matches companion names to their ids. </summary>
-public sealed class ReverseSearchDictCompanion(IDalamudPluginInterface pluginInterface, Logger log, IDataManager gameData, ISeStringEvaluator evaluator)
+public sealed class ReverseSearchDictCompanion(IDalamudPluginInterface pluginInterface, LunaLogger log, IDataManager gameData, ISeStringEvaluator evaluator)
     : ReverseNameDictionary(pluginInterface, log, gameData, "ReverseSearchCompanions", Penumbra.GameData.DataContainers.Version.DictCompanion, () => CreateCompanionData(gameData, evaluator))
 {
     /// <summary> Create the data. </summary>

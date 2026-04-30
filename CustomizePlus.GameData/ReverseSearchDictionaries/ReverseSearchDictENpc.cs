@@ -12,7 +12,7 @@ namespace CustomizePlus.GameData.ReverseSearchDictionaries;
 #pragma warning disable SeStringEvaluator
 
 /// <summary> A dictionary that matches names to event npc ids. </summary>
-public sealed class ReverseSearchDictENpc(IDalamudPluginInterface pluginInterface, Logger log, IDataManager gameData, ISeStringEvaluator evaluator)
+public sealed class ReverseSearchDictENpc(IDalamudPluginInterface pluginInterface, LunaLogger log, IDataManager gameData, ISeStringEvaluator evaluator)
     : ReverseNameDictionary(pluginInterface, log, gameData, "ReverseSearchENpcs", Penumbra.GameData.DataContainers.Version.DictENpc, () => CreateENpcData(gameData, evaluator))
 {
     /// <summary> Create the data. </summary>
