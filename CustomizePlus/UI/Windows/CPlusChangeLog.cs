@@ -47,6 +47,7 @@ public class CPlusChangeLog
         Add2_1_0_0(Changelog);
         Add2_1_1_0(Changelog);
         Add2_1_3_0(Changelog);
+        Add2_1_10_0(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -58,6 +59,11 @@ public class CPlusChangeLog
         _config.ChangelogSettings.ChangeLogDisplayType = type;
         _config.Save();
     }
+    private static void Add2_1_10_0(Changelog log)
+        => log.NextVersion("Version 2.1.10.0")
+        .RegisterImportant("Validated for FFXIV Patch 7.5 Hotfix 1 and republished for Dalamud API 15.")
+        .RegisterEntry("Bumped the plugin version above the current Dalamud safety ban threshold for older Customize+ custom-repo builds.", 1);
+
     private static void Add2_1_3_0(Changelog log)
         => log.NextVersion("Version 2.1.3.0")
         .RegisterImportant("Support for 7.5 and Dalamud API 15.");
