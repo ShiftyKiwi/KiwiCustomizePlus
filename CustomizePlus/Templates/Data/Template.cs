@@ -72,7 +72,7 @@ public sealed class Template : ISavable
     {
         foreach (var kvp in original.Bones)
         {
-            if (!kvp.Value.IsEdited()) //do not copy unedited bones
+            if (!kvp.Value.IsEdited(true)) // include lock-only rows when duplicating templates
                 continue;
 
             Bones[kvp.Key] = new BoneTransform();

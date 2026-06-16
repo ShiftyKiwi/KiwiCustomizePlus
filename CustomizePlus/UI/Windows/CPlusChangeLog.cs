@@ -48,6 +48,7 @@ public class CPlusChangeLog
         Add2_1_1_0(Changelog);
         Add2_1_3_0(Changelog);
         Add2_1_10_0(Changelog);
+        Add2_1_10_1(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -59,6 +60,10 @@ public class CPlusChangeLog
         _config.ChangelogSettings.ChangeLogDisplayType = type;
         _config.Save();
     }
+    private static void Add2_1_10_1(Changelog log)
+        => log.NextVersion("Version 2.1.10.1")
+        .RegisterEntry("Duplicating templates now preserves row locks and pinned scale axes, including rows that are locked without other transform edits.");
+
     private static void Add2_1_10_0(Changelog log)
         => log.NextVersion("Version 2.1.10.0")
         .RegisterImportant("Validated for FFXIV Patch 7.5 Hotfix 1 and republished for Dalamud API 15.")
