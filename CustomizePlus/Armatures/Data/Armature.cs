@@ -203,35 +203,40 @@ public unsafe class Armature
         if (cBase == null)
             return false;
         else if (cBase->Skeleton->PartialSkeletonCount != _partialSkeletons.Length)
+        {
+            Plugin.Logger.Debug($"Skeleton changed for armature {_localId}: partial count mismatch. Expected {_partialSkeletons.Length}, found {cBase->Skeleton->PartialSkeletonCount}. Rebinding armature.");
             return true;
+        }
         else
         {
             for (var i = 0; i < cBase->Skeleton->PartialSkeletonCount; ++i)
             {
-                if (i == 2)
-                    continue; //hair is handled separately
-
                 var newPose = cBase->Skeleton->PartialSkeletons[i].GetHavokPose(Constants.TruePoseIndex);
 
-                if (newPose != null
-                    && newPose->Skeleton->Bones.Length != _partialSkeletons[i].Length)
-                    return true;
-            }
-
-            //handle hair separately because different hairstyles can have the same amount of bones.
-            if(cBase->Skeleton->PartialSkeletonCount > 2)
-            {
-                var newPose = cBase->Skeleton->PartialSkeletons[2].GetHavokPose(Constants.TruePoseIndex);
-
-                if(newPose != null)
+                if (newPose != null)
                 {
-                    if(newPose->Skeleton->Bones.Length != _partialSkeletons[2].Length)
-                        return true;
-
-                    for(var i = 0; i < newPose->Skeleton->Bones.Length; i++)
+                    if (newPose->Skeleton->Bones.Length != _partialSkeletons[i].Length)
                     {
-                        if (newPose->Skeleton->Bones[i].Name.String != _partialSkeletons[2][i].BoneName)
+                        Plugin.Logger.Debug($"Skeleton changed for armature {_localId}: partial {i} bone count mismatch. Expected {_partialSkeletons[i].Length}, found {newPose->Skeleton->Bones.Length}. Rebinding armature.");
+                        return true;
+                    }
+
+                    for (var boneIndex = 0; boneIndex < newPose->Skeleton->Bones.Length; boneIndex++)
+                    {
+                        var expectedBone = _partialSkeletons[i][boneIndex];
+                        var actualName = newPose->Skeleton->Bones[boneIndex].Name.String;
+                        if (actualName != expectedBone.BoneName)
+                        {
+                            Plugin.Logger.Debug($"Skeleton changed for armature {_localId}: partial {i} bone name mismatch at index {boneIndex}. Expected {expectedBone.BoneName}, found {actualName}. Rebinding armature.");
                             return true;
+                        }
+
+                        var actualParent = newPose->Skeleton->ParentIndices[boneIndex];
+                        if (actualParent != expectedBone.ParentBoneIndex)
+                        {
+                            Plugin.Logger.Debug($"Skeleton changed for armature {_localId}: partial {i} parent mismatch at index {boneIndex} ({expectedBone.BoneName}). Expected {expectedBone.ParentBoneIndex}, found {actualParent}. Rebinding armature.");
+                            return true;
+                        }
                     }
                 }
             }

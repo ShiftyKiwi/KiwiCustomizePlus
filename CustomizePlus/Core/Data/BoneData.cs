@@ -387,25 +387,33 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
 
     public static void LogNewBones(params string[] boneNames)
     {
-        var probablyHairstyleBones = boneNames.Where(IsProbablyHairstyle).ToArray();
-
-        foreach (var hairBone in ParseHairstyle(probablyHairstyleBones))
+        lock (BoneTable)
         {
-            BoneTable[hairBone.Codename] = hairBone;
-        }
+            var probablyHairstyleBones = boneNames.Where(IsProbablyHairstyle).ToArray();
 
-        foreach (var boneName in boneNames.Except(BoneTable.Keys))
-        {
-            var newBone = new BoneDatum
+            foreach (var hairBone in ParseHairstyle(probablyHairstyleBones))
             {
-                RowIndex = -1,
-                Codename = boneName,
-                DisplayName = $"Unknown ({boneName})",
-                Family = BoneFamily.Unknown,
-                Parent = "j_kosi",
-                Children = Array.Empty<string>(),
-                MirroredCodename = null
-            };
+                BoneTable[hairBone.Codename] = hairBone;
+                BoneLookupByDispName[hairBone.DisplayName] = hairBone.Codename;
+            }
+
+            foreach (var boneName in boneNames.Except(BoneTable.Keys))
+            {
+                var displayName = $"Unknown ({boneName})";
+                BoneTable[boneName] = new BoneDatum
+                {
+                    RowIndex = int.MaxValue,
+                    Codename = boneName,
+                    DisplayName = displayName,
+                    Family = BoneFamily.Unknown,
+                    IsDefault = false,
+                    IsIVCSCompatible = false,
+                    Parent = null,
+                    Children = Array.Empty<string>(),
+                    MirroredCodename = null
+                };
+                BoneLookupByDispName[displayName] = boneName;
+            }
         }
     }
 

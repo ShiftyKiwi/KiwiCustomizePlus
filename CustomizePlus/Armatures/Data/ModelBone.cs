@@ -9,6 +9,7 @@ using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Extensions;
 using CustomizePlus.Templates.Data;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
+using FFXIVClientStructs.Havok.Animation.Rig;
 using FFXIVClientStructs.Havok.Common.Base.Math.QsTransform;
 using static FFXIVClientStructs.Havok.Animation.Rig.hkaPose;
 
@@ -28,6 +29,7 @@ public unsafe class ModelBone
 
     public readonly int PartialSkeletonIndex;
     public readonly int BoneIndex;
+    internal int ParentBoneIndex => _parentBoneIndex;
 
     /// <summary>
     /// Gets the model bone corresponding to this model bone's parent, if it exists.
@@ -199,21 +201,20 @@ public unsafe class ModelBone
     /// <summary>
     /// Get the lineage of this model bone, going back to the skeleton's root bone.
     /// </summary>
-    public IEnumerable<ModelBone> GetAncestors(bool includeSelf = true) => includeSelf
-        ? GetAncestors(new List<ModelBone>() { this })
-        : GetAncestors(new List<ModelBone>());
-
-    private IEnumerable<ModelBone> GetAncestors(List<ModelBone> tail)
+    public IEnumerable<ModelBone> GetAncestors(bool includeSelf = true)
     {
-        tail.Add(this);
-        if (ParentBone is ModelBone mb && mb != null)
+        var ancestors = new List<ModelBone>();
+        if (includeSelf)
+            ancestors.Add(this);
+
+        var parent = ParentBone;
+        while (parent != null)
         {
-            return mb.GetAncestors(tail);
+            ancestors.Add(parent);
+            parent = parent.ParentBone;
         }
-        else
-        {
-            return tail;
-        }
+
+        return ancestors;
     }
 
     /// <summary>
@@ -269,15 +270,8 @@ public unsafe class ModelBone
     /// </summary>
     public hkQsTransformf GetGameTransform(CharacterBase* cBase, PoseType refFrame)
     {
-
-        var skelly = cBase->Skeleton;
-        var pSkelly = skelly->PartialSkeletons[PartialSkeletonIndex];
-        var targetPose = pSkelly.GetHavokPose(Constants.TruePoseIndex);
-        //hkaPose* targetPose = cBase->Skeleton->PartialSkeletons[PartialSkeletonIndex].GetHavokPose(Constants.TruePoseIndex);
-
-        if (targetPose == null) return Constants.NullTransform;
-
-        if (BoneIndex >= targetPose->Skeleton->Bones.Length) return Constants.NullTransform;
+        if (!TryGetPose(cBase, PartialSkeletonIndex, BoneIndex, out var targetPose))
+            return Constants.NullTransform;
 
         return refFrame switch
         {
@@ -290,17 +284,8 @@ public unsafe class ModelBone
 
     public hkQsTransformf* GetGameTransformAccess(CharacterBase* cBase, PoseType refFrame)
     {
-
-        var skelly = cBase->Skeleton;
-        var pSkelly = skelly->PartialSkeletons[PartialSkeletonIndex];
-        var targetPose = pSkelly.GetHavokPose(Constants.TruePoseIndex);
-        //hkaPose* targetPose = cBase->Skeleton->PartialSkeletons[PartialSkeletonIndex].GetHavokPose(Constants.TruePoseIndex);
-
-        if (targetPose == null)
+        if (!TryGetPose(cBase, PartialSkeletonIndex, BoneIndex, out var targetPose))
             return null;
-
-        // It's really gonna crash without it, skeleton changes aren't getting picked up fast enough
-        if (BoneIndex >= targetPose->Skeleton->Bones.Length) return null;
 
         return refFrame switch
         {
@@ -318,12 +303,8 @@ public unsafe class ModelBone
 
     private static void SetGameTransform(CharacterBase* cBase, hkQsTransformf transform, int partialIndex, int boneIndex, PoseType refFrame)
     {
-        var skelly = cBase->Skeleton;
-        var pSkelly = skelly->PartialSkeletons[partialIndex];
-        var targetPose = pSkelly.GetHavokPose(Constants.TruePoseIndex);
-        //hkaPose* targetPose = cBase->Skeleton->PartialSkeletons[PartialSkeletonIndex].GetHavokPose(Constants.TruePoseIndex);
-
-        if (targetPose == null || targetPose->ModelInSync == 0) return;
+        if (!TryGetPose(cBase, partialIndex, boneIndex, out var targetPose) || targetPose->ModelInSync == 0)
+            return;
 
         switch (refFrame)
         {
@@ -340,6 +321,25 @@ public unsafe class ModelBone
 
                 //TODO properly implement the other options
         }
+    }
+
+    private static bool TryGetPose(CharacterBase* cBase, int partialIndex, int boneIndex, out hkaPose* targetPose)
+    {
+        targetPose = null;
+        if (cBase == null || cBase->Skeleton == null)
+            return false;
+
+        var skelly = cBase->Skeleton;
+        if (partialIndex < 0 || partialIndex >= skelly->PartialSkeletonCount)
+            return false;
+
+        var pSkelly = skelly->PartialSkeletons[partialIndex];
+        targetPose = pSkelly.GetHavokPose(Constants.TruePoseIndex);
+        if (targetPose == null)
+            return false;
+
+        // Stale armature bindings can survive for a frame during redraw/skeleton swaps.
+        return boneIndex >= 0 && boneIndex < targetPose->Skeleton->Bones.Length;
     }
 
     /// <summary>
@@ -412,8 +412,7 @@ public unsafe class ModelBone
         var modTransform = effectiveTransform.ModifyExistingTransform(*gameTransformAccess);
         SetGameTransform(cBase, modTransform, PoseType.Model);
 
-        var pose = cBase->Skeleton->PartialSkeletons[PartialSkeletonIndex].GetHavokPose(Constants.TruePoseIndex);
-        if (pose == null || pose->ModelInSync == 0)
+        if (!TryGetPose(cBase, PartialSkeletonIndex, BoneIndex, out var pose) || pose->ModelInSync == 0)
             return;
 
         var access2 = GetGameTransformAccess(cBase, PoseType.Model);

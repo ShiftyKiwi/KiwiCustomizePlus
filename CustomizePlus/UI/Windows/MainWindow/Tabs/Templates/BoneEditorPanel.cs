@@ -398,10 +398,9 @@ public class BoneEditorPanel
                 {
                     if (!string.IsNullOrEmpty(_pendingImportText))
                     {
-                        _logger.Debug("check import text 1: " + (_pendingImportText));
                         try
                         {
-                            var importedBones = Base64Helper.ImportEditedBonesFromBase64(_pendingImportText);
+                            var importedBones = Base64Helper.ImportEditedBonesFromBase64(_pendingImportText, out var importError);
                             if (importedBones != null)
                             {
                                 foreach (var boneData in importedBones)
@@ -418,6 +417,7 @@ public class BoneEditorPanel
                                             PropagateTranslation = boneData.PropagateTranslation,
                                             PropagateRotation = boneData.PropagateRotation,
                                             PropagateScale = boneData.PropagateScale,
+                                            PropagationFalloff = boneData.PropagationFalloff,
                                             LockState = boneData.LockState,
                                             PinX = boneData.PinX,
                                             PinY = boneData.PinY,
@@ -425,9 +425,20 @@ public class BoneEditorPanel
                                         }
                                     );
                                 }
+
+                                _logger.Information($"Imported {importedBones.Count} grouped bone transform{(importedBones.Count == 1 ? string.Empty : "s")} from clipboard.");
+                            }
+                            else
+                            {
+                                _logger.Warning($"Group import failed: {importError}");
+                                _popupSystem.ShowPopup(PopupSystem.Messages.ClipboardDataUnsupported);
                             }
                         }
-                        catch {  }
+                        catch (Exception ex)
+                        {
+                            _logger.Error($"Error while importing grouped bone transforms: {ex}");
+                            _popupSystem.ShowPopup(PopupSystem.Messages.ActionError);
+                        }
                         finally
                         {
                             _pendingImportText = null;
@@ -530,7 +541,7 @@ public class BoneEditorPanel
             try
             {
                 ImUtf8.SetClipboardText(_pendingClipboardText);
-                _logger.Debug("copied to clipboard: " + _pendingClipboardText);
+                _logger.Debug("Copied grouped bone transforms to clipboard.");
             }
             catch (Exception)
             {

@@ -26,6 +26,7 @@ public class BoneTransformData // literally not cooking
     public bool PropagateTranslation { get; set; }
     public bool PropagateRotation { get; set; }
     public bool PropagateScale { get; set; }
+    public float PropagationFalloff { get; set; } = Constants.DefaultPropagationFalloff;
     public BoneLockState LockState { get; set; } = BoneLockState.Unlocked;
     public bool PinX { get; set; }
     public bool PinY { get; set; }
@@ -35,6 +36,8 @@ public class BoneTransformData // literally not cooking
 //this is jank but I don't have time to rewrite it
 public static class Base64Helper
 {
+    private const byte EditedBonesExportVersion = 1;
+
     public static string ExportProfileToBase64(Profile profile)
     {
         // Does the same thing as ExportTemplateToBase64 but turns the profile into a template first via IPCCharacterProfile
@@ -117,6 +120,7 @@ public static class Base64Helper
                 PropagateTranslation = b.Transform.PropagateTranslation,
                 PropagateRotation = b.Transform.PropagateRotation,
                 PropagateScale = b.Transform.PropagateScale,
+                PropagationFalloff = b.Transform.PropagationFalloff,
                 LockState = b.Transform.LockState,
                 PinX = b.Transform.PinX,
                 PinY = b.Transform.PinY,
@@ -129,7 +133,7 @@ public static class Base64Helper
             using var compressedStream = new MemoryStream();
             using (var zipStream = new GZipStream(compressedStream, CompressionMode.Compress))
             {
-                zipStream.WriteByte(1);
+                zipStream.WriteByte(EditedBonesExportVersion);
                 zipStream.Write(bytes, 0, bytes.Length);
             }
 
@@ -142,6 +146,9 @@ public static class Base64Helper
     }
 
     public static List<BoneTransformData>? ImportEditedBonesFromBase64(string base64)
+        => ImportEditedBonesFromBase64(base64, out _);
+
+    public static List<BoneTransformData>? ImportEditedBonesFromBase64(string base64, out string error)
     {
         try
         {
@@ -150,16 +157,28 @@ public static class Base64Helper
             using var compressedStream = new MemoryStream(bytes);
             using var zipStream = new GZipStream(compressedStream, CompressionMode.Decompress);
 
-            _ = zipStream.ReadByte();
+            var version = zipStream.ReadByte();
+            if (version != EditedBonesExportVersion)
+            {
+                error = version < 0
+                    ? "Group import payload did not include a version byte."
+                    : $"Unsupported group import version {version}. Expected version {EditedBonesExportVersion}.";
+                return null;
+            }
 
             using var resultStream = new MemoryStream();
             zipStream.CopyTo(resultStream);
 
             var json = Encoding.UTF8.GetString(resultStream.ToArray());
-            return JsonConvert.DeserializeObject<List<BoneTransformData>>(json);
+            var result = JsonConvert.DeserializeObject<List<BoneTransformData>>(json);
+            error = result == null
+                ? "Group import payload did not contain valid bone data."
+                : string.Empty;
+            return result;
         }
-        catch
+        catch (Exception ex)
         {
+            error = $"Failed to import group bone data: {ex.Message}";
             return null;
         }
     }
