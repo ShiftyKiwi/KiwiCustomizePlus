@@ -87,8 +87,18 @@ public partial class PopupSystem
 
             var xDiv = popup.SizeDividers?.X ?? 5;
             var yDiv = popup.SizeDividers?.Y ?? 12;
+            var scale = ImGuiHelpers.GlobalScale;
+            var style = ImGui.GetStyle();
+            var width = Math.Clamp(viewportSize.X / xDiv, 360f * scale, MathF.Min(viewportSize.X * 0.75f, 720f * scale));
+            var wrapWidth = MathF.Max(120f * scale, width - (style.WindowPadding.X * 2f) - (20f * scale));
+            var textHeight = ImGui.CalcTextSize(popup.Text, false, wrapWidth).Y;
+            var buttonHeight = ImGui.GetFrameHeight();
+            var height = Math.Clamp(
+                MathF.Max(viewportSize.Y / yDiv, textHeight + buttonHeight + (style.WindowPadding.Y * 2f) + (48f * scale)),
+                120f * scale,
+                viewportSize.Y * 0.75f);
 
-            ImGui.SetNextWindowSize(new Vector2(viewportSize.X / xDiv, viewportSize.Y / yDiv));
+            ImGui.SetNextWindowSize(new Vector2(width, height));
             ImGui.SetNextWindowPos(viewportSize / 2, ImGuiCond.Always, new Vector2(0.5f));
             using var popupWindow = ImRaii.Popup(popup.Name, ImGuiWindowFlags.Modal);
             if (!popupWindow)
@@ -98,13 +108,15 @@ public partial class PopupSystem
                 continue;
             }
 
-            ImGui.SetCursorPos(new Vector2(10, ImGui.GetWindowHeight() / 4));
+            ImGui.SetCursorPos(new Vector2(style.WindowPadding.X + (10f * scale), style.WindowPadding.Y + (10f * scale)));
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + wrapWidth);
             ImGuiUtil.TextWrapped(popup.Text);
+            ImGui.PopTextWrapPos();
 
             var buttonWidth = new Vector2(150 * ImGuiHelpers.GlobalScale, 0);
-            var yPos = ImGui.GetWindowHeight() - 2 * ImGui.GetFrameHeight();
-            var xPos = (ImGui.GetWindowWidth() - ImGui.GetStyle().ItemSpacing.X - buttonWidth.X) / 2;
-            ImGui.SetCursorPos(new Vector2(xPos, yPos));
+            var buttonY = MathF.Max(ImGui.GetCursorPosY() + (style.ItemSpacing.Y * 2f), ImGui.GetWindowHeight() - buttonHeight - style.WindowPadding.Y - (10f * scale));
+            var xPos = (ImGui.GetWindowWidth() - buttonWidth.X) / 2;
+            ImGui.SetCursorPos(new Vector2(xPos, buttonY));
             if (ImGui.Button("Ok", buttonWidth))
             {
                 ImGui.CloseCurrentPopup();

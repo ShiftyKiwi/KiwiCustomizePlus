@@ -27,6 +27,9 @@ namespace CustomizePlus.UI.Windows.MainWindow.Tabs.Templates;
 
 public class BoneEditorPanel
 {
+    private const long GroupImportSuccessStatusLifetimeMs = 7000;
+    private const long GroupImportFailureStatusLifetimeMs = 12000;
+
     private readonly TemplateFileSystemSelector _templateFileSystemSelector;
     private readonly TemplateEditorManager _editorManager;
     private readonly PluginConfiguration _configuration;
@@ -65,6 +68,9 @@ public class BoneEditorPanel
 
     private string? _pendingClipboardText;
     private string? _pendingImportText;
+    private string? _lastGroupImportStatus;
+    private bool _lastGroupImportFailed;
+    private long _lastGroupImportStatusAtMs;
     public bool HasChanges => _editorManager.HasChanges;
     public bool IsEditorActive => _editorManager.IsEditorActive;
     public bool IsEditorPaused => _editorManager.IsEditorPaused;
@@ -211,7 +217,7 @@ public class BoneEditorPanel
                     _editingAttribute = BoneAttribute.Position;
                     modeChanged = true;
                 }
-                CtrlHelper.AddHoverText($"May have unintended effects. Edit at your own risk!");
+                CtrlHelper.AddHoverText("Position is the highest-risk gameplay mode because offsets can expose hierarchy and animation artifacts.\nUse it sparingly, and prefer Scale for first-pass body shaping.");
 
                 ImGui.SameLine();
                 if (ImGui.RadioButton("Rotation", _editingAttribute == BoneAttribute.Rotation))
@@ -219,7 +225,7 @@ public class BoneEditorPanel
                     _editingAttribute = BoneAttribute.Rotation;
                     modeChanged = true;
                 }
-                CtrlHelper.AddHoverText($"May have unintended effects. Edit at your own risk!");
+                CtrlHelper.AddHoverText("Rotation is useful for posing, expression, and special effects.\nIt is usually not the best first-pass body-shaping mode because animation can amplify rotations.");
 
                 ImGui.SameLine();
                 if (ImGui.RadioButton("Scale", _editingAttribute == BoneAttribute.Scale))
@@ -227,10 +233,12 @@ public class BoneEditorPanel
                     _editingAttribute = BoneAttribute.Scale;
                     modeChanged = true;
                 }
+                CtrlHelper.AddHoverText("Scale is the primary body-scaling mode and usually the safest starting point for proportional shape edits.");
 
                 ImGui.SameLine();
                 ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
                 ImGui.InputTextWithHint("##BoneSearch", "Search bones...", ref _boneSearch, 64);
+                CtrlHelper.AddHoverText("Search by bone name, code name, family, or body terms like shoulders, waist, hips, chest, thigh, calf, wrist, or glute.");
 
                 ImGui.SameLine();
                 ImGui.BeginDisabled(_undoStack.Count == 0);
@@ -297,6 +305,10 @@ public class BoneEditorPanel
                 CtrlHelper.AddHoverText("Level of precision to display while editing values");
             }
 
+            DrawEditorStatusStrip(characterText);
+            DrawGroupImportStatus();
+            DrawTroubleshootingHelper();
+
             ImGui.Separator();
 
             using (var table = ImRaii.Table($"BoneEditorContents", 6, ImGuiTableFlags.BordersOuterH | ImGuiTableFlags.BordersV | ImGuiTableFlags.ScrollY))
@@ -347,8 +359,7 @@ public class BoneEditorPanel
                 if (!string.IsNullOrEmpty(_boneSearch))
                 {
                     relevantModelBones = relevantModelBones
-                        .Where(x => x.BoneDisplayName.Contains(_boneSearch, StringComparison.OrdinalIgnoreCase)
-                                 || x.BoneCodeName.Contains(_boneSearch, StringComparison.OrdinalIgnoreCase));
+                        .Where(x => BoneData.MatchesSearch(x.BoneCodeName, _boneSearch));
                 }
 
                 var favoriteRows = relevantModelBones
@@ -398,6 +409,7 @@ public class BoneEditorPanel
                 {
                     if (!string.IsNullOrEmpty(_pendingImportText))
                     {
+                        ClearGroupImportStatus();
                         try
                         {
                             var importedBones = Base64Helper.ImportEditedBonesFromBase64(_pendingImportText, out var importError);
@@ -426,16 +438,21 @@ public class BoneEditorPanel
                                     );
                                 }
 
-                                _logger.Information($"Imported {importedBones.Count} grouped bone transform{(importedBones.Count == 1 ? string.Empty : "s")} from clipboard.");
+                                SetGroupImportStatus(
+                                    $"Imported {importedBones.Count} grouped bone transform{(importedBones.Count == 1 ? string.Empty : "s")} from clipboard.",
+                                    failed: false);
+                                _logger.Information(_lastGroupImportStatus);
                             }
                             else
                             {
-                                _logger.Warning($"Group import failed: {importError}");
+                                SetGroupImportStatus(importError, failed: true);
+                                _logger.Warning($"Group import failed: {_lastGroupImportStatus}");
                                 _popupSystem.ShowPopup(PopupSystem.Messages.ClipboardDataUnsupported);
                             }
                         }
                         catch (Exception ex)
                         {
+                            SetGroupImportStatus($"Unexpected group import error: {ex.Message}", failed: true);
                             _logger.Error($"Error while importing grouped bone transforms: {ex}");
                             _popupSystem.ShowPopup(PopupSystem.Messages.ActionError);
                         }
@@ -515,7 +532,10 @@ public class BoneEditorPanel
                             {
                                 var clipboardText = ImUtf8.GetClipboardText();
                                 if (!string.IsNullOrEmpty(clipboardText))
+                                {
+                                    ClearGroupImportStatus();
                                     _pendingImportText = clipboardText;
+                                }
                             }
                         }
 
@@ -611,6 +631,185 @@ public class BoneEditorPanel
             _undoStack.Clear();
             _redoStack.Clear();
         }
+    }
+
+    private Armature? GetPrimaryEditorArmature()
+    {
+        return _editorManager.IsEditorActive && _editorManager.EditorProfile?.Armatures.Count > 0
+            ? _editorManager.EditorProfile.Armatures[0]
+            : null;
+    }
+
+    private void DrawEditorStatusStrip(string characterText)
+    {
+        var armature = GetPrimaryEditorArmature();
+        var liveBoneNames = armature?.GetAllBones()
+            .Select(b => b.BoneName)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray() ?? Array.Empty<string>();
+
+        var unknownBoneCount = liveBoneNames.Count(b => BoneData.GetBoneFamily(b) == BoneData.BoneFamily.Unknown);
+        var ivcsBoneCount = liveBoneNames.Count(BoneData.IsIVCSCompatibleBone);
+        var supportClass = GetSupportClass(liveBoneNames.Length, unknownBoneCount, ivcsBoneCount);
+        var advancedStatus = GetAdvancedScalingStatus(armature);
+        var previewText = characterText.StartsWith("Previewing on: ", StringComparison.Ordinal)
+            ? characterText["Previewing on: ".Length..]
+            : characterText;
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Editor status");
+        ImGui.SameLine();
+        ImGuiComponents.HelpMarker("A compact summary of the active preview context. Unknown/custom bones remain manual and experimental by default.");
+
+        using var table = ImRaii.Table("TemplateEditorStatusStrip", 4, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchSame);
+        if (!table)
+            return;
+
+        for (var i = 0; i < 4; i++)
+            ImGui.TableSetupColumn($"Status{i}", ImGuiTableColumnFlags.WidthStretch);
+
+        ImGui.TableNextRow();
+        DrawStatusCell("Preview actor", previewText, IsCharacterFound ? Constants.Colors.Active : Constants.Colors.Warning);
+        DrawStatusCell("Character / armature", $"{(IsCharacterFound ? "Found" : "Missing")} / {(armature?.IsBuilt == true ? "Ready" : "Waiting")}",
+            IsCharacterFound && armature?.IsBuilt == true ? Constants.Colors.Active : Constants.Colors.Warning);
+        DrawStatusCell("Live bones", liveBoneNames.Length > 0 ? $"{liveBoneNames.Length} detected" : "Unavailable",
+            liveBoneNames.Length > 0 ? Constants.Colors.Active : Constants.Colors.Warning);
+        DrawStatusCell("Skeleton class", supportClass, unknownBoneCount > 0 ? Constants.Colors.Warning : Constants.Colors.Info);
+
+        ImGui.TableNextRow();
+        DrawStatusCell("Live display", _isShowLiveBones ? "Shown" : "Edited bones only", _isShowLiveBones ? Constants.Colors.Active : Constants.Colors.Normal);
+        DrawStatusCell("Mirror mode", _isMirrorModeEnabled ? "Enabled" : "Disabled", _isMirrorModeEnabled ? Constants.Colors.Active : Constants.Colors.Normal);
+        DrawStatusCell("Unknown bones", unknownBoneCount > 0 ? $"{unknownBoneCount} manual/experimental" : "None detected",
+            unknownBoneCount > 0 ? Constants.Colors.Warning : Constants.Colors.Active);
+        DrawStatusCell("Advanced scaling", advancedStatus,
+            advancedStatus is "Off" or "Unavailable" ? Constants.Colors.Normal : Constants.Colors.Info);
+    }
+
+    private static void DrawStatusCell(string label, string value, Vector4 color)
+    {
+        ImGui.TableNextColumn();
+        ImGui.TextDisabled(label);
+        ImGui.PushStyleColor(ImGuiCol.Text, color);
+        ImGuiUtil.TextWrapped(value);
+        ImGui.PopStyleColor();
+    }
+
+    private static string GetSupportClass(int liveBoneCount, int unknownBoneCount, int ivcsBoneCount)
+    {
+        if (liveBoneCount <= 0)
+            return "Unknown/Generic";
+
+        return (unknownBoneCount, ivcsBoneCount) switch
+        {
+            (> 0, > 0) => "IVCS/modded + unknown",
+            (> 0, _) => "Unknown/custom",
+            (_, > 0) => "IVCS/modded",
+            _ => "Known/vanilla"
+        };
+    }
+
+    private static string GetAdvancedScalingStatus(Armature? armature)
+    {
+        var settings = armature?.ActiveAdvancedBodyScalingSettings;
+        if (settings == null)
+            return "Unavailable";
+
+        if (!settings.Enabled)
+            return "Off";
+
+        return settings.Mode == AdvancedBodyScalingMode.Manual
+            ? "Manual"
+            : settings.Mode.ToString();
+    }
+
+    private void DrawGroupImportStatus()
+    {
+        if (string.IsNullOrWhiteSpace(_lastGroupImportStatus))
+            return;
+
+        var lifetimeMs = _lastGroupImportFailed
+            ? GroupImportFailureStatusLifetimeMs
+            : GroupImportSuccessStatusLifetimeMs;
+        if (Environment.TickCount64 - _lastGroupImportStatusAtMs > lifetimeMs)
+        {
+            ClearGroupImportStatus();
+            return;
+        }
+
+        ImGui.PushStyleColor(ImGuiCol.Text, _lastGroupImportFailed ? Constants.Colors.Warning : Constants.Colors.Active);
+        ImGuiUtil.TextWrapped(_lastGroupImportFailed
+            ? $"Group import failed: {_lastGroupImportStatus}"
+            : _lastGroupImportStatus);
+        ImGui.PopStyleColor();
+    }
+
+    private void SetGroupImportStatus(string? status, bool failed)
+    {
+        _lastGroupImportStatus = string.IsNullOrWhiteSpace(status) ? "Unknown group import result." : status;
+        _lastGroupImportFailed = failed;
+        _lastGroupImportStatusAtMs = Environment.TickCount64;
+    }
+
+    private void ClearGroupImportStatus()
+    {
+        _lastGroupImportStatus = null;
+        _lastGroupImportFailed = false;
+        _lastGroupImportStatusAtMs = 0;
+    }
+
+    private void DrawTroubleshootingHelper()
+    {
+        if (!ImGui.CollapsingHeader("Why didn't this move?"))
+            return;
+
+        var armature = GetPrimaryEditorArmature();
+        var liveBoneNames = armature?.GetAllBones()
+            .Select(b => b.BoneName)
+            .Distinct(StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>(StringComparer.Ordinal);
+        var templateBones = _editorManager.CurrentlyEditedTemplate?.Bones ?? _templateFileSystemSelector.Selected?.Bones;
+        var lockedRows = templateBones?.Count(b => b.Value.LockState != BoneLockState.Unlocked) ?? 0;
+        var pinnedAxes = templateBones?.Sum(b => (b.Value.PinX ? 1 : 0) + (b.Value.PinY ? 1 : 0) + (b.Value.PinZ ? 1 : 0)) ?? 0;
+        var editedBones = templateBones?.Where(b => b.Value.IsEdited()).ToList() ?? new List<KeyValuePair<string, BoneTransform>>();
+        var missingEditedBones = liveBoneNames.Count > 0
+            ? editedBones.Count(b => !liveBoneNames.Contains(b.Key))
+            : 0;
+        var unknownBoneCount = liveBoneNames.Count(b => BoneData.GetBoneFamily(b) == BoneData.BoneFamily.Unknown);
+        var ivcsBoneCount = liveBoneNames.Count(BoneData.IsIVCSCompatibleBone);
+
+        ImGuiUtil.TextWrapped("Quick local checks for cases where a bone edit is visible in the table but does not visibly affect the actor:");
+
+        if (!IsEditorActive)
+            DrawWrappedBullet("The template editor is not active, so no live preview armature is currently being edited.");
+        if (IsEditorPaused)
+            DrawWrappedBullet("The editor is paused by the current game state. Resume a compatible state before testing movement.");
+        if (!IsCharacterFound)
+            DrawWrappedBullet("No active preview actor was found. Pick a visible actor or apply the editor to your current character.");
+        if (armature?.IsBuilt != true)
+            DrawWrappedBullet("No live armature is ready yet. Redraw, change preview actor, or wait for the actor skeleton to finish loading.");
+        if (missingEditedBones > 0)
+            DrawWrappedBullet($"{missingEditedBones} edited bone{(missingEditedBones == 1 ? " is" : "s are")} not present on the current live skeleton.");
+        if (unknownBoneCount > 0)
+            DrawWrappedBullet($"{unknownBoneCount} unknown/custom bone{(unknownBoneCount == 1 ? " is" : "s are")} visible. Unknown bones are manual/experimental and are not trusted for automation by default.");
+        if (ivcsBoneCount > 0)
+            DrawWrappedBullet($"{ivcsBoneCount} IVCS/modded bone{(ivcsBoneCount == 1 ? " is" : "s are")} visible. These require compatible skeleton, body, and clothing weights to move reliably.");
+        if (lockedRows > 0)
+            DrawWrappedBullet($"{lockedRows} row lock{(lockedRows == 1 ? " is" : "s are")} active. Locked rows block automation and analyzer fixes.");
+        if (pinnedAxes > 0)
+            DrawWrappedBullet($"{pinnedAxes} pinned axis value{(pinnedAxes == 1 ? " is" : "s are")} active. Pins protect individual scale axes from automation.");
+        if (editedBones.Count == 0)
+            DrawWrappedBullet("This template has no effective bone edits yet. Identity/default transforms will not visibly move anything.");
+
+        DrawWrappedBullet("If clothing does not move, the mesh may not be weighted to that bone even when the body is.");
+        DrawWrappedBullet("Some helper, face, or GPose-oriented bones may be unreliable outside supported contexts. The plugin can expose them, but it cannot remove game-engine limits.");
+        DrawWrappedBullet("Propagation only affects child bones when the propagation icon is enabled for the current edit mode.");
+    }
+
+    private static void DrawWrappedBullet(string text)
+    {
+        ImGui.Bullet();
+        ImGui.SameLine();
+        ImGuiUtil.TextWrapped(text);
     }
 
     #region ImGui helper functions
@@ -993,21 +1192,21 @@ public class BoneEditorPanel
         }
 
         ImGui.TableNextColumn();
-        if ((BoneData.IsIVCSCompatibleBone(codename) || boneFamily == BoneData.BoneFamily.Unknown) && !codename.StartsWith("j_f_"))
+        var isKnownModdedBone = BoneData.IsIVCSCompatibleBone(codename);
+        var isUnknownBone = boneFamily == BoneData.BoneFamily.Unknown;
+        if ((isKnownModdedBone || isUnknownBone) && !codename.StartsWith("j_f_"))
         {
             ImGui.PushStyleColor(ImGuiCol.Text, Constants.Colors.Warning);
             ImGuiUtil.PrintIcon(FontAwesomeIcon.Wrench);
             ImGui.PopStyleColor();
-            CtrlHelper.AddHoverText("This is a bone from modded skeleton." +
-                "\r\nIMPORTANT: The Customize+ team does not provide support for issues related to these bones." +
-                "\r\nThese bones need special clothing and body mods designed specifically for them." +
-                "\r\nEven if they are intended for these bones, not all clothing mods will support every bone." +
-                "\r\nIf you experience issues, try performing the same actions using posing tools.");
+            CtrlHelper.AddHoverText(isUnknownBone
+                ? "Unknown/custom bone detected.\r\nThe plugin shows this bone for manual experimentation, but it is not trusted for mirroring, propagation safety, or advanced automation by default.\r\nMovement depends on the active skeleton and whether the body or clothing mesh is weighted to this bone."
+                : "Known IVCS/modded skeleton bone.\r\nThis needs a compatible skeleton, body, and clothing weights designed for the bone.\r\nEven compatible outfits may not support every modded bone, so test body and clothing behavior separately.");
             ImGui.SameLine();
         }
 
         CtrlHelper.StaticLabel(!isFavorite ? displayName : $"{displayName} ({boneFamily})", CtrlHelper.TextAlignment.Left,
-            BoneData.IsIVCSCompatibleBone(codename) ? $"(IVCS Compatible) {codename}" : codename);
+            isKnownModdedBone ? $"(IVCS Compatible) {codename}" : codename);
 
         if (valueChanged)
         {

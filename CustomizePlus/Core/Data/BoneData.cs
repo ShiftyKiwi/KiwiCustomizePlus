@@ -180,8 +180,8 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
         "iv_asi_hito_b_r,Index Toe B Right,Feet,FALSE,TRUE,j_asi_hito_a_r,iv_asi_hito_b_l",
         "iv_asi_naka_a_l,Middle Toe A Left,Feet,FALSE,TRUE,j_asi_e_l,iv_asi_naka_a_r",
         "iv_asi_naka_a_r,Middle Toe A Right,Feet,FALSE,TRUE,j_asi_e_r,iv_asi_naka_a_l",
-        "iv_asi_naka_b_l,Middle Toe B Left,Feet,FALSE,TRUE,j_asi_naka_b_l,iv_asi_naka_b_r",
-        "iv_asi_naka_b_r,Middle Toe B Right,Feet,FALSE,TRUE,j_asi_naka_b_r,iv_asi_naka_b_l",
+        "iv_asi_naka_b_l,Middle Toe B Left,Feet,FALSE,TRUE,j_asi_naka_a_l,iv_asi_naka_b_r",
+        "iv_asi_naka_b_r,Middle Toe B Right,Feet,FALSE,TRUE,j_asi_naka_a_r,iv_asi_naka_b_l",
         "iv_asi_kusu_a_l,Fore Toe A Left,Feet,FALSE,TRUE,j_asi_e_l,iv_asi_kusu_a_r",
         "iv_asi_kusu_a_r,Fore Toe A Right,Feet,FALSE,TRUE,j_asi_e_r,iv_asi_kusu_a_l",
         "iv_asi_kusu_b_l,Fore Toe B Left,Feet,FALSE,TRUE,j_asi_kusu_a_l,iv_asi_kusu_b_r",
@@ -341,6 +341,29 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
 
     private static readonly Dictionary<string, string> BoneLookupByDispName = new();
 
+    private static readonly Dictionary<BoneFamily, string[]> BoneFamilySearchAliases = new()
+    {
+        [BoneFamily.Root] = ["root", "base", "global"],
+        [BoneFamily.Spine] = ["waist", "torso", "abdomen", "belly", "stomach", "neck", "pelvis", "hips"],
+        [BoneFamily.Chest] = ["chest", "bust", "breast", "upper chest", "ribcage"],
+        [BoneFamily.Arms] = ["shoulder", "shoulders", "shoulder width", "clavicle", "upper arm", "bicep", "forearm", "elbow", "wrist"],
+        [BoneFamily.Hands] = ["hand", "hands", "finger", "fingers", "palm"],
+        [BoneFamily.Tail] = ["tail", "butt", "glute", "glutes"],
+        [BoneFamily.Groin] = ["groin", "pelvis", "hips", "butt", "glute"],
+        [BoneFamily.Legs] = ["leg", "legs", "hip", "hips", "pelvis", "thigh", "knee", "calf", "shin"],
+        [BoneFamily.Feet] = ["foot", "feet", "ankle", "toe", "toes"],
+        [BoneFamily.Hair] = ["hair", "bangs", "ponytail"],
+        [BoneFamily.Face] = ["face", "head"],
+        [BoneFamily.Ears] = ["ear", "ears"],
+        [BoneFamily.Cheeks] = ["cheek", "cheeks"],
+        [BoneFamily.Jaw] = ["jaw", "chin", "mouth"],
+        [BoneFamily.Tongue] = ["tongue", "mouth"],
+        [BoneFamily.Lips] = ["lip", "lips", "mouth"],
+        [BoneFamily.Eyes] = ["eye", "eyes", "brow", "eyebrow"],
+        [BoneFamily.Equipment] = ["equipment", "helper", "clothing"],
+        [BoneFamily.Unknown] = ["unknown", "custom", "manual", "experimental", "modded"]
+    };
+
     static BoneData()
     {
         //apparently static constructors are only guaranteed to START before the class is called
@@ -482,6 +505,28 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
     public static string[] GetChildren(string codename)
     {
         return BoneTable.TryGetValue(codename, out var row) ? row.Children : Array.Empty<string>();
+    }
+
+    public static bool MatchesSearch(string codename, string search)
+    {
+        if (string.IsNullOrWhiteSpace(search))
+            return true;
+
+        var query = search.Trim();
+        if (codename.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+            GetBoneDisplayName(codename).Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var family = GetBoneFamily(codename);
+        if (family.ToString().Contains(query, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return BoneFamilySearchAliases.TryGetValue(family, out var aliases) &&
+            aliases.Any(alias =>
+                alias.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                query.Contains(alias, StringComparison.OrdinalIgnoreCase));
     }
 
     public static bool IsProbablyHairstyle(string codename)

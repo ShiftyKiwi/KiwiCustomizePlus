@@ -486,13 +486,13 @@ public sealed class GlamourerIpcHandler : IIpcSubscriber
     private static string BuildAwaitingFinalizationSummary(ActorAppearanceTransitionState state, long now)
     {
         var remainingMs = Math.Max(0L, state.PendingUntilMs - now);
-        return $"Glamourer is still finalizing a {GetChangeTypeLabel(state.LastChangeType)} appearance update for this actor, so Kiwi is holding BIW signature promotion until the post-apply slot winners settle (~{remainingMs} ms remaining).";
+        return $"Glamourer is still finalizing a {GetChangeTypeLabel(state.LastChangeType)} appearance update for this actor, so the plugin is holding BIW signature promotion until the post-apply slot winners settle (~{remainingMs} ms remaining).";
     }
 
     private static string BuildFinalizationSettleSummary(ActorAppearanceTransitionState state, long now)
     {
         var remainingMs = Math.Max(0L, state.FinalizationSettleUntilMs - now);
-        return $"Glamourer finalized a {GetFinalizationTypeLabel(state.LastFinalizationType)} appearance update for this actor, so Kiwi is giving the final resolved model winners a short settle window before refreshing BIW (~{remainingMs} ms remaining).";
+        return $"Glamourer finalized a {GetFinalizationTypeLabel(state.LastFinalizationType)} appearance update for this actor, so the plugin is giving the final resolved model winners a short settle window before refreshing BIW (~{remainingMs} ms remaining).";
     }
 
     private static string GetChangeTypeLabel(GlamourerStateChangeType type)

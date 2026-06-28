@@ -679,7 +679,7 @@ public class SettingsTab
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Actors with an explicit Kiwi profile stay ahead of crowd-safe downgrades. Default-profile-only actors do not count as explicitly profiled here.");
+        CtrlHelper.AddHoverText("Actors with an explicit Customize+ profile stay ahead of crowd-safe downgrades. Default-profile-only actors do not count as explicitly profiled here.");
 
         var fullOnTargetFocus = settings.FullBoneImportanceOnTargetOrFocus;
         if (ImGui.Checkbox("Run full BIW on target / focus target", ref fullOnTargetFocus))
