@@ -203,113 +203,13 @@ public class BoneEditorPanel
 
             ImGui.Separator();
 
-            using (var table = ImRaii.Table("BoneEditorMenu", 2))
-            {
-                ImGui.TableSetupColumn("Attributes", ImGuiTableColumnFlags.WidthFixed);
-                ImGui.TableSetupColumn("Space", ImGuiTableColumnFlags.WidthStretch);
-
-                ImGui.TableNextRow();
-                ImGui.TableNextColumn();
-
-                var modeChanged = false;
-                if (ImGui.RadioButton("Position", _editingAttribute == BoneAttribute.Position))
-                {
-                    _editingAttribute = BoneAttribute.Position;
-                    modeChanged = true;
-                }
-                CtrlHelper.AddHoverText("Position is the highest-risk gameplay mode because offsets can expose hierarchy and animation artifacts.\nUse it sparingly, and prefer Scale for first-pass body shaping.");
-
-                ImGui.SameLine();
-                if (ImGui.RadioButton("Rotation", _editingAttribute == BoneAttribute.Rotation))
-                {
-                    _editingAttribute = BoneAttribute.Rotation;
-                    modeChanged = true;
-                }
-                CtrlHelper.AddHoverText("Rotation is useful for posing, expression, and special effects.\nIt is usually not the best first-pass body-shaping mode because animation can amplify rotations.");
-
-                ImGui.SameLine();
-                if (ImGui.RadioButton("Scale", _editingAttribute == BoneAttribute.Scale))
-                {
-                    _editingAttribute = BoneAttribute.Scale;
-                    modeChanged = true;
-                }
-                CtrlHelper.AddHoverText("Scale is the primary body-scaling mode and usually the safest starting point for proportional shape edits.");
-
-                ImGui.SameLine();
-                ImGui.SetNextItemWidth(200 * ImGuiHelpers.GlobalScale);
-                ImGui.InputTextWithHint("##BoneSearch", "Search bones...", ref _boneSearch, 64);
-                CtrlHelper.AddHoverText("Search by bone name, code name, family, or body terms like shoulders, waist, hips, chest, thigh, calf, wrist, or glute.");
-
-                ImGui.SameLine();
-                ImGui.BeginDisabled(_undoStack.Count == 0);
-                if (ImGuiComponents.IconButton("##UndoBone", FontAwesomeIcon.Undo))
-                {
-                    var state = _undoStack.Pop();
-                    _redoStack.Push(_editorManager.EditorProfile.Armatures[0]
-                        .GetAllBones()
-                        .DistinctBy(b => b.BoneName)
-                        .ToDictionary(b => b.BoneName, b => new BoneTransform(b.CustomizedTransform ?? new BoneTransform())));
-                    RestoreState(state);
-                }
-                ImGui.EndDisabled();
-                CtrlHelper.AddHoverText("Undo");
-
-                ImGui.SameLine();
-                ImGui.BeginDisabled(_redoStack.Count == 0);
-                if (ImGuiComponents.IconButton("##RedoBone", FontAwesomeIcon.Redo))
-                {
-                    var state = _redoStack.Pop();
-                    _undoStack.Push(_editorManager.EditorProfile.Armatures[0]
-                        .GetAllBones()
-                        .DistinctBy(b => b.BoneName)
-                        .ToDictionary(b => b.BoneName, b => new BoneTransform(b.CustomizedTransform ?? new BoneTransform())));
-                    RestoreState(state);
-                }
-                ImGui.EndDisabled();
-                CtrlHelper.AddHoverText("Redo");
-
-                if (modeChanged)
-                {
-                    _configuration.EditorConfiguration.EditorMode = _editingAttribute;
-                    _configuration.Save();
-                }
-
-                using (var disabled = ImRaii.Disabled(!_isUnlocked))
-                {
-                    ImGui.SameLine();
-                    if (CtrlHelper.Checkbox("Show Live Bones", ref _isShowLiveBones))
-                    {
-                        _configuration.EditorConfiguration.ShowLiveBones = _isShowLiveBones;
-                        _configuration.Save();
-                    }
-                    CtrlHelper.AddHoverText($"If selected, present for editing all bones found in the game data,\nelse show only bones for which the profile already contains edits.");
-
-                    ImGui.SameLine();
-                    ImGui.BeginDisabled(!_isShowLiveBones);
-                    if (CtrlHelper.Checkbox("Mirror Mode", ref _isMirrorModeEnabled))
-                    {
-                        _configuration.EditorConfiguration.BoneMirroringEnabled = _isMirrorModeEnabled;
-                        _configuration.Save();
-                    }
-                    CtrlHelper.AddHoverText($"Bone changes will be reflected from left to right and vice versa");
-                    ImGui.EndDisabled();
-                }
-
-                ImGui.TableNextColumn();
-
-                if (ImGui.SliderInt("##Precision", ref _precision, 0, 6, $"{_precision} Place{(_precision == 1 ? "" : "s")}"))
-                {
-                    _configuration.EditorConfiguration.EditorValuesPrecision = _precision;
-                    _configuration.Save();
-                }
-                CtrlHelper.AddHoverText("Level of precision to display while editing values");
-            }
-
             DrawEditorStatusStrip(characterText);
             DrawGroupImportStatus();
             DrawTroubleshootingHelper();
 
             ImGui.Separator();
+            DrawBoneEditorToolbar();
+            ImGui.Spacing();
 
             using (var table = ImRaii.Table($"BoneEditorContents", 6, ImGuiTableFlags.BordersOuterH | ImGuiTableFlags.BordersV | ImGuiTableFlags.ScrollY))
             {
@@ -319,7 +219,7 @@ public class BoneEditorPanel
                 var col1Label = _editingAttribute == BoneAttribute.Rotation ? "Roll" : "X";
                 var col2Label = _editingAttribute == BoneAttribute.Rotation ? "Pitch" : "Y";
                 var col3Label = _editingAttribute == BoneAttribute.Rotation ? "Yaw" : "Z";
-                var col4Label = _editingAttribute == BoneAttribute.Scale ? "All" : "N/A";
+                const string col4Label = "All";
 
                 var controlColumnWidth = GetControlColumnWidth();
                 ImGui.TableSetupColumn("Bones", ImGuiTableColumnFlags.NoReorder | ImGuiTableColumnFlags.WidthFixed, controlColumnWidth);
@@ -640,6 +540,131 @@ public class BoneEditorPanel
             : null;
     }
 
+    private void DrawBoneEditorToolbar()
+    {
+        using var table = ImRaii.Table("BoneEditorToolbar", 3, ImGuiTableFlags.SizingStretchProp);
+        if (!table)
+            return;
+
+        ImGui.TableSetupColumn("EditMode", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Filter", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("History", ImGuiTableColumnFlags.WidthFixed, 115 * ImGuiHelpers.GlobalScale);
+
+        ImGui.TableNextRow();
+
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextDisabled("Edit mode:");
+        ImGui.SameLine();
+
+        var modeChanged = false;
+        if (ImGui.RadioButton("Position", _editingAttribute == BoneAttribute.Position))
+        {
+            _editingAttribute = BoneAttribute.Position;
+            modeChanged = true;
+        }
+        CtrlHelper.AddHoverText("Position is the highest-risk gameplay mode because offsets can expose hierarchy and animation artifacts.\nUse it sparingly, and prefer Scale for first-pass body shaping.");
+
+        ImGui.SameLine();
+        if (ImGui.RadioButton("Rotation", _editingAttribute == BoneAttribute.Rotation))
+        {
+            _editingAttribute = BoneAttribute.Rotation;
+            modeChanged = true;
+        }
+        CtrlHelper.AddHoverText("Rotation is useful for posing, expression, and special effects.\nIt is usually not the best first-pass body-shaping mode because animation can amplify rotations.");
+
+        ImGui.SameLine();
+        if (ImGui.RadioButton("Scale", _editingAttribute == BoneAttribute.Scale))
+        {
+            _editingAttribute = BoneAttribute.Scale;
+            modeChanged = true;
+        }
+        CtrlHelper.AddHoverText("Scale is the primary body-scaling mode and usually the safest starting point for proportional shape edits.");
+
+        if (modeChanged)
+        {
+            _configuration.EditorConfiguration.EditorMode = _editingAttribute;
+            _configuration.Save();
+        }
+
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextDisabled("Filter:");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
+        ImGui.InputTextWithHint("##BoneSearch", "Search bones...", ref _boneSearch, 64);
+        CtrlHelper.AddHoverText("Search by bone name, code name, family, or body terms like shoulders, waist, hips, chest, thigh, calf, wrist, or glute.");
+
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextDisabled("History:");
+        ImGui.SameLine();
+        ImGui.BeginDisabled(_undoStack.Count == 0);
+        if (ImGuiComponents.IconButton("##UndoBone", FontAwesomeIcon.Undo))
+        {
+            var state = _undoStack.Pop();
+            _redoStack.Push(_editorManager.EditorProfile.Armatures[0]
+                .GetAllBones()
+                .DistinctBy(b => b.BoneName)
+                .ToDictionary(b => b.BoneName, b => new BoneTransform(b.CustomizedTransform ?? new BoneTransform())));
+            RestoreState(state);
+        }
+        ImGui.EndDisabled();
+        CtrlHelper.AddHoverText("Undo");
+
+        ImGui.SameLine();
+        ImGui.BeginDisabled(_redoStack.Count == 0);
+        if (ImGuiComponents.IconButton("##RedoBone", FontAwesomeIcon.Redo))
+        {
+            var state = _redoStack.Pop();
+            _undoStack.Push(_editorManager.EditorProfile.Armatures[0]
+                .GetAllBones()
+                .DistinctBy(b => b.BoneName)
+                .ToDictionary(b => b.BoneName, b => new BoneTransform(b.CustomizedTransform ?? new BoneTransform())));
+            RestoreState(state);
+        }
+        ImGui.EndDisabled();
+        CtrlHelper.AddHoverText("Redo");
+
+        ImGui.TableNextRow();
+
+        ImGui.TableNextColumn();
+        using (var disabled = ImRaii.Disabled(!_isUnlocked))
+        {
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextDisabled("View:");
+            ImGui.SameLine();
+            if (CtrlHelper.Checkbox("Show Live Bones", ref _isShowLiveBones))
+            {
+                _configuration.EditorConfiguration.ShowLiveBones = _isShowLiveBones;
+                _configuration.Save();
+            }
+            CtrlHelper.AddHoverText("If selected, present for editing all bones found in the game data,\nelse show only bones for which the profile already contains edits.");
+
+            ImGui.SameLine();
+            ImGui.BeginDisabled(!_isShowLiveBones);
+            if (CtrlHelper.Checkbox("Mirror Mode", ref _isMirrorModeEnabled))
+            {
+                _configuration.EditorConfiguration.BoneMirroringEnabled = _isMirrorModeEnabled;
+                _configuration.Save();
+            }
+            CtrlHelper.AddHoverText("Bone changes will be reflected from left to right and vice versa.");
+            ImGui.EndDisabled();
+        }
+
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextDisabled("Precision:");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(MathF.Min(220 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
+        if (ImGui.SliderInt("##Precision", ref _precision, 0, 6, $"{_precision} Place{(_precision == 1 ? "" : "s")}"))
+        {
+            _configuration.EditorConfiguration.EditorValuesPrecision = _precision;
+            _configuration.Save();
+        }
+        CtrlHelper.AddHoverText("Level of precision to display while editing values.");
+    }
+
     private void DrawEditorStatusStrip(string characterText)
     {
         var armature = GetPrimaryEditorArmature();
@@ -652,6 +677,16 @@ public class BoneEditorPanel
         var ivcsBoneCount = liveBoneNames.Count(BoneData.IsIVCSCompatibleBone);
         var supportClass = GetSupportClass(liveBoneNames.Length, unknownBoneCount, ivcsBoneCount);
         var advancedStatus = GetAdvancedScalingStatus(armature);
+        var characterArmatureStatus = !IsCharacterFound
+            ? "No preview actor"
+            : armature?.IsBuilt == true
+                ? "Actor found / armature ready"
+                : "Actor found / waiting for skeleton";
+        var liveBonesStatus = liveBoneNames.Length > 0
+            ? $"{liveBoneNames.Length} detected"
+            : armature?.IsBuilt == true
+                ? "Waiting for live bones"
+                : "Waiting for armature";
         var previewText = characterText.StartsWith("Previewing on: ", StringComparison.Ordinal)
             ? characterText["Previewing on: ".Length..]
             : characterText;
@@ -669,10 +704,10 @@ public class BoneEditorPanel
             ImGui.TableSetupColumn($"Status{i}", ImGuiTableColumnFlags.WidthStretch);
 
         ImGui.TableNextRow();
-        DrawStatusCell("Preview actor", previewText, IsCharacterFound ? Constants.Colors.Active : Constants.Colors.Warning);
-        DrawStatusCell("Character / armature", $"{(IsCharacterFound ? "Found" : "Missing")} / {(armature?.IsBuilt == true ? "Ready" : "Waiting")}",
+        DrawStatusCell("Preview context", previewText, IsCharacterFound ? Constants.Colors.Active : Constants.Colors.Warning);
+        DrawStatusCell("Character / armature", characterArmatureStatus,
             IsCharacterFound && armature?.IsBuilt == true ? Constants.Colors.Active : Constants.Colors.Warning);
-        DrawStatusCell("Live bones", liveBoneNames.Length > 0 ? $"{liveBoneNames.Length} detected" : "Unavailable",
+        DrawStatusCell("Live bones", liveBonesStatus,
             liveBoneNames.Length > 0 ? Constants.Colors.Active : Constants.Colors.Warning);
         DrawStatusCell("Skeleton class", supportClass, unknownBoneCount > 0 ? Constants.Colors.Warning : Constants.Colors.Info);
 
@@ -682,7 +717,7 @@ public class BoneEditorPanel
         DrawStatusCell("Unknown bones", unknownBoneCount > 0 ? $"{unknownBoneCount} manual/experimental" : "None detected",
             unknownBoneCount > 0 ? Constants.Colors.Warning : Constants.Colors.Active);
         DrawStatusCell("Advanced scaling", advancedStatus,
-            advancedStatus is "Off" or "Unavailable" ? Constants.Colors.Normal : Constants.Colors.Info);
+            advancedStatus is "Off" or "Waiting for armature" ? Constants.Colors.Normal : Constants.Colors.Info);
     }
 
     private static void DrawStatusCell(string label, string value, Vector4 color)
@@ -697,7 +732,7 @@ public class BoneEditorPanel
     private static string GetSupportClass(int liveBoneCount, int unknownBoneCount, int ivcsBoneCount)
     {
         if (liveBoneCount <= 0)
-            return "Unknown/Generic";
+            return "Waiting for live bones";
 
         return (unknownBoneCount, ivcsBoneCount) switch
         {
@@ -712,7 +747,7 @@ public class BoneEditorPanel
     {
         var settings = armature?.ActiveAdvancedBodyScalingSettings;
         if (settings == null)
-            return "Unavailable";
+            return "Waiting for armature";
 
         if (!settings.Enabled)
             return "Off";

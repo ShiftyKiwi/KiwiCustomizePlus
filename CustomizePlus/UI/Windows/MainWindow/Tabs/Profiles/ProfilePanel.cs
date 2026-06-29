@@ -737,6 +737,99 @@ public class ProfilePanel
         }
 
         ImGui.Spacing();
+        if (ImGui.CollapsingHeader("Bone Importance Weighting Overrides"))
+        {
+            ImGui.TextDisabled("Override the model-derived bone-importance quality settings for this profile. Runtime full-BIW actor priority remains controlled globally.");
+
+            using var boneImportanceTable = ImRaii.Table(
+                "ProfileBoneImportanceWeighting",
+                3,
+                ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp,
+                overrideTableWidth);
+            if (boneImportanceTable)
+            {
+                ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
+                ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
+                ImGui.TableSetupScrollFreeze(0, 1);
+                ImGui.TableHeadersRow();
+
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.AlignTextToFramePadding();
+                ImGui.TextUnformatted("Enable model-derived BIW");
+                ImGui.TableNextColumn();
+                if (overrides.ModelDerivedBoneImportanceEnabled.HasValue)
+                {
+                    var enabled = overrides.ModelDerivedBoneImportanceEnabled.Value;
+                    if (ImGui.Checkbox("##ProfileBoneImportanceEnabled", ref enabled))
+                        ToggleOverride(o => o.ModelDerivedBoneImportanceEnabled = enabled);
+                }
+                else
+                {
+                    var enabled = globalSettings.ModelDerivedBoneImportanceEnabled;
+                    using (ImRaii.Disabled())
+                        ImGui.Checkbox("##ProfileBoneImportanceEnabled", ref enabled);
+                }
+                CtrlHelper.AddHoverText("Overrides whether this profile uses model-derived Bone Importance Weighting when Advanced Body Scaling is active. If disabled, the profile falls back to heuristic behavior.");
+                ImGui.TableNextColumn();
+                var boneImportanceEnabledOverride = overrides.ModelDerivedBoneImportanceEnabled.HasValue;
+                if (ImGui.Checkbox("##ProfileBoneImportanceEnabledOverride", ref boneImportanceEnabledOverride))
+                    ToggleOverride(o => o.ModelDerivedBoneImportanceEnabled = boneImportanceEnabledOverride ? globalSettings.ModelDerivedBoneImportanceEnabled : null);
+
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.AlignTextToFramePadding();
+                ImGui.TextUnformatted("Prefer skin weights");
+                ImGui.TableNextColumn();
+                if (overrides.PreferTrueSkinWeightImportance.HasValue)
+                {
+                    var enabled = overrides.PreferTrueSkinWeightImportance.Value;
+                    if (ImGui.Checkbox("##ProfileBoneImportanceSkinWeights", ref enabled))
+                        ToggleOverride(o => o.PreferTrueSkinWeightImportance = enabled);
+                }
+                else
+                {
+                    var enabled = globalSettings.PreferTrueSkinWeightImportance;
+                    using (ImRaii.Disabled())
+                        ImGui.Checkbox("##ProfileBoneImportanceSkinWeights", ref enabled);
+                }
+                CtrlHelper.AddHoverText("Overrides whether this profile prefers true skin-weight aggregation over coarse participation data when supported model data is available.");
+                ImGui.TableNextColumn();
+                var skinWeightOverride = overrides.PreferTrueSkinWeightImportance.HasValue;
+                if (ImGui.Checkbox("##ProfileBoneImportanceSkinWeightsOverride", ref skinWeightOverride))
+                    ToggleOverride(o => o.PreferTrueSkinWeightImportance = skinWeightOverride ? globalSettings.PreferTrueSkinWeightImportance : null);
+
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.AlignTextToFramePadding();
+                ImGui.TextUnformatted("Model weighting blend");
+                ImGui.TableNextColumn();
+                if (overrides.BoneImportanceHeuristicBlend.HasValue)
+                {
+                    var value = overrides.BoneImportanceHeuristicBlend.Value;
+                    ImGui.SetNextItemWidth(-1);
+                    if (ImGui.SliderFloat("##ProfileBoneImportanceBlend", ref value, 0f, 1f, "%.2f"))
+                        ToggleOverride(o => o.BoneImportanceHeuristicBlend = value);
+                }
+                else
+                {
+                    var value = globalSettings.BoneImportanceHeuristicBlend;
+                    using (ImRaii.Disabled())
+                    {
+                        ImGui.SetNextItemWidth(-1);
+                        ImGui.SliderFloat("##ProfileBoneImportanceBlend", ref value, 0f, 1f, "%.2f");
+                    }
+                }
+                CtrlHelper.AddHoverText("Overrides how strongly model-derived bone importance influences this profile. 0 keeps heuristic weighting; 1 fully trusts the resolved model-derived map.");
+                ImGui.TableNextColumn();
+                var blendOverride = overrides.BoneImportanceHeuristicBlend.HasValue;
+                if (ImGui.Checkbox("##ProfileBoneImportanceBlendOverride", ref blendOverride))
+                    ToggleOverride(o => o.BoneImportanceHeuristicBlend = blendOverride ? globalSettings.BoneImportanceHeuristicBlend : null);
+            }
+        }
+
+        ImGui.Spacing();
         if (ImGui.CollapsingHeader("RBF Pose-Space Corrective Overrides"))
         {
             ImGui.TextDisabled("Override the RBF pose-space corrective baseline for this profile. Disabled fields inherit the global corrective settings.");
@@ -1180,7 +1273,7 @@ public class ProfilePanel
                         (o, v) => o.FullIkRetargetingBlendBias = v,
                         "Overrides how strongly this profile leans toward the retargeted pose versus the original animation.");
                     DrawRetargetFloatOverride(
-                        "Max retargeting correction clamp",
+                        "Max correction clamp",
                         "ProfileFullIkRetargetingClamp",
                         globalRetarget.MaxCorrectionClamp,
                         overrides.FullIkRetargetingMaxCorrectionClamp,
@@ -1375,7 +1468,7 @@ public class ProfilePanel
                         (o, v) => o.MotionWarpingEnabled = v,
                         "Overrides whether the locomotion-warping layer is active for this profile.");
                     DrawMotionFloatOverride(
-                        "Global warping strength",
+                        "Global strength",
                         "ProfileMotionWarpingStrength",
                         globalMotionWarping.GlobalStrength,
                         overrides.MotionWarpingStrength,
@@ -1383,9 +1476,9 @@ public class ProfilePanel
                         AdvancedBodyScalingMotionWarpingTuning.UiMaxGlobalStrength,
                         "%.2f",
                         (o, v) => o.MotionWarpingStrength = v,
-                        "Overrides the overall locomotion-warping strength for this profile.");
+                        "Overrides the overall global locomotion-warping strength for this profile.");
                     DrawMotionFloatOverride(
-                        "Stride warping strength",
+                        "Stride strength",
                         "ProfileMotionWarpingStride",
                         globalMotionWarping.StrideWarpStrength,
                         overrides.MotionWarpingStrideStrength,
@@ -1393,9 +1486,9 @@ public class ProfilePanel
                         AdvancedBodyScalingMotionWarpingTuning.UiMaxStrideWarpStrength,
                         "%.2f",
                         (o, v) => o.MotionWarpingStrideStrength = v,
-                        "Overrides the stride-fit bias for this profile's locomotion-warping layer.");
+                        "Overrides the stride warping strength / stride-fit bias for this profile's locomotion-warping layer.");
                     DrawMotionFloatOverride(
-                        "Orientation warping strength",
+                        "Orientation strength",
                         "ProfileMotionWarpingOrientation",
                         globalMotionWarping.OrientationWarpStrength,
                         overrides.MotionWarpingOrientationStrength,
@@ -1403,9 +1496,9 @@ public class ProfilePanel
                         AdvancedBodyScalingMotionWarpingTuning.UiMaxOrientationWarpStrength,
                         "%.2f",
                         (o, v) => o.MotionWarpingOrientationStrength = v,
-                        "Overrides the movement-direction alignment bias for this profile's locomotion-warping layer.");
+                        "Overrides the orientation warping strength / movement-direction alignment bias for this profile's locomotion-warping layer.");
                     DrawMotionFloatOverride(
-                        "Posture / locomotion coherence strength",
+                        "Posture coherence",
                         "ProfileMotionWarpingPosture",
                         globalMotionWarping.PostureWarpStrength,
                         overrides.MotionWarpingPostureStrength,
@@ -1413,7 +1506,7 @@ public class ProfilePanel
                         AdvancedBodyScalingMotionWarpingTuning.UiMaxPostureWarpStrength,
                         "%.2f",
                         (o, v) => o.MotionWarpingPostureStrength = v,
-                        "Overrides how strongly pelvis, spine, head, and arm balance adapt to locomotion pressure for this profile.");
+                        "Overrides posture / locomotion coherence strength: how strongly pelvis, spine, head, and arm balance adapt to locomotion pressure for this profile.");
                     DrawMotionFloatOverride(
                         "Motion-safety / damping",
                         "ProfileMotionWarpingSafety",
@@ -1425,7 +1518,7 @@ public class ProfilePanel
                         (o, v) => o.MotionWarpingMotionSafetyBias = v,
                         "Overrides damping and motion-safety for this profile's locomotion-warping layer.");
                     DrawMotionFloatOverride(
-                        "Warping blend bias",
+                        "Blend bias",
                         "ProfileMotionWarpingBlend",
                         globalMotionWarping.BlendBias,
                         overrides.MotionWarpingBlendBias,
@@ -1433,9 +1526,9 @@ public class ProfilePanel
                         AdvancedBodyScalingMotionWarpingTuning.UiMaxBlendBias,
                         "%.2f",
                         (o, v) => o.MotionWarpingBlendBias = v,
-                        "Overrides how strongly this profile leans toward the locomotion-warped pose versus the original animation.");
+                        "Overrides the warping blend bias: how strongly this profile leans toward the locomotion-warped pose versus the original animation.");
                     DrawMotionFloatOverride(
-                        "Max warp correction clamp",
+                        "Max correction clamp",
                         "ProfileMotionWarpingClamp",
                         globalMotionWarping.MaxCorrectionClamp,
                         overrides.MotionWarpingMaxCorrectionClamp,
@@ -1443,7 +1536,7 @@ public class ProfilePanel
                         AdvancedBodyScalingMotionWarpingTuning.UiMaxCorrectionClamp,
                         "%.2f",
                         (o, v) => o.MotionWarpingMaxCorrectionClamp = v,
-                        "Overrides the maximum correction clamp for this profile's locomotion-warping layer.");
+                        "Overrides the maximum warp correction clamp for this profile's locomotion-warping layer.");
                 }
             }
 
@@ -1767,7 +1860,7 @@ public class ProfilePanel
                         (o, v) => o.FullBodyIkMotionSafetyBias = v,
                         "Overrides the damping and motion-safety bias for this profile's final IK pass.");
                     DrawIkFloatOverride(
-                        "Max IK correction clamp",
+                        "Max correction clamp",
                         "ProfileFullBodyIkClamp",
                         globalFullBodyIk.MaxCorrectionClamp,
                         overrides.FullBodyIkMaxCorrectionClamp,

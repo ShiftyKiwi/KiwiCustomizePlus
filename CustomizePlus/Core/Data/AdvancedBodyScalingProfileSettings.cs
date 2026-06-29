@@ -73,6 +73,9 @@ public sealed class AdvancedBodyScalingOverrides
     public AdvancedBodyScalingGuardrailMode? GuardrailMode { get; set; }
     public float? NaturalizationStrength { get; set; }
     public AdvancedBodyScalingPoseValidationMode? PoseValidationMode { get; set; }
+    public bool? ModelDerivedBoneImportanceEnabled { get; set; }
+    public bool? PreferTrueSkinWeightImportance { get; set; }
+    public float? BoneImportanceHeuristicBlend { get; set; }
     public float? NeckLengthCompensation { get; set; }
     public float? NeckShoulderBlendStrength { get; set; }
     public float? ClavicleShoulderSmoothing { get; set; }
@@ -224,6 +227,15 @@ public sealed class AdvancedBodyScalingOverrides
         if (PoseValidationMode.HasValue)
             merged.PoseValidationMode = PoseValidationMode.Value;
 
+        if (ModelDerivedBoneImportanceEnabled.HasValue)
+            merged.ModelDerivedBoneImportanceEnabled = ModelDerivedBoneImportanceEnabled.Value;
+
+        if (PreferTrueSkinWeightImportance.HasValue)
+            merged.PreferTrueSkinWeightImportance = PreferTrueSkinWeightImportance.Value;
+
+        if (BoneImportanceHeuristicBlend.HasValue)
+            merged.BoneImportanceHeuristicBlend = BoneImportanceHeuristicBlend.Value;
+
         if (NeckLengthCompensation.HasValue)
             merged.NeckLengthCompensation = NeckLengthCompensation.Value;
 
@@ -345,6 +357,9 @@ public sealed class AdvancedBodyScalingOverrides
             GuardrailMode = GuardrailMode,
             NaturalizationStrength = NaturalizationStrength,
             PoseValidationMode = PoseValidationMode,
+            ModelDerivedBoneImportanceEnabled = ModelDerivedBoneImportanceEnabled,
+            PreferTrueSkinWeightImportance = PreferTrueSkinWeightImportance,
+            BoneImportanceHeuristicBlend = BoneImportanceHeuristicBlend,
             NeckLengthCompensation = NeckLengthCompensation,
             NeckShoulderBlendStrength = NeckShoulderBlendStrength,
             ClavicleShoulderSmoothing = ClavicleShoulderSmoothing,
