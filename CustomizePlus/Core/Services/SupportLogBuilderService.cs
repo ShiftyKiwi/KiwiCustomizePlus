@@ -74,7 +74,7 @@ public class SupportLogBuilderService
         sb.Append($"> **`Automation mode:                `** {advanced.Mode}\n");
         sb.Append($"> **`Animation-safe mode:            `** {advanced.AnimationSafeModeEnabled}\n");
         sb.Append($"> **`Model-derived bone importance:  `** {advanced.ModelDerivedBoneImportanceEnabled} (prefer skin weights {advanced.PreferTrueSkinWeightImportance}, blend {advanced.BoneImportanceHeuristicBlend:0.00})\n");
-        sb.Append($"> **`BIW full-quality actors:        `** self {advanced.FullBoneImportanceOnSelf}, profiled {advanced.FullBoneImportanceOnProfiledActors}, target/focus {advanced.FullBoneImportanceOnTargetOrFocus}, nearby non-profiled {advanced.FullBoneImportanceOnNearbyNonProfiledActors}\n");
+        sb.Append($"> **`BIW full-quality actors:        `** self {advanced.FullBoneImportanceOnSelf}, profiled {advanced.FullBoneImportanceOnProfiledActors}; target/focus and nearby non-profiled actors use heuristic/cached fallback unless explicitly profiled\n");
         sb.Append($"> **`RBF pose-space correctives:     `** {advanced.PoseCorrectives.Enabled} (strength {advanced.PoseCorrectives.Strength:0.00}, sharpness {advanced.PoseCorrectives.PoseMapSharpness:0.00})\n");
         sb.Append($"> **`Corrective damping/clamp:       `** {advanced.PoseCorrectives.Damping:0.00} / {advanced.PoseCorrectives.MaxCorrectionClamp:0.000}\n");
         sb.Append($"> **`Corrective transition memory:   `** built-in hysteresis and pose-history smoothing\n");

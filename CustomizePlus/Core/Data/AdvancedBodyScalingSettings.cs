@@ -340,7 +340,7 @@ public sealed class AdvancedBodyScalingSettings
 
     public bool FullBoneImportanceOnProfiledActors { get; set; } = true;
 
-    public bool FullBoneImportanceOnTargetOrFocus { get; set; } = true;
+    public bool FullBoneImportanceOnTargetOrFocus { get; set; } = false;
 
     public bool FullBoneImportanceOnNearbyNonProfiledActors { get; set; } = false;
 

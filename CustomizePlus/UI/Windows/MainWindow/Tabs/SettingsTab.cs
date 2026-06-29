@@ -538,6 +538,18 @@ public class SettingsTab
             }
             CtrlHelper.AddHoverText("Scales how much scale deltas are redistributed across neighboring bones. 0 disables, 1 uses the mode default.");
 
+            var naturalization = settings.NaturalizationStrength;
+            if (ImGui.SliderFloat("Naturalization strength", ref naturalization, 0f, 1f, "%.2f"))
+            {
+                settings.NaturalizationStrength = naturalization;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+            }
+            CtrlHelper.AddHoverText("Blends between your edits and the balanced result. 0 keeps your edits, 1 fully balances.");
+
+            ImGui.Spacing();
+            DrawAdvancedSubsectionLabel("Guardrails & validation");
+
             var guardrailMode = settings.GuardrailMode;
             if (ImGui.BeginCombo("Proportion guardrail mode", guardrailMode.ToString()))
             {
@@ -558,18 +570,6 @@ public class SettingsTab
                 ImGui.EndCombo();
             }
             CtrlHelper.AddHoverText("Controls how strict the body proportion guardrails are. Off disables guardrails.");
-
-            var naturalization = settings.NaturalizationStrength;
-            if (ImGui.SliderFloat("Naturalization strength", ref naturalization, 0f, 1f, "%.2f"))
-            {
-                settings.NaturalizationStrength = naturalization;
-                _configuration.Save();
-                _armatureManager.RebindAllArmatures();
-            }
-            CtrlHelper.AddHoverText("Blends between your edits and the balanced result. 0 keeps your edits, 1 fully balances.");
-
-            ImGui.Spacing();
-            DrawAdvancedSubsectionLabel("Guardrails & validation");
 
             var poseValidation = settings.PoseValidationMode;
             if (ImGui.BeginCombo("Pose-aware validation mode", poseValidation.ToString()))
@@ -680,24 +680,6 @@ public class SettingsTab
             _armatureManager.RebindAllArmatures();
         }
         CtrlHelper.AddHoverText("Actors with an explicit Customize+ profile stay ahead of crowd-safe downgrades. Default-profile-only actors do not count as explicitly profiled here.");
-
-        var fullOnTargetFocus = settings.FullBoneImportanceOnTargetOrFocus;
-        if (ImGui.Checkbox("Run full BIW on target / focus target", ref fullOnTargetFocus))
-        {
-            settings.FullBoneImportanceOnTargetOrFocus = fullOnTargetFocus;
-            _configuration.Save();
-            _armatureManager.RebindAllArmatures();
-        }
-        CtrlHelper.AddHoverText("Lets your current target or focus target keep full BIW priority when possible, even in busier scenes.");
-
-        var fullOnNearby = settings.FullBoneImportanceOnNearbyNonProfiledActors;
-        if (ImGui.Checkbox("Allow full BIW on nearby non-profiled actors", ref fullOnNearby))
-        {
-            settings.FullBoneImportanceOnNearbyNonProfiledActors = fullOnNearby;
-            _configuration.Save();
-            _armatureManager.RebindAllArmatures();
-        }
-        CtrlHelper.AddHoverText("When disabled, nearby actors without an explicit profile are hard-skipped back to heuristic fallback. Even when enabled, they are still the first group to lose active BIW work under crowd pressure.");
 
         var heuristicBlend = settings.BoneImportanceHeuristicBlend;
         if (ImGui.SliderFloat("Model weighting blend", ref heuristicBlend, 0f, 1f, "%.2f"))
@@ -2275,40 +2257,78 @@ public class SettingsTab
         var defaults = new AdvancedBodyScalingSettings();
 
         ImGui.TextDisabled("Restore a small part of the advanced stack or reset all advanced scaling back to defaults.");
-        if (ImGui.Button("Reset Surface Balancing"))
-        {
-            settings.SurfaceBalancingStrength = defaults.SurfaceBalancingStrength;
-            _configuration.Save();
-            _armatureManager.RebindAllArmatures();
-        }
-        CtrlHelper.AddHoverText("Restores only Surface balancing strength. It does not touch RBF pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
+        using var table = ImRaii.Table("AdvancedBodyScalingQuickResetsTable", 2, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp);
+        if (!table)
+            return;
 
-        ImGui.SameLine();
-        if (ImGui.Button("Reset Naturalization"))
-        {
-            settings.NaturalizationStrength = defaults.NaturalizationStrength;
-            _configuration.Save();
-            _armatureManager.RebindAllArmatures();
-        }
-        CtrlHelper.AddHoverText("Restores only Naturalization strength. It does not touch RBF pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
+        ImGui.TableSetupColumn("AdvancedResetScope", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("AdvancedResetAction", ImGuiTableColumnFlags.WidthFixed, 230 * ImGuiHelpers.GlobalScale);
 
-        ImGui.SameLine();
-        if (ImGui.Button("Reset Pose-Aware"))
-        {
-            settings.PoseValidationMode = defaults.PoseValidationMode;
-            _configuration.Save();
-            _armatureManager.RebindAllArmatures();
-        }
-        CtrlHelper.AddHoverText("Restores only Pose-aware validation mode. It does not touch RBF pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, or animation-safe mode.");
+        DrawAdvancedResetRow(
+            "Balancing & naturalization",
+            "Reset Balancing & Naturalization",
+            "Restores surface balancing, mass redistribution, and naturalization to shipped defaults. Does not touch guardrail modes, pose-aware validation, BIW, region tuning, neck presets, IK, motion warping, or pose-space correctives.",
+            () =>
+            {
+                settings.SurfaceBalancingStrength = defaults.SurfaceBalancingStrength;
+                settings.MassRedistributionStrength = defaults.MassRedistributionStrength;
+                settings.NaturalizationStrength = defaults.NaturalizationStrength;
+            });
 
-        ImGui.SameLine();
-        if (ImGui.Button("Reset All Advanced Scaling"))
+        DrawAdvancedResetRow(
+            "Guardrails & validation",
+            "Reset Guardrails & Validation",
+            "Restores proportion guardrail mode, pose-aware validation mode, and animation-safe mode to shipped defaults. Does not touch balancing strengths, BIW, region tuning, neck presets, IK, motion warping, or pose-space correctives.",
+            () =>
+            {
+                settings.GuardrailMode = defaults.GuardrailMode;
+                settings.PoseValidationMode = defaults.PoseValidationMode;
+                settings.AnimationSafeModeEnabled = defaults.AnimationSafeModeEnabled;
+            });
+
+        DrawAdvancedResetRow(
+            "Bone Importance Weighting",
+            "Reset Bone Importance",
+            "Restores only Bone Importance Weighting settings, including model-derived BIW enablement, true skin-weight preference, self/profile full-BIW eligibility, and model weighting blend.",
+            () =>
+            {
+                settings.ModelDerivedBoneImportanceEnabled = defaults.ModelDerivedBoneImportanceEnabled;
+                settings.PreferTrueSkinWeightImportance = defaults.PreferTrueSkinWeightImportance;
+                settings.FullBoneImportanceOnSelf = defaults.FullBoneImportanceOnSelf;
+                settings.FullBoneImportanceOnProfiledActors = defaults.FullBoneImportanceOnProfiledActors;
+                settings.BoneImportanceHeuristicBlend = defaults.BoneImportanceHeuristicBlend;
+            });
+
+        DrawAdvancedResetRow(
+            "Region Tuning",
+            "Reset Region Tuning",
+            "Restores only Region Tuning multipliers and region participation toggles. Does not touch global advanced scaling strengths, BIW, RBF pose-space correctives, IK, motion warping, neck presets, or animation-safe mode.",
+            () => settings.RegionProfiles = AdvancedBodyScalingRegionProfile.CreateDefaults());
+
+        DrawAdvancedResetRow(
+            "Everything advanced",
+            "Reset All Advanced Scaling",
+            "Restores all Advanced Body Scaling settings to shipped defaults, including balancing, guardrails, BIW, RBF pose-space correctives, IK, motion warping, the global neck/shoulder baseline, race-specific presets, animation-safe mode, and region tuning.",
+            settings.ResetToDefaults);
+    }
+
+    private void DrawAdvancedResetRow(string label, string buttonLabel, string tooltip, Action reset)
+    {
+        ImGui.TableNextRow();
+
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted(label);
+
+        ImGui.TableNextColumn();
+        var buttonWidth = ImGui.GetContentRegionAvail().X;
+        if (ImGui.Button($"{buttonLabel}##{label}", new Vector2(buttonWidth, 0)))
         {
-            settings.ResetToDefaults();
+            reset();
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
         }
-        CtrlHelper.AddHoverText("Restores all Advanced Body Scaling settings to shipped defaults, including RBF pose-space correctives, Full IK retargeting, Motion Warping, Full-Body IK, the global neck/shoulder baseline, race-specific presets, animation-safe mode, and region tuning.");
+        CtrlHelper.AddHoverText(tooltip);
     }
 
     private void DrawAdvancedBodyScalingRegionProfiles(AdvancedBodyScalingSettings settings)
@@ -2472,6 +2492,15 @@ public class SettingsTab
             "Long-neck, detached-shoulder, and harsh neck-to-chest bridge shapes.",
             settings.NeckLengthCompensation > 0f || settings.UseRaceSpecificNeckCompensation ? "Active" : "Off",
             "Race presets can override these neck settings for supported races, but they stay on the normal supported scale path.");
+
+        DrawExplainabilityRow(
+            "Bone Importance Weighting",
+            "Supported body, legs, hands, and feet model slots when model data is available; heuristic fallback otherwise.",
+            "Over-trusting tiny/local weighted regions or applying the same smoothing/propagation authority to every bone.",
+            settings.ModelDerivedBoneImportanceEnabled
+                ? $"Active ({settings.BoneImportanceHeuristicBlend:0.00} blend)"
+                : "Off",
+            "Bone Importance Weighting refines how strongly bones participate in propagation, smoothing, redistribution, guardrails, curve smoothing, and pose-aware validation. It stays transform-based and falls back safely when model data is unavailable.");
 
         DrawExplainabilityRow(
             "RBF pose-space correctives",

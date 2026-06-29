@@ -1071,8 +1071,6 @@ public unsafe sealed class ArmatureManager : IDisposable
         {
             AdvancedBodyScalingBoneImportanceActorTier.Self => true,
             AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => true,
-            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus => settings.FullBoneImportanceOnTargetOrFocus,
-            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled => settings.FullBoneImportanceOnNearbyNonProfiledActors && !budget.HighCrowdPressure,
             _ => false,
         };
 
@@ -1083,8 +1081,6 @@ public unsafe sealed class ArmatureManager : IDisposable
         {
             AdvancedBodyScalingBoneImportanceActorTier.Self => !fullEligible,
             AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => true,
-            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus => true,
-            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled => true,
             _ => false,
         };
 
@@ -1095,12 +1091,10 @@ public unsafe sealed class ArmatureManager : IDisposable
         bool hadCachedModelResult)
         => tier switch
         {
-            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus when !settings.FullBoneImportanceOnTargetOrFocus
-                => "Target/focus BIW full-quality processing is disabled, so this actor was returned to heuristic fallback.",
-            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled when !settings.FullBoneImportanceOnNearbyNonProfiledActors
-                => "Nearby non-profiled actors are not allowed to receive active BIW, so this actor was returned to heuristic fallback.",
-            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled when budget.HighCrowdPressure
-                => "Crowd pressure is high, so nearby non-profiled actors were hard-skipped back to heuristic fallback.",
+            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus
+                => "Target/focus actors only receive active BIW when they are self or explicitly assigned to a profile, so this actor was returned to heuristic fallback.",
+            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled
+                => "Nearby non-profiled actors are outside the active BIW set, so this actor was returned to heuristic fallback.",
             AdvancedBodyScalingBoneImportanceActorTier.Other when hadCachedModelResult
                 => "This actor is outside the active BIW priority set, so its cached model-derived result was detached and heuristic fallback resumed.",
             _ => "This actor is outside the active BIW priority set, so crowd-safe BIW fell back to heuristics until relevance changes.",
@@ -1113,12 +1107,10 @@ public unsafe sealed class ArmatureManager : IDisposable
         bool hadCachedModelResult)
         => tier switch
         {
-            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus when !settings.FullBoneImportanceOnTargetOrFocus
-                => "Target/focus BIW is disabled here, so no live model-signature probe was scheduled.",
-            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled when !settings.FullBoneImportanceOnNearbyNonProfiledActors
+            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus
+                => "Target/focus actors are outside the active BIW set unless they are self or explicitly profiled, so no live model-signature probe was scheduled.",
+            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled
                 => "Nearby non-profiled actors are outside the active BIW set, so no live model-signature probe was scheduled.",
-            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled when budget.HighCrowdPressure
-                => "Crowd pressure is high, so nearby non-profiled actors were hard-skipped and left on heuristic fallback until relevance changes.",
             AdvancedBodyScalingBoneImportanceActorTier.Other when hadCachedModelResult
                 => "This non-important actor kept no active BIW work; its previous model-derived result was frozen out and no probe was scheduled until relevance changes.",
             _ => "This actor is outside the active BIW set, so no live model-signature probe was scheduled until relevance changes.",
@@ -1198,8 +1190,6 @@ public unsafe sealed class ArmatureManager : IDisposable
         {
             AdvancedBodyScalingBoneImportanceActorTier.Self => settings.FullBoneImportanceOnSelf,
             AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => settings.FullBoneImportanceOnProfiledActors,
-            AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus => settings.FullBoneImportanceOnTargetOrFocus,
-            AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled => settings.FullBoneImportanceOnNearbyNonProfiledActors,
             _ => false,
         };
 
