@@ -2287,6 +2287,19 @@ public class SettingsTab
             });
 
         DrawAdvancedResetRow(
+            "Neck / shoulder baseline",
+            "Reset Neck Baseline & Race Presets",
+            "Restores only the global neck/shoulder baseline values and race-specific neck preset settings to shipped defaults. Does not touch balancing, guardrails, BIW, region tuning, automation mode, RBF pose-space correctives, IK, motion warping, or other advanced systems.",
+            () =>
+            {
+                settings.NeckLengthCompensation = defaults.NeckLengthCompensation;
+                settings.NeckShoulderBlendStrength = defaults.NeckShoulderBlendStrength;
+                settings.ClavicleShoulderSmoothing = defaults.ClavicleShoulderSmoothing;
+                settings.UseRaceSpecificNeckCompensation = defaults.UseRaceSpecificNeckCompensation;
+                settings.RaceNeckPresets = AdvancedBodyScalingNeckCompensationPreset.CreateDefaults();
+            });
+
+        DrawAdvancedResetRow(
             "Bone Importance Weighting",
             "Reset Bone Importance",
             "Restores only Bone Importance Weighting settings, including model-derived BIW enablement, true skin-weight preference, self/profile full-BIW eligibility, and model weighting blend.",

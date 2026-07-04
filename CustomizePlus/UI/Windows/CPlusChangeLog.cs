@@ -51,6 +51,7 @@ public class CPlusChangeLog
         Add2_1_10_1(Changelog);
         Add3_0_0(Changelog);
         Add3_0_1(Changelog);
+        Add3_0_2(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -62,6 +63,12 @@ public class CPlusChangeLog
         _config.ChangelogSettings.ChangeLogDisplayType = type;
         _config.Save();
     }
+
+    private static void Add3_0_2(Changelog log)
+        => log.NextVersion("Version 3.0.2")
+        .RegisterEntry("Added a dedicated Advanced Body Scaling quick reset for the global neck/shoulder baseline and race-specific neck presets.")
+        .RegisterEntry("This avoids needing to use Reset All Advanced Scaling just to restore neck/shoulder baseline defaults.")
+        .RegisterEntry("No runtime behavior changes.");
 
     private static void Add3_0_1(Changelog log)
         => log.NextVersion("Version 3.0.1")
