@@ -521,23 +521,24 @@ public class BoneEditorPanel
         }
 
         var viewportSize = ImGui.GetWindowViewport().Size;
-        ImGui.SetNextWindowSize(new Vector2(viewportSize.X / 4, viewportSize.Y / 12));
+        var scale = ImGuiHelpers.GlobalScale;
+        var style = ImGui.GetStyle();
+        var popupWidth = MathF.Min(520 * scale, MathF.Max(1, viewportSize.X - 48 * scale));
+        ImGui.SetNextWindowSize(new Vector2(popupWidth, 0));
         ImGui.SetNextWindowPos(viewportSize / 2, ImGuiCond.Always, new Vector2(0.5f));
         using var popup = ImRaii.Popup("SavePopup", ImGuiWindowFlags.Modal);
         if (!popup)
             return;
 
-        ImGui.SetCursorPos(new Vector2(ImGui.GetWindowWidth() / 4 - 40, ImGui.GetWindowHeight() / 4));
         ImGuiUtil.TextWrapped("You have unsaved changes in current template, what would you like to do?");
+        ImGui.Spacing();
 
-        var buttonWidth = new Vector2(150 * ImGuiHelpers.GlobalScale, 0);
-        var yPos = ImGui.GetWindowHeight() - 2 * ImGui.GetFrameHeight();
-        var xPos = (ImGui.GetWindowWidth() - ImGui.GetStyle().ItemSpacing.X) / 4 - buttonWidth.X;
-        ImGui.SetCursorPos(new Vector2(xPos, yPos));
+        var buttonWidth = (ImGui.GetContentRegionAvail().X - style.ItemSpacing.X) / 2;
+        var buttonSize = new Vector2(buttonWidth, 0);
 
         var ExitedEditor = false;
 
-        if (ImGui.Button("Save", buttonWidth))
+        if (ImGui.Button("Save", buttonSize))
         {
             _editorManager.SaveChangesAndDisableEditor();
             ExitedEditor = true;
@@ -545,15 +546,14 @@ public class BoneEditorPanel
         }
 
         ImGui.SameLine();
-        if (ImGui.Button("Save as a copy", buttonWidth))
+        if (ImGui.Button("Save as a copy", buttonSize))
         {
             _editorManager.SaveChangesAndDisableEditor(true);
             ExitedEditor = true;
             ImGui.CloseCurrentPopup();
         }
 
-        ImGui.SameLine();
-        if (ImGui.Button("Do not save", buttonWidth))
+        if (ImGui.Button("Do not save", buttonSize))
         {
             _editorManager.DisableEditor();
             ExitedEditor = true;
@@ -561,7 +561,7 @@ public class BoneEditorPanel
         }
 
         ImGui.SameLine();
-        if (ImGui.Button("Keep editing", buttonWidth))
+        if (ImGui.Button("Keep editing", buttonSize))
         {
             ImGui.CloseCurrentPopup();
         }

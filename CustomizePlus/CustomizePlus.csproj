@@ -3,7 +3,7 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
     <AssemblyTitle>CustomizePlus</AssemblyTitle>
-    <Version>3.0.0</Version>
+    <Version>3.0.1</Version>
     <Description>Customize+</Description>
     <Copyright></Copyright>
     <PackageProjectUrl>https://github.com/ShiftyKiwi/KiwiCustomizePlus</PackageProjectUrl>

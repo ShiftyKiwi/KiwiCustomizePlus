@@ -50,6 +50,7 @@ public class CPlusChangeLog
         Add2_1_10_0(Changelog);
         Add2_1_10_1(Changelog);
         Add3_0_0(Changelog);
+        Add3_0_1(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -61,6 +62,11 @@ public class CPlusChangeLog
         _config.ChangelogSettings.ChangeLogDisplayType = type;
         _config.Save();
     }
+
+    private static void Add3_0_1(Changelog log)
+        => log.NextVersion("Version 3.0.1")
+        .RegisterEntry("Fixed the Template Editor unsaved-changes popup layout so all four actions are visible and clickable at normal UI scales.")
+        .RegisterEntry("No behavior changes.");
 
     private static void Add3_0_0(Changelog log)
         => log.NextVersion("Version 3.0.0")
