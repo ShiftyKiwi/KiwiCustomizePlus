@@ -81,6 +81,11 @@ public class TemplateEditorManager : IDisposable
     }
 
     public bool IsKeepOnlyEditorProfileActive { get; set; } //todo
+    public bool ProfileContextPreviewActive { get; private set; }
+    public string ProfileContextPreviewStatus { get; private set; } = "Off";
+    public int ProfileContextTemplateCount { get; private set; }
+    private int _editorTemplateStackSignature;
+    private int _requestedEditorContextSignature;
 
     public TemplateEditorManager(
         TemplateChanged @event,
@@ -138,8 +143,7 @@ public class TemplateEditorManager : IDisposable
         if (!Character.IsValid) //safeguard
             ChangeEditorCharacterInternal(_gameObjectService.GetCurrentPlayerActorIdentifier().CreatePermanent()); //will set EditorProfile.Character
 
-        EditorProfile.Templates.Clear(); //safeguard
-        EditorProfile.Templates.Add(CurrentlyEditedTemplate);
+        RebuildEditorProfileTemplateStack(false, null, "Off", notify: false);
         EditorProfile.Enabled = true;
         HasChanges = false;
         IsEditorActive = true;
@@ -167,6 +171,13 @@ public class TemplateEditorManager : IDisposable
         CurrentlyEditedTemplate = null;
         EditorProfile.Enabled = false;
         EditorProfile.Templates.Clear();
+        EditorProfile.DisabledTemplates.Clear();
+        EditorProfile.TemplateWeights.Clear();
+        ProfileContextPreviewActive = false;
+        ProfileContextPreviewStatus = "Off";
+        ProfileContextTemplateCount = 0;
+        _editorTemplateStackSignature = 0;
+        _requestedEditorContextSignature = 0;
         IsEditorActive = false;
         HasChanges = false;
 
@@ -222,6 +233,105 @@ public class TemplateEditorManager : IDisposable
         _event.Invoke(TemplateChanged.Type.EditorCharacterChanged, CurrentlyEditedTemplate, (character, EditorProfile));
 
         return true;
+    }
+
+    public void RefreshProfileContextPreview(bool enabled, Profile? contextProfile, string unavailableReason)
+    {
+        if (!IsEditorActive || CurrentlyEditedTemplate == null)
+            return;
+
+        var requestedSignature = BuildRequestedEditorContextSignature(enabled, contextProfile, unavailableReason);
+        if (requestedSignature == _requestedEditorContextSignature)
+            return;
+
+        _requestedEditorContextSignature = requestedSignature;
+        RebuildEditorProfileTemplateStack(enabled, contextProfile, unavailableReason, notify: true);
+    }
+
+    private void RebuildEditorProfileTemplateStack(bool enabled, Profile? contextProfile, string unavailableReason, bool notify)
+    {
+        if (CurrentlyEditedTemplate == null)
+            return;
+
+        EditorProfile.Templates.Clear();
+        EditorProfile.DisabledTemplates.Clear();
+        EditorProfile.TemplateWeights.Clear();
+
+        var contextTemplateCount = 0;
+        if (enabled && contextProfile != null)
+        {
+            foreach (var template in contextProfile.Templates)
+            {
+                if (contextProfile.DisabledTemplates.Contains(template.UniqueId))
+                    continue;
+
+                var templateToAdd = template.UniqueId == CurrentlyEditedTemplateId
+                    ? CurrentlyEditedTemplate
+                    : template;
+
+                EditorProfile.Templates.Add(templateToAdd);
+                EditorProfile.SetTemplateWeight(templateToAdd.UniqueId, contextProfile.GetTemplateWeight(template.UniqueId));
+
+                if (template.UniqueId != CurrentlyEditedTemplateId)
+                    contextTemplateCount++;
+            }
+        }
+
+        if (EditorProfile.Templates.Count == 0 || !EditorProfile.Templates.Contains(CurrentlyEditedTemplate))
+        {
+            EditorProfile.Templates.Clear();
+            EditorProfile.TemplateWeights.Clear();
+            EditorProfile.Templates.Add(CurrentlyEditedTemplate);
+            EditorProfile.SetTemplateWeight(CurrentlyEditedTemplate.UniqueId, 1f);
+            contextTemplateCount = 0;
+        }
+
+        ProfileContextPreviewActive = enabled && contextProfile != null && contextTemplateCount > 0;
+        ProfileContextTemplateCount = contextTemplateCount;
+        ProfileContextPreviewStatus = !enabled
+            ? "Off"
+            : ProfileContextPreviewActive
+                ? $"On - {contextTemplateCount} visual context template{(contextTemplateCount == 1 ? string.Empty : "s")}"
+                : $"Unavailable - {unavailableReason}";
+
+        var newSignature = BuildEditorTemplateStackSignature();
+        if (notify && newSignature != _editorTemplateStackSignature)
+            _event.Invoke(TemplateChanged.Type.EditorContextChanged, CurrentlyEditedTemplate, (Character, EditorProfile));
+
+        _editorTemplateStackSignature = newSignature;
+    }
+
+    private int BuildEditorTemplateStackSignature()
+    {
+        var hash = new HashCode();
+        hash.Add(ProfileContextPreviewActive);
+        foreach (var template in EditorProfile.Templates)
+        {
+            hash.Add(template.UniqueId);
+            hash.Add(EditorProfile.GetTemplateWeight(template.UniqueId));
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private int BuildRequestedEditorContextSignature(bool enabled, Profile? contextProfile, string unavailableReason)
+    {
+        var hash = new HashCode();
+        hash.Add(enabled);
+        hash.Add(contextProfile?.UniqueId ?? Guid.Empty);
+        hash.Add(unavailableReason, StringComparer.Ordinal);
+
+        if (contextProfile != null)
+        {
+            foreach (var template in contextProfile.Templates)
+            {
+                hash.Add(template.UniqueId);
+                hash.Add(contextProfile.DisabledTemplates.Contains(template.UniqueId));
+                hash.Add(contextProfile.GetTemplateWeight(template.UniqueId));
+            }
+        }
+
+        return hash.ToHashCode();
     }
 
     /// <summary>

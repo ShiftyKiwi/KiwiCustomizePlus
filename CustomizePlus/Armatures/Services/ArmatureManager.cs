@@ -1612,6 +1612,7 @@ public unsafe sealed class ArmatureManager : IDisposable
             type is not TemplateChanged.Type.UpdatedBone &&
             type is not TemplateChanged.Type.DeletedBone &&
             type is not TemplateChanged.Type.EditorCharacterChanged &&
+            type is not TemplateChanged.Type.EditorContextChanged &&
             type is not TemplateChanged.Type.EditorEnabled &&
             type is not TemplateChanged.Type.EditorDisabled)
             return;
@@ -1660,6 +1661,30 @@ public unsafe sealed class ArmatureManager : IDisposable
                 armature.IsPendingProfileRebind = true;
 
             _logger.Debug($"ArmatureManager.OnTemplateChange Editor profile character name changed, armature rebind scheduled: {type}, profile: {profile.Name.Text.Incognify()}->{profile.Enabled}, new name: {character.Incognito(null)}");
+
+            return;
+        }
+
+        if (type == TemplateChanged.Type.EditorContextChanged)
+        {
+            if (arg3 is not ValueTuple<ActorIdentifier, Profile> payload)
+                return;
+
+            var (character, profile) = payload;
+
+            foreach (var armature in GetArmaturesForCharacter(character))
+            {
+                armature.IsPendingProfileRebind = true;
+                _logger.Debug($"ArmatureManager.OnTemplateChange editor context changed, armature rebind scheduled: {type}, {armature}");
+            }
+
+            if (profile.Armatures.Count == 0)
+                return;
+
+            foreach (var armature in profile.Armatures)
+                armature.IsPendingProfileRebind = true;
+
+            _logger.Debug($"ArmatureManager.OnTemplateChange editor context changed, armature rebind scheduled: {type}, profile: {profile.Name.Text.Incognify()}->{profile.Enabled}");
 
             return;
         }

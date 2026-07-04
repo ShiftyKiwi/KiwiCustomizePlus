@@ -5,8 +5,12 @@ using CustomizePlus.Armatures.Data;
 using CustomizePlus.Configuration.Data;
 using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Helpers;
+using CustomizePlus.Core.Services;
 using CustomizePlus.Game.Services;
 using CustomizePlus.GameData.Extensions;
+using CustomizePlus.Profiles;
+using CustomizePlus.Profiles.Data;
+using CustomizePlus.Profiles.Enums;
 using CustomizePlus.Templates;
 using CustomizePlus.Templates.Data;
 using CustomizePlus.UI.Windows.Controls;
@@ -29,13 +33,17 @@ public class BoneEditorPanel
 {
     private const long GroupImportSuccessStatusLifetimeMs = 7000;
     private const long GroupImportFailureStatusLifetimeMs = 12000;
+    private const long UnknownWorkbenchStatusLifetimeMs = 12000;
 
     private readonly TemplateFileSystemSelector _templateFileSystemSelector;
     private readonly TemplateEditorManager _editorManager;
     private readonly PluginConfiguration _configuration;
     private readonly GameObjectService _gameObjectService;
+    private readonly ProfileManager _profileManager;
     private readonly ActorAssignmentUi _actorAssignmentUi;
     private readonly PopupSystem _popupSystem;
+    private readonly LocalBoneMetadataService _boneMetadataService;
+    private readonly SemanticBodyGoalService _semanticBodyGoalService;
     private readonly Logger _logger;
 
     private BoneAttribute _editingAttribute;
@@ -69,8 +77,24 @@ public class BoneEditorPanel
     private string? _pendingClipboardText;
     private string? _pendingImportText;
     private string? _lastGroupImportStatus;
+    private string? _unknownWorkbenchStatus;
+    private TemplateHealthReport? _templateHealthReport;
     private bool _lastGroupImportFailed;
     private long _lastGroupImportStatusAtMs;
+    private long _unknownWorkbenchStatusAtMs;
+    private string _unknownBoneSearch = string.Empty;
+    private string _templateHealthSearch = string.Empty;
+    private bool _templateHealthEditedOnly = true;
+    private bool _templateHealthMissingOnly;
+    private bool _templateHealthUnknownOnly;
+    private bool _templateHealthRiskyOnly;
+    private bool _templateHealthAsymmetricOnly;
+    private bool _templateHealthLockedPinnedOnly;
+    private bool _templateHealthPropagatedOnly;
+    private Dictionary<string, float> _semanticGoalValues = new(StringComparer.Ordinal);
+    private SemanticBodyGoalPreview? _semanticGoalPreview;
+    private string _selectedShapeRecipeId = string.Empty;
+    private string? _semanticGoalStatus;
     public bool HasChanges => _editorManager.HasChanges;
     public bool IsEditorActive => _editorManager.IsEditorActive;
     public bool IsEditorPaused => _editorManager.IsEditorPaused;
@@ -81,16 +105,22 @@ public class BoneEditorPanel
         TemplateEditorManager editorManager,
         PluginConfiguration configuration,
         GameObjectService gameObjectService,
+        ProfileManager profileManager,
         ActorAssignmentUi actorAssignmentUi,
         PopupSystem popupSystem,
+        LocalBoneMetadataService boneMetadataService,
+        SemanticBodyGoalService semanticBodyGoalService,
         Logger logger)
     {
         _templateFileSystemSelector = templateFileSystemSelector;
         _editorManager = editorManager;
         _configuration = configuration;
         _gameObjectService = gameObjectService;
+        _profileManager = profileManager;
         _actorAssignmentUi = actorAssignmentUi;
         _popupSystem = popupSystem;
+        _boneMetadataService = boneMetadataService;
+        _semanticBodyGoalService = semanticBodyGoalService;
         _logger = logger;
 
         _isShowLiveBones = configuration.EditorConfiguration.ShowLiveBones;
@@ -98,6 +128,8 @@ public class BoneEditorPanel
         _precision = configuration.EditorConfiguration.EditorValuesPrecision;
         _editingAttribute = configuration.EditorConfiguration.EditorMode;
         _favoriteBones = new HashSet<string>(_configuration.EditorConfiguration.FavoriteBones);
+        _semanticGoalValues = _semanticBodyGoalService.CreateDefaultGoalValues();
+        _selectedShapeRecipeId = _semanticBodyGoalService.Recipes.FirstOrDefault()?.Id ?? string.Empty;
     }
 
     public bool EnableEditor(Template template)
@@ -204,8 +236,12 @@ public class BoneEditorPanel
             ImGui.Separator();
 
             DrawEditorStatusStrip(characterText);
+            DrawProfileContextPreviewControl();
             DrawGroupImportStatus();
             DrawTroubleshootingHelper();
+            DrawTemplateHealth();
+            DrawSemanticBodyGoals();
+            DrawUnknownBoneWorkbench();
 
             ImGui.Separator();
             DrawBoneEditorToolbar();
@@ -248,10 +284,13 @@ public class BoneEditorPanel
                                 if (currentTemplateBones != null)
                                     currentTemplateBones.TryGetValue(x.BoneName, out templateTransform);
 
-                                return new EditRowParams(x, templateTransform);
+                                var editTransform = templateTransform ?? (_editorManager.ProfileContextPreviewActive ? new BoneTransform() : null);
+                                return new EditRowParams(x, editTransform);
                             })
-                        : _editorManager.EditorProfile.Armatures[0].BoneTemplateBinding.Where(x => x.Value.Bones.ContainsKey(x.Key))
-                            .Select(x => new EditRowParams(x.Key, x.Value.Bones[x.Key])); //todo: this is awful
+                        : _editorManager.ProfileContextPreviewActive && currentTemplateBones != null
+                            ? currentTemplateBones.Select(x => new EditRowParams(x.Key, x.Value))
+                            : _editorManager.EditorProfile.Armatures[0].BoneTemplateBinding.Where(x => x.Value.Bones.ContainsKey(x.Key))
+                                .Select(x => new EditRowParams(x.Key, x.Value.Bones[x.Key])); //todo: this is awful
                 }
                 else
                     relevantModelBones = _templateFileSystemSelector.Selected!.Bones.Select(x => new EditRowParams(x.Key, x.Value));
@@ -259,7 +298,8 @@ public class BoneEditorPanel
                 if (!string.IsNullOrEmpty(_boneSearch))
                 {
                     relevantModelBones = relevantModelBones
-                        .Where(x => BoneData.MatchesSearch(x.BoneCodeName, _boneSearch));
+                        .Where(x => BoneData.MatchesSearch(x.BoneCodeName, _boneSearch) ||
+                                    _boneMetadataService.MatchesSearch(x.BoneCodeName, _boneSearch));
                 }
 
                 var favoriteRows = relevantModelBones
@@ -465,7 +505,7 @@ public class BoneEditorPanel
             }
             catch (Exception)
             {
-                _logger.Debug("clipboard blew up :(");
+                _logger.Debug("Could not copy grouped bone transforms to clipboard.");
             }
             _pendingClipboardText = null;
         }
@@ -729,6 +769,94 @@ public class BoneEditorPanel
         ImGui.PopStyleColor();
     }
 
+    private void DrawProfileContextPreviewControl()
+    {
+        var enabled = _configuration.EditorConfiguration.PreviewWithProfileContext;
+        var contextProfile = ResolveProfileContextPreviewProfile(enabled, out var unavailableReason);
+        _editorManager.RefreshProfileContextPreview(enabled, contextProfile, unavailableReason);
+
+        ImGui.AlignTextToFramePadding();
+        if (ImGui.Checkbox("Preview with profile context", ref enabled))
+        {
+            _configuration.EditorConfiguration.PreviewWithProfileContext = enabled;
+            _configuration.Save();
+            contextProfile = ResolveProfileContextPreviewProfile(enabled, out unavailableReason);
+            _editorManager.RefreshProfileContextPreview(enabled, contextProfile, unavailableReason);
+        }
+        CtrlHelper.AddHoverText("Shows other active templates from the preview actor's active profile while editing this template. Other templates are visual context only; edits are saved only to the current template.");
+
+        ImGui.SameLine();
+        var active = _editorManager.ProfileContextPreviewActive;
+        var color = !enabled
+            ? Constants.Colors.Normal
+            : active
+                ? Constants.Colors.Active
+                : Constants.Colors.Warning;
+        ImGui.TextDisabled("Profile context:");
+        ImGui.SameLine();
+        ImGui.PushStyleColor(ImGuiCol.Text, color);
+        ImGui.TextUnformatted(_editorManager.ProfileContextPreviewStatus);
+        ImGui.PopStyleColor();
+
+        if (enabled)
+            CtrlHelper.AddHoverText(active
+                ? "The preview actor is using the active profile's enabled template order, with the edited template replaced by the temporary editable copy."
+                : unavailableReason);
+    }
+
+    private Profile? ResolveProfileContextPreviewProfile(bool enabled, out string unavailableReason)
+    {
+        unavailableReason = "Off";
+        if (!enabled)
+            return null;
+
+        if (!IsEditorActive)
+        {
+            unavailableReason = "editor is not active";
+            return null;
+        }
+
+        var previewActor = _editorManager.Character;
+        if (!previewActor.IsValid)
+        {
+            unavailableReason = "no preview actor";
+            return null;
+        }
+
+        var activeProfile = _profileManager.GetEnabledProfilesByActor(previewActor)
+            .FirstOrDefault(profile => profile.ProfileType != ProfileType.Editor);
+        if (activeProfile == null)
+        {
+            unavailableReason = "no active profile for preview actor";
+            return null;
+        }
+
+        var assignedTemplate = activeProfile.Templates.FirstOrDefault(template => template.UniqueId == _editorManager.CurrentlyEditedTemplateId);
+        if (assignedTemplate == null)
+        {
+            unavailableReason = "selected template is not assigned to the preview actor's active profile";
+            return null;
+        }
+
+        if (activeProfile.DisabledTemplates.Contains(assignedTemplate.UniqueId))
+        {
+            unavailableReason = "selected template is disabled in the preview actor's active profile";
+            return null;
+        }
+
+        var enabledContextTemplateCount = activeProfile.Templates.Count(template =>
+            template.UniqueId != assignedTemplate.UniqueId &&
+            !activeProfile.DisabledTemplates.Contains(template.UniqueId));
+        if (enabledContextTemplateCount <= 0)
+        {
+            unavailableReason = "no other enabled templates are assigned to the preview actor's active profile";
+            return null;
+        }
+
+        unavailableReason = string.Empty;
+        return activeProfile;
+    }
+
     private static string GetSupportClass(int liveBoneCount, int unknownBoneCount, int ivcsBoneCount)
     {
         if (liveBoneCount <= 0)
@@ -838,6 +966,1185 @@ public class BoneEditorPanel
         DrawWrappedBullet("If clothing does not move, the mesh may not be weighted to that bone even when the body is.");
         DrawWrappedBullet("Some helper, face, or GPose-oriented bones may be unreliable outside supported contexts. The plugin can expose them, but it cannot remove game-engine limits.");
         DrawWrappedBullet("Propagation only affects child bones when the propagation icon is enabled for the current edit mode.");
+    }
+
+    private void DrawTemplateHealth()
+    {
+        if (!ImGui.CollapsingHeader("Template Health / Delta Details"))
+            return;
+
+        var templateBones = _editorManager.CurrentlyEditedTemplate?.Bones
+                            ?? _templateFileSystemSelector.Selected?.Bones
+                            ?? new Dictionary<string, BoneTransform>();
+        var armature = GetPrimaryEditorArmature();
+        var liveBoneNames = armature?.GetAllBones()
+            .Select(b => b.BoneName)
+            .Distinct(StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>(StringComparer.Ordinal);
+        var signature = BuildTemplateHealthSignature(templateBones, liveBoneNames);
+
+        if (_templateHealthReport == null || _templateHealthReport.Signature != signature)
+            _templateHealthReport = BuildTemplateHealthReport(templateBones, liveBoneNames, signature);
+
+        ImGuiUtil.TextWrapped("Read-only details for the current template and preview skeleton. This is diagnostic context only; it does not apply fixes or modify template data.");
+        ImGui.TextDisabled("Missing-live and asymmetry checks use the current preview actor. Metadata remains advisory and does not grant mirroring, parenting, propagation, BIW, guardrail, or automation trust.");
+
+        if (ImGui.Button("Refresh Template Health"))
+            _templateHealthReport = BuildTemplateHealthReport(templateBones, liveBoneNames, signature);
+        CtrlHelper.AddHoverText("Rebuilds the read-only health report from the current template, live preview skeleton, and local metadata notes.");
+
+        ImGui.SameLine();
+        if (ImGui.Button("Clear health filters"))
+        {
+            _templateHealthSearch = string.Empty;
+            _templateHealthEditedOnly = true;
+            _templateHealthMissingOnly = false;
+            _templateHealthUnknownOnly = false;
+            _templateHealthRiskyOnly = false;
+            _templateHealthAsymmetricOnly = false;
+            _templateHealthLockedPinnedOnly = false;
+            _templateHealthPropagatedOnly = false;
+        }
+
+        var report = _templateHealthReport;
+        if (report == null)
+            return;
+
+        DrawTemplateHealthSummary(report.Summary);
+        DrawProportionDashboard(report.ProportionDashboard);
+        DrawTemplateHealthFilters();
+
+        var rows = report.Rows
+            .Where(PassesTemplateHealthFilters)
+            .OrderByDescending(r => r.IsEdited)
+            .ThenByDescending(r => r.IsRisky)
+            .ThenByDescending(r => r.IsUnknown)
+            .ThenBy(r => BoneData.GetBoneRanking(r.BoneName))
+            .ThenBy(r => r.BoneName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        ImGui.TextDisabled($"Showing {rows.Count} of {report.Rows.Count} delta row{(report.Rows.Count == 1 ? string.Empty : "s")}.");
+
+        using (var table = ImRaii.Table("TemplateHealthDeltaTable", 9, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        {
+            if (!table)
+                return;
+
+            ImGui.TableSetupColumn("Bone", ImGuiTableColumnFlags.WidthFixed, 180 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn("Family", ImGuiTableColumnFlags.WidthFixed, 95 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn("Support", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Template", ImGuiTableColumnFlags.WidthFixed, 85 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn("Live", ImGuiTableColumnFlags.WidthFixed, 65 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn("Deltas", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Protect", ImGuiTableColumnFlags.WidthFixed, 105 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn("Prop", ImGuiTableColumnFlags.WidthFixed, 85 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn("Notes", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableHeadersRow();
+
+            foreach (var row in rows.Take(80))
+            {
+                ImGui.TableNextRow();
+
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(row.DisplayName);
+                if (!string.Equals(row.DisplayName, row.BoneName, StringComparison.Ordinal))
+                    ImGui.TextDisabled(row.BoneName);
+
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(row.Family);
+
+                ImGui.TableNextColumn();
+                ImGuiUtil.TextWrapped(row.SupportLabel);
+
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(row.IsEdited
+                    ? "Edited"
+                    : row.InTemplate
+                        ? "Stored"
+                        : "Live only");
+
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(row.InLiveSkeleton ? "Yes" : liveBoneNames.Count == 0 ? "Waiting" : "No");
+
+                ImGui.TableNextColumn();
+                ImGuiUtil.TextWrapped($"P {FormatDelta(row.PositionDelta)} / R {FormatDelta(row.RotationDelta)} / S {FormatDelta(row.ScaleDelta)} / C {FormatDelta(row.ChildScaleDelta)}");
+
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(row.ProtectionSummary);
+
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(row.PropagationSummary);
+
+                ImGui.TableNextColumn();
+                ImGuiUtil.TextWrapped(row.Note);
+            }
+        }
+
+        if (rows.Count > 80)
+            ImGui.TextDisabled($"...and {rows.Count - 80} more row{(rows.Count - 80 == 1 ? string.Empty : "s")}. Use filters to narrow the list.");
+    }
+
+    private void DrawSemanticBodyGoals()
+    {
+        if (!ImGui.CollapsingHeader("Semantic Body Goals"))
+            return;
+
+        ImGuiUtil.TextWrapped("Semantic Body Goals are authoring helpers. They preview ordinary bone transform edits on known supported bones. They do not inspect meshes, do not auto-fix templates, and may not match your artistic intent.");
+        ImGui.TextDisabled("These presets are starting points, not corrections. Review the preview and fine-tune manually.");
+        ImGui.TextDisabled("Scale-only MVP: known built-in default bones only. Unknown/custom, metadata-trusted, and modded/IVCS bones are not used.");
+
+        DrawShapeRecipeSelector();
+        DrawSemanticGoalSliders();
+        DrawSemanticGoalActions();
+
+        if (!string.IsNullOrWhiteSpace(_semanticGoalStatus))
+            ImGuiUtil.TextWrapped(_semanticGoalStatus);
+
+        DrawSemanticGoalPreviewRows();
+    }
+
+    private void DrawShapeRecipeSelector()
+    {
+        var selectedRecipe = _semanticBodyGoalService.Recipes.FirstOrDefault(recipe => recipe.Id == _selectedShapeRecipeId)
+                             ?? _semanticBodyGoalService.Recipes.FirstOrDefault();
+        if (selectedRecipe != null && string.IsNullOrWhiteSpace(_selectedShapeRecipeId))
+            _selectedShapeRecipeId = selectedRecipe.Id;
+
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextDisabled("Recipe:");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(MathF.Min(280 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
+        if (ImGui.BeginCombo("##ShapeRecipeSelector", selectedRecipe?.DisplayName ?? "No recipes"))
+        {
+            foreach (var recipe in _semanticBodyGoalService.Recipes)
+            {
+                var selected = recipe.Id == _selectedShapeRecipeId;
+                if (ImGui.Selectable(recipe.DisplayName, selected))
+                    _selectedShapeRecipeId = recipe.Id;
+                CtrlHelper.AddHoverText(recipe.Description);
+
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+        CtrlHelper.AddHoverText("Recipes only populate semantic sliders. They do not write template data until you preview and apply.");
+
+        ImGui.SameLine();
+        using (ImRaii.Disabled(selectedRecipe == null))
+        {
+            if (ImGui.Button("Load recipe values") && selectedRecipe != null)
+            {
+                _semanticGoalValues = _semanticBodyGoalService.CreateRecipeGoalValues(selectedRecipe);
+                _semanticGoalPreview = null;
+                _semanticGoalStatus = $"Loaded '{selectedRecipe.DisplayName}' slider values. Click Preview Goals before applying.";
+            }
+        }
+        CtrlHelper.AddHoverText("Loads this recipe into the semantic sliders. This is local UI state only and does not modify the template.");
+
+        ImGui.SameLine();
+        if (ImGui.Button("Reset sliders"))
+        {
+            _semanticGoalValues = _semanticBodyGoalService.CreateDefaultGoalValues();
+            _semanticGoalPreview = null;
+            _semanticGoalStatus = "Reset semantic goal sliders.";
+        }
+        CtrlHelper.AddHoverText("Returns all semantic goal sliders to zero and clears the current preview.");
+    }
+
+    private void DrawSemanticGoalSliders()
+    {
+        using var table = ImRaii.Table("SemanticGoalSliders", 2, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp);
+        if (!table)
+            return;
+
+        ImGui.TableSetupColumn("Goal", ImGuiTableColumnFlags.WidthFixed, 210 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+
+        foreach (var goal in _semanticBodyGoalService.Goals)
+        {
+            if (!_semanticGoalValues.TryGetValue(goal.Id, out var value))
+                value = 0f;
+
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted(goal.DisplayName);
+            CtrlHelper.AddHoverText(goal.Description);
+
+            ImGui.TableNextColumn();
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat($"##SemanticGoal{goal.Id}", ref value, -1f, 1f, "%.2f"))
+            {
+                _semanticGoalValues[goal.Id] = Math.Clamp(value, -1f, 1f);
+                _semanticGoalPreview = null;
+                _semanticGoalStatus = "Slider changed. Click Preview Goals to inspect the new output.";
+            }
+        }
+    }
+
+    private void DrawSemanticGoalActions()
+    {
+        var canPreview = IsEditorActive && !IsEditorPaused && _semanticGoalValues.Any(kvp => MathF.Abs(kvp.Value) > 0.0005f);
+        var previewIsStale = IsSemanticGoalPreviewStale();
+        using (ImRaii.Disabled(!canPreview))
+        {
+            if (ImGui.Button("Preview Goals"))
+            {
+                _semanticGoalPreview = BuildSemanticGoalPreview();
+                _semanticGoalStatus = _semanticGoalPreview.Rows.Count == 0
+                    ? "No semantic goals are active."
+                    : $"Preview built: {_semanticGoalPreview.PreviewedChangeCount} change{(_semanticGoalPreview.PreviewedChangeCount == 1 ? string.Empty : "s")} previewed, {_semanticGoalPreview.BlockedChangeCount} blocked/skipped.";
+            }
+        }
+        CtrlHelper.AddHoverText("Builds a read-only preview of ordinary scale edits. No template data is changed.");
+
+        ImGui.SameLine();
+        using (ImRaii.Disabled(_semanticGoalPreview == null))
+        {
+            if (ImGui.Button("Clear Preview"))
+            {
+                _semanticGoalPreview = null;
+                _semanticGoalStatus = "Cleared semantic goal preview.";
+            }
+        }
+        CtrlHelper.AddHoverText("Discards the current preview without changing the template.");
+
+        ImGui.SameLine();
+        var canApply = IsEditorActive && !IsEditorPaused && _semanticGoalPreview?.HasPreviewableChanges == true && !previewIsStale;
+        using (ImRaii.Disabled(!canApply))
+        {
+            if (ImGui.Button("Apply Goals"))
+                ApplySemanticGoalPreview();
+        }
+        CtrlHelper.AddHoverText("Writes the previewed final scales as ordinary BoneTransform edits through the existing editor path. This is the only semantic action that changes the template.");
+
+        if (!IsEditorActive || IsEditorPaused)
+            ImGui.TextDisabled("Start bone editing and wait for the editor to be active before previewing or applying semantic goals.");
+        else if (previewIsStale)
+            ImGui.TextDisabled("Preview is stale. Rebuild Preview Goals before applying.");
+    }
+
+    private SemanticBodyGoalPreview BuildSemanticGoalPreview()
+    {
+        var templateBones = _editorManager.CurrentlyEditedTemplate?.Bones
+                            ?? _templateFileSystemSelector.Selected?.Bones
+                            ?? new Dictionary<string, BoneTransform>();
+        var liveBoneNames = GetPrimaryEditorArmature()?.GetAllBones()
+            .Select(b => b.BoneName)
+            .Distinct(StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>(StringComparer.Ordinal);
+
+        var signature = BuildSemanticGoalPreviewSignature(templateBones, liveBoneNames);
+        return _semanticBodyGoalService.BuildPreview(_semanticGoalValues, templateBones, liveBoneNames, signature);
+    }
+
+    private void ApplySemanticGoalPreview()
+    {
+        var preview = _semanticGoalPreview;
+        if (preview?.HasPreviewableChanges != true)
+            return;
+
+        if (IsSemanticGoalPreviewStale())
+        {
+            _semanticGoalStatus = "Preview is stale. Rebuild Preview Goals before applying.";
+            return;
+        }
+
+        var snapshot = CaptureCurrentState();
+        var changed = false;
+        foreach (var (boneName, transform) in preview.FinalTransforms)
+            changed |= _editorManager.ModifyBoneTransform(boneName, transform);
+
+        if (!changed)
+        {
+            _semanticGoalStatus = "Apply did not change any template rows. The editor may be paused or the preview may be stale.";
+            return;
+        }
+
+        SaveStateForUndo(snapshot);
+        _templateHealthReport = null;
+        _semanticGoalPreview = null;
+        _semanticGoalStatus = $"Applied semantic goals to {preview.FinalTransforms.Count} bone row{(preview.FinalTransforms.Count == 1 ? string.Empty : "s")}. Undo is available from the bone editor toolbar.";
+    }
+
+    private bool IsSemanticGoalPreviewStale()
+    {
+        var preview = _semanticGoalPreview;
+        if (preview == null)
+            return false;
+
+        var templateBones = _editorManager.CurrentlyEditedTemplate?.Bones
+                            ?? _templateFileSystemSelector.Selected?.Bones
+                            ?? new Dictionary<string, BoneTransform>();
+        var liveBoneNames = GetPrimaryEditorArmature()?.GetAllBones()
+            .Select(b => b.BoneName)
+            .Distinct(StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>(StringComparer.Ordinal);
+
+        return preview.Signature != BuildSemanticGoalPreviewSignature(templateBones, liveBoneNames);
+    }
+
+    private int BuildSemanticGoalPreviewSignature(
+        IReadOnlyDictionary<string, BoneTransform> templateBones,
+        IReadOnlySet<string> liveBoneNames)
+    {
+        var hash = new HashCode();
+        hash.Add(_selectedShapeRecipeId, StringComparer.Ordinal);
+
+        foreach (var goal in _semanticBodyGoalService.Goals.OrderBy(goal => goal.Id, StringComparer.Ordinal))
+        {
+            hash.Add(goal.Id, StringComparer.Ordinal);
+            hash.Add(_semanticGoalValues.TryGetValue(goal.Id, out var value) ? MathF.Round(value, 4) : 0f);
+        }
+
+        foreach (var boneName in GetSemanticGoalTargetBoneNames())
+        {
+            hash.Add(boneName, StringComparer.Ordinal);
+            hash.Add(liveBoneNames.Contains(boneName));
+
+            if (!templateBones.TryGetValue(boneName, out var transform) || transform == null)
+            {
+                hash.Add("missing", StringComparer.Ordinal);
+                continue;
+            }
+
+            hash.Add(transform.Scaling);
+            hash.Add(transform.ChildScaling);
+            hash.Add(transform.ChildScalingIndependent);
+            hash.Add(transform.PropagateScale);
+            hash.Add(transform.PropagationFalloff);
+            hash.Add(transform.LockState);
+            hash.Add(transform.PinX);
+            hash.Add(transform.PinY);
+            hash.Add(transform.PinZ);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private IReadOnlyList<string> GetSemanticGoalTargetBoneNames()
+        => _semanticBodyGoalService.Goals
+            .SelectMany(goal => goal.Targets)
+            .Select(target => target.BoneName)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+
+    private void DrawSemanticGoalPreviewRows()
+    {
+        var preview = _semanticGoalPreview;
+        if (preview == null)
+            return;
+
+        if (!ImGui.TreeNodeEx($"Preview Rows ({preview.Rows.Count})", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        ImGui.TextDisabled("Output is ordinary scale-only BoneTransform edits. Scroll this preview if it has many rows.");
+        var previewHeight = MathF.Min(260 * ImGuiHelpers.GlobalScale, MathF.Max(140 * ImGuiHelpers.GlobalScale, ImGui.GetTextLineHeightWithSpacing() * 9f));
+        using (var child = ImRaii.Child("SemanticGoalPreviewRowsScroll", new Vector2(0, previewHeight), true))
+        {
+            if (child)
+                DrawSemanticGoalPreviewRowsTable(preview);
+        }
+
+        ImGui.TreePop();
+    }
+
+    private void DrawSemanticGoalPreviewRowsTable(SemanticBodyGoalPreview preview)
+    {
+        using var table = ImRaii.Table("SemanticGoalPreviewRows", 7, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.ScrollY);
+        if (!table)
+            return;
+
+        ImGui.TableSetupColumn("Goal", ImGuiTableColumnFlags.WidthFixed, 145 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Bone", ImGuiTableColumnFlags.WidthFixed, 155 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Display", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Before", ImGuiTableColumnFlags.WidthFixed, 115 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("After", ImGuiTableColumnFlags.WidthFixed, 115 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Delta", ImGuiTableColumnFlags.WidthFixed, 105 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableHeadersRow();
+
+        foreach (var row in preview.Rows.Take(100))
+        {
+            ImGui.TableNextRow();
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(row.GoalName);
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(row.BoneName);
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(row.DisplayName);
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(FormatSemanticVector(row.BeforeScale));
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(FormatSemanticVector(row.AfterScale));
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(FormatSemanticVector(row.Delta, true));
+
+            ImGui.TableNextColumn();
+            ImGui.PushStyleColor(ImGuiCol.Text, row.IsSkipped ? Constants.Colors.Warning : Constants.Colors.Active);
+            ImGuiUtil.TextWrapped(row.Reason);
+            ImGui.PopStyleColor();
+        }
+
+        if (preview.Rows.Count > 100)
+            ImGui.TextDisabled($"...and {preview.Rows.Count - 100} more preview row{(preview.Rows.Count - 100 == 1 ? string.Empty : "s")}.");
+    }
+
+    private static string FormatSemanticVector(Vector3 value, bool showSign = false)
+        => showSign
+            ? $"{value.X:+0.###;-0.###;0}, {value.Y:+0.###;-0.###;0}, {value.Z:+0.###;-0.###;0}"
+            : $"{value.X:0.###}, {value.Y:0.###}, {value.Z:0.###}";
+
+    private void DrawTemplateHealthSummary(TemplateHealthSummary summary)
+    {
+        using var table = ImRaii.Table("TemplateHealthSummary", 4, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchSame);
+        if (!table)
+            return;
+
+        for (var i = 0; i < 4; i++)
+            ImGui.TableSetupColumn($"HealthSummary{i}", ImGuiTableColumnFlags.WidthStretch);
+
+        ImGui.TableNextRow();
+        DrawStatusCell("Edited bones", summary.EditedBoneCount.ToString(), summary.EditedBoneCount > 0 ? Constants.Colors.Info : Constants.Colors.Normal);
+        DrawStatusCell("Missing live", summary.MissingEditedBoneCount.ToString(), summary.MissingEditedBoneCount > 0 ? Constants.Colors.Warning : Constants.Colors.Active);
+        DrawStatusCell("Unknown edited", summary.UnknownEditedBoneCount.ToString(), summary.UnknownEditedBoneCount > 0 ? Constants.Colors.Warning : Constants.Colors.Active);
+        DrawStatusCell("Risky rows", summary.RiskyEditedBoneCount.ToString(), summary.RiskyEditedBoneCount > 0 ? Constants.Colors.Warning : Constants.Colors.Active);
+
+        ImGui.TableNextRow();
+        DrawStatusCell("Locked rows", summary.LockedRowCount.ToString(), summary.LockedRowCount > 0 ? Constants.Colors.Info : Constants.Colors.Normal);
+        DrawStatusCell("Pinned axes", summary.PinnedAxisCount.ToString(), summary.PinnedAxisCount > 0 ? Constants.Colors.Info : Constants.Colors.Normal);
+        DrawStatusCell("Propagated", summary.PropagationCount.ToString(), summary.PropagationCount > 0 ? Constants.Colors.Info : Constants.Colors.Normal);
+        DrawStatusCell("Asymmetric", summary.LeftRightAsymmetryCount.ToString(), summary.LeftRightAsymmetryCount > 0 ? Constants.Colors.Warning : Constants.Colors.Active);
+
+        ImGui.TableNextRow();
+        DrawStatusCell("Live bones", summary.LiveBoneCount.ToString(), summary.LiveBoneCount > 0 ? Constants.Colors.Active : Constants.Colors.Warning);
+        DrawStatusCell("Metadata packs", summary.MetadataPackCount.ToString(), summary.MetadataPackCount > 0 ? Constants.Colors.Info : Constants.Colors.Normal);
+        DrawStatusCell("Metadata entries", summary.MetadataEntryCount.ToString(), summary.MetadataEntryCount > 0 ? Constants.Colors.Info : Constants.Colors.Normal);
+        DrawStatusCell("Mode", "Read-only", Constants.Colors.Active);
+    }
+
+    private void DrawProportionDashboard(ProportionDashboardReport dashboard)
+    {
+        if (!ImGui.TreeNode("Proportion Dashboard"))
+            return;
+
+        ImGuiUtil.TextWrapped("This dashboard uses bone transform ratios, not true mesh measurements. It is an advisory styling/debug tool.");
+        ImGui.TextDisabled($"Overall: {dashboard.OverallStatus}. {dashboard.Summary}");
+
+        using (var table = ImRaii.Table("ProportionDashboardTable", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        {
+            if (!table)
+            {
+                ImGui.TreePop();
+                return;
+            }
+
+            ImGui.TableSetupColumn("Signal", ImGuiTableColumnFlags.WidthFixed, 190 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthFixed, 85 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 90 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn("Note", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableHeadersRow();
+
+            foreach (var item in dashboard.Items)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(item.Label);
+
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(item.Value);
+
+                ImGui.TableNextColumn();
+                ImGui.PushStyleColor(ImGuiCol.Text, GetProportionSeverityColor(item.Severity));
+                ImGui.TextUnformatted(item.Status);
+                ImGui.PopStyleColor();
+
+                ImGui.TableNextColumn();
+                ImGuiUtil.TextWrapped(item.Note);
+            }
+        }
+
+        ImGui.TreePop();
+    }
+
+    private void DrawTemplateHealthFilters()
+    {
+        ImGui.SetNextItemWidth(MathF.Min(320 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
+        ImGui.InputTextWithHint("##TemplateHealthSearch", "Filter delta rows...", ref _templateHealthSearch, 64);
+        CtrlHelper.AddHoverText("Filters by code name, display name, family, support label, notes, or metadata aliases for unknown/custom bones.");
+
+        CtrlHelper.Checkbox("Edited only", ref _templateHealthEditedOnly);
+        ImGui.SameLine();
+        CtrlHelper.Checkbox("Missing live", ref _templateHealthMissingOnly);
+        ImGui.SameLine();
+        CtrlHelper.Checkbox("Unknown/custom", ref _templateHealthUnknownOnly);
+        ImGui.SameLine();
+        CtrlHelper.Checkbox("Risky/modded", ref _templateHealthRiskyOnly);
+        ImGui.SameLine();
+        CtrlHelper.Checkbox("Asymmetric", ref _templateHealthAsymmetricOnly);
+        ImGui.SameLine();
+        CtrlHelper.Checkbox("Locked/pinned", ref _templateHealthLockedPinnedOnly);
+        ImGui.SameLine();
+        CtrlHelper.Checkbox("Propagated", ref _templateHealthPropagatedOnly);
+    }
+
+    private bool PassesTemplateHealthFilters(TemplateHealthDeltaRow row)
+    {
+        if (_templateHealthEditedOnly && !row.IsEdited)
+            return false;
+        if (_templateHealthMissingOnly && !row.IsMissingLiveBone)
+            return false;
+        if (_templateHealthUnknownOnly && !row.IsUnknown)
+            return false;
+        if (_templateHealthRiskyOnly && !row.IsRisky)
+            return false;
+        if (_templateHealthAsymmetricOnly && !row.IsAsymmetric)
+            return false;
+        if (_templateHealthLockedPinnedOnly && !row.IsLockedOrPinned)
+            return false;
+        if (_templateHealthPropagatedOnly && !row.IsPropagated)
+            return false;
+        if (string.IsNullOrWhiteSpace(_templateHealthSearch))
+            return true;
+
+        var query = _templateHealthSearch.Trim();
+        return row.BoneName.Contains(query, StringComparison.OrdinalIgnoreCase)
+               || row.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase)
+               || row.Family.Contains(query, StringComparison.OrdinalIgnoreCase)
+               || row.SupportLabel.Contains(query, StringComparison.OrdinalIgnoreCase)
+               || row.Note.Contains(query, StringComparison.OrdinalIgnoreCase)
+               || _boneMetadataService.MatchesSearch(row.BoneName, query);
+    }
+
+    private TemplateHealthReport BuildTemplateHealthReport(
+        IReadOnlyDictionary<string, BoneTransform> templateBones,
+        IReadOnlySet<string> liveBoneNames,
+        int signature)
+    {
+        var allNames = templateBones.Keys
+            .Union(liveBoneNames.Where(name => BoneData.GetBoneFamily(name) == BoneData.BoneFamily.Unknown), StringComparer.Ordinal)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(BoneData.GetBoneRanking)
+            .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var rows = allNames.Select(name => BuildTemplateHealthRow(name, templateBones, liveBoneNames)).ToList();
+        var editedRows = rows.Where(row => row.IsEdited).ToList();
+        var asymmetricPairs = rows
+            .Where(row => row.IsAsymmetric && !string.IsNullOrWhiteSpace(row.MirrorBoneName))
+            .Select(row => string.Compare(row.BoneName, row.MirrorBoneName, StringComparison.Ordinal) <= 0
+                ? $"{row.BoneName}|{row.MirrorBoneName}"
+                : $"{row.MirrorBoneName}|{row.BoneName}")
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+
+        var summary = new TemplateHealthSummary(
+            editedRows.Count,
+            editedRows.Count(row => row.IsMissingLiveBone),
+            editedRows.Count(row => row.IsUnknown),
+            editedRows.Count(row => row.IsRisky),
+            rows.Count(row => row.LockState != BoneLockState.Unlocked),
+            rows.Sum(row => row.PinnedAxisCount),
+            rows.Count(row => row.IsPropagated),
+            asymmetricPairs,
+            liveBoneNames.Count,
+            _boneMetadataService.LoadedPackCount,
+            _boneMetadataService.LoadedEntryCount);
+
+        return new TemplateHealthReport(summary, BuildProportionDashboard(templateBones, rows), rows, signature);
+    }
+
+    private TemplateHealthDeltaRow BuildTemplateHealthRow(
+        string boneName,
+        IReadOnlyDictionary<string, BoneTransform> templateBones,
+        IReadOnlySet<string> liveBoneNames)
+    {
+        templateBones.TryGetValue(boneName, out var transform);
+        var inTemplate = transform != null;
+        var isEdited = transform?.IsEdited(true) == true;
+        var liveKnown = liveBoneNames.Count > 0;
+        var inLiveSkeleton = liveKnown && liveBoneNames.Contains(boneName);
+        var isMissingLiveBone = liveKnown && isEdited && !inLiveSkeleton;
+        var family = BoneData.GetBoneFamily(boneName);
+        var isUnknown = family == BoneData.BoneFamily.Unknown;
+        var isIvcs = BoneData.IsIVCSCompatibleBone(boneName);
+        _boneMetadataService.TryGetEntry(boneName, out var metadata);
+
+        var positionDelta = transform == null ? 0f : VectorMagnitude(transform.Translation);
+        var rotationDelta = transform == null ? 0f : VectorMagnitude(transform.Rotation);
+        var scaleDelta = transform == null ? 0f : MaxAxisDelta(transform.Scaling, Vector3.One);
+        var childScaleDelta = transform == null || !transform.ChildScalingIndependent ? 0f : MaxAxisDelta(transform.ChildScaling, Vector3.One);
+        var pinnedAxisCount = transform == null ? 0 : (transform.PinX ? 1 : 0) + (transform.PinY ? 1 : 0) + (transform.PinZ ? 1 : 0);
+        var isPropagated = transform != null && (transform.PropagateTranslation || transform.PropagateRotation || transform.PropagateScale);
+        var isMotionRisk = positionDelta > 0.20f || rotationDelta > 12f;
+
+        var mirrorBoneName = BoneData.GetBoneMirror(boneName);
+        var mirrorDelta = GetBuiltInMirrorDelta(boneName, mirrorBoneName, transform, templateBones, out var mirrorEdited);
+        var isAsymmetric = mirrorDelta > 0.035f || (mirrorEdited.HasValue && mirrorEdited.Value != isEdited);
+
+        var supportLabel = GetTemplateHealthSupportLabel(boneName, isUnknown, isIvcs, metadata);
+        var isRisky = isMissingLiveBone
+                      || isUnknown
+                      || isMotionRisk
+                      || string.Equals(metadata?.SupportClass, "Risky", StringComparison.OrdinalIgnoreCase)
+                      || (isUnknown && string.Equals(metadata?.SupportClass, "ManualOnly", StringComparison.OrdinalIgnoreCase));
+
+        var note = BuildTemplateHealthNote(
+            metadata,
+            isMissingLiveBone,
+            isUnknown,
+            isIvcs,
+            isMotionRisk,
+            mirrorDelta,
+            mirrorBoneName);
+
+        return new TemplateHealthDeltaRow(
+            boneName,
+            _boneMetadataService.GetDisplayName(boneName),
+            family.ToString(),
+            supportLabel,
+            inTemplate,
+            inLiveSkeleton,
+            isEdited,
+            isMissingLiveBone,
+            isUnknown,
+            isIvcs,
+            isRisky,
+            isAsymmetric,
+            transform?.LockState ?? BoneLockState.Unlocked,
+            pinnedAxisCount,
+            isPropagated,
+            positionDelta,
+            rotationDelta,
+            scaleDelta,
+            childScaleDelta,
+            mirrorBoneName,
+            mirrorDelta,
+            FormatProtectionSummary(transform, pinnedAxisCount),
+            FormatPropagationSummary(transform),
+            note);
+    }
+
+    private static TemplateHealthReport BuildEmptyTemplateHealthReport(int signature)
+        => new(new TemplateHealthSummary(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), new ProportionDashboardReport("Balanced", "No template data was available.", []), [], signature);
+
+    private int BuildTemplateHealthSignature(
+        IReadOnlyDictionary<string, BoneTransform> templateBones,
+        IReadOnlySet<string> liveBoneNames)
+    {
+        var hash = new HashCode();
+        foreach (var bone in templateBones.OrderBy(kvp => kvp.Key, StringComparer.Ordinal))
+        {
+            hash.Add(bone.Key, StringComparer.Ordinal);
+            hash.Add(bone.Value.Translation);
+            hash.Add(bone.Value.Rotation);
+            hash.Add(bone.Value.Scaling);
+            hash.Add(bone.Value.ChildScaling);
+            hash.Add(bone.Value.ChildScalingIndependent);
+            hash.Add(bone.Value.PropagateTranslation);
+            hash.Add(bone.Value.PropagateRotation);
+            hash.Add(bone.Value.PropagateScale);
+            hash.Add(bone.Value.PropagationFalloff);
+            hash.Add(bone.Value.LockState);
+            hash.Add(bone.Value.PinX);
+            hash.Add(bone.Value.PinY);
+            hash.Add(bone.Value.PinZ);
+        }
+
+        foreach (var boneName in liveBoneNames.OrderBy(name => name, StringComparer.Ordinal))
+            hash.Add(boneName, StringComparer.Ordinal);
+
+        hash.Add(_boneMetadataService.LoadedPackCount);
+        hash.Add(_boneMetadataService.LoadedEntryCount);
+        return hash.ToHashCode();
+    }
+
+    private static float? GetBuiltInMirrorDelta(
+        string boneName,
+        string? mirrorBoneName,
+        BoneTransform? transform,
+        IReadOnlyDictionary<string, BoneTransform> templateBones,
+        out bool? mirrorEdited)
+    {
+        mirrorEdited = null;
+        if (string.IsNullOrWhiteSpace(mirrorBoneName) ||
+            BoneData.GetBoneFamily(boneName) == BoneData.BoneFamily.Unknown ||
+            BoneData.GetBoneFamily(mirrorBoneName) == BoneData.BoneFamily.Unknown)
+        {
+            return null;
+        }
+
+        templateBones.TryGetValue(mirrorBoneName, out var mirrorTransform);
+        mirrorEdited = mirrorTransform?.IsEdited(true) == true;
+        if (transform == null && mirrorTransform == null)
+            return 0f;
+
+        transform ??= new BoneTransform();
+        mirrorTransform ??= new BoneTransform();
+
+        return MathF.Max(
+            MathF.Max(MaxAxisDelta(transform.Scaling, mirrorTransform.Scaling), MaxAxisDelta(transform.ChildScaling, mirrorTransform.ChildScaling)),
+            MathF.Max(
+                MathF.Abs(VectorMagnitude(transform.Translation) - VectorMagnitude(mirrorTransform.Translation)),
+                MathF.Abs(VectorMagnitude(transform.Rotation) - VectorMagnitude(mirrorTransform.Rotation))));
+    }
+
+    private static string GetTemplateHealthSupportLabel(
+        string boneName,
+        bool isUnknown,
+        bool isIvcs,
+        LocalBoneMetadataEntry? metadata)
+    {
+        if (isUnknown)
+            return metadata?.SupportLabel ?? "Unknown/custom / ManualOnly";
+
+        if (isIvcs)
+            return "Built-in IVCS/modded";
+
+        return BoneData.GetBoneFamily(boneName) == BoneData.BoneFamily.Equipment
+            ? "Built-in equipment/helper"
+            : "Built-in supported";
+    }
+
+    private static string BuildTemplateHealthNote(
+        LocalBoneMetadataEntry? metadata,
+        bool isMissingLiveBone,
+        bool isUnknown,
+        bool isIvcs,
+        bool isMotionRisk,
+        float? mirrorDelta,
+        string? mirrorBoneName)
+    {
+        var notes = new List<string>();
+        if (isMissingLiveBone)
+            notes.Add("Edited but missing from the current live preview skeleton.");
+        if (isUnknown)
+            notes.Add(metadata?.EffectiveRiskNote ?? "Unknown/custom bone; manual/experimental only.");
+        else if (isIvcs)
+            notes.Add("Built-in IVCS/modded bone; check compatible body and clothing weights.");
+        if (isMotionRisk)
+            notes.Add("Large position/rotation edit may be motion-risky.");
+        if (mirrorDelta > 0.035f && !string.IsNullOrWhiteSpace(mirrorBoneName))
+            notes.Add($"Built-in mirror delta vs {mirrorBoneName}: {mirrorDelta.Value:0.###}.");
+        if (!string.IsNullOrWhiteSpace(metadata?.PackName))
+            notes.Add($"Metadata pack: {metadata.PackName}.");
+
+        return notes.Count == 0 ? "No notable advisory flags." : string.Join(" ", notes);
+    }
+
+    private static ProportionDashboardReport BuildProportionDashboard(
+        IReadOnlyDictionary<string, BoneTransform> templateBones,
+        IReadOnlyList<TemplateHealthDeltaRow> rows)
+    {
+        var items = new List<ProportionDashboardItem>
+        {
+            BuildRatioItem(
+                "Shoulder-to-waist",
+                AverageKnownScale(templateBones, "n_hkata_l", "n_hkata_r", "j_sako_l", "j_sako_r"),
+                AverageKnownScale(templateBones, "j_kosi", "j_sebo_a"),
+                "Broad upper-frame transform ratio compared with waist/spine support."),
+            BuildRatioItem(
+                "Hip-to-waist",
+                AverageKnownScale(templateBones, "j_asi_a_l", "j_asi_a_r", "iv_shiri_l", "iv_shiri_r"),
+                AverageKnownScale(templateBones, "j_kosi", "j_sebo_a"),
+                "Lower-frame transform ratio compared with waist/spine support."),
+            BuildRatioItem(
+                "Thigh-to-calf",
+                AverageKnownScale(templateBones, "j_asi_a_l", "j_asi_a_r"),
+                AverageKnownScale(templateBones, "j_asi_c_l", "j_asi_c_r"),
+                "Leg taper signal from upper-leg to lower-leg scale transforms."),
+            BuildRatioItem(
+                "Upper-arm-to-forearm",
+                AverageKnownScale(templateBones, "j_ude_a_l", "j_ude_a_r"),
+                AverageKnownScale(templateBones, "j_ude_b_l", "j_ude_b_r"),
+                "Arm taper signal from upper-arm to forearm scale transforms."),
+            BuildPairDeltaItem(
+                "Chest L/R delta",
+                PairScaleDelta(templateBones, "j_mune_l", "j_mune_r"),
+                "Left/right chest scale difference from known built-in bones."),
+            BuildPairDeltaItem(
+                "Arm L/R delta",
+                PairScaleDelta(templateBones, "j_ude_a_l", "j_ude_a_r"),
+                "Left/right upper-arm scale difference from known built-in bones."),
+            BuildPairDeltaItem(
+                "Leg L/R delta",
+                PairScaleDelta(templateBones, "j_asi_a_l", "j_asi_a_r"),
+                "Left/right upper-leg scale difference from known built-in bones."),
+            BuildCountItem(
+                "Extreme scale outliers",
+                rows.Count(row => row.ScaleDelta > 0.35f || row.ChildScaleDelta > 0.35f),
+                "Known/edited rows with large scale or child-scale deltas."),
+            BuildCountItem(
+                "Motion-risky edits",
+                rows.Count(row => row.IsEdited && (row.PositionDelta > 0.20f || row.RotationDelta > 12f)),
+                "Position or rotation edits large enough to deserve animation/pose review.")
+        };
+
+        var unknownEdited = rows.Count(row => row.IsEdited && row.IsUnknown);
+        if (unknownEdited > 0)
+        {
+            items.Add(new ProportionDashboardItem(
+                "Unknown bone caution",
+                unknownEdited.ToString(),
+                "Review",
+                ProportionSeverity.Review,
+                "Unknown/custom edited bones may affect perceived proportions, but this dashboard does not trust them for ratio calculations."));
+        }
+
+        var highestSeverity = items.Count == 0 ? ProportionSeverity.Balanced : items.Max(item => item.Severity);
+        var summary = highestSeverity switch
+        {
+            ProportionSeverity.Balanced => "No strong transform-ratio flags detected.",
+            ProportionSeverity.Mild => "A few mild transform-ratio differences are present.",
+            ProportionSeverity.Strong => "One or more transform-ratio signals are strong enough to review.",
+            ProportionSeverity.Extreme => "Extreme transform-ratio or outlier signals were detected.",
+            _ => "Review advisory notes before treating the ratios as meaningful."
+        };
+
+        return new ProportionDashboardReport(highestSeverity.ToString(), summary, items);
+    }
+
+    private static ProportionDashboardItem BuildRatioItem(string label, float numerator, float denominator, string note)
+    {
+        var ratio = denominator <= 0.0001f ? 1f : numerator / denominator;
+        var severity = ClassifyRatioSeverity(ratio);
+        return new ProportionDashboardItem(label, ratio.ToString("0.00"), SeverityLabel(severity), severity, note);
+    }
+
+    private static ProportionDashboardItem BuildPairDeltaItem(string label, float delta, string note)
+    {
+        var severity = ClassifyDeltaSeverity(delta);
+        return new ProportionDashboardItem(label, delta.ToString("0.###"), SeverityLabel(severity), severity, note);
+    }
+
+    private static ProportionDashboardItem BuildCountItem(string label, int count, string note)
+    {
+        var severity = count switch
+        {
+            0 => ProportionSeverity.Balanced,
+            <= 2 => ProportionSeverity.Mild,
+            <= 5 => ProportionSeverity.Strong,
+            _ => ProportionSeverity.Extreme
+        };
+        return new ProportionDashboardItem(label, count.ToString(), SeverityLabel(severity), severity, note);
+    }
+
+    private static float AverageKnownScale(IReadOnlyDictionary<string, BoneTransform> templateBones, params string[] boneNames)
+    {
+        if (boneNames.Length == 0)
+            return 1f;
+
+        var sum = 0f;
+        foreach (var boneName in boneNames)
+            sum += GetKnownUniformScale(templateBones, boneName);
+
+        return sum / boneNames.Length;
+    }
+
+    private static float PairScaleDelta(IReadOnlyDictionary<string, BoneTransform> templateBones, string leftBone, string rightBone)
+        => MathF.Abs(GetKnownUniformScale(templateBones, leftBone) - GetKnownUniformScale(templateBones, rightBone));
+
+    private static float GetKnownUniformScale(IReadOnlyDictionary<string, BoneTransform> templateBones, string boneName)
+    {
+        if (BoneData.GetBoneFamily(boneName) == BoneData.BoneFamily.Unknown)
+            return 1f;
+
+        return templateBones.TryGetValue(boneName, out var transform)
+            ? (transform.Scaling.X + transform.Scaling.Y + transform.Scaling.Z) / 3f
+            : 1f;
+    }
+
+    private static ProportionSeverity ClassifyRatioSeverity(float ratio)
+    {
+        var delta = MathF.Abs(ratio - 1f);
+        return delta switch
+        {
+            < 0.06f => ProportionSeverity.Balanced,
+            < 0.14f => ProportionSeverity.Mild,
+            < 0.28f => ProportionSeverity.Strong,
+            _ => ProportionSeverity.Extreme
+        };
+    }
+
+    private static ProportionSeverity ClassifyDeltaSeverity(float delta)
+        => delta switch
+        {
+            < 0.035f => ProportionSeverity.Balanced,
+            < 0.09f => ProportionSeverity.Mild,
+            < 0.18f => ProportionSeverity.Strong,
+            _ => ProportionSeverity.Extreme
+        };
+
+    private static string SeverityLabel(ProportionSeverity severity)
+        => severity switch
+        {
+            ProportionSeverity.Balanced => "Balanced",
+            ProportionSeverity.Mild => "Mild",
+            ProportionSeverity.Strong => "Strong",
+            ProportionSeverity.Extreme => "Extreme",
+            _ => "Review"
+        };
+
+    private static Vector4 GetProportionSeverityColor(ProportionSeverity severity)
+        => severity switch
+        {
+            ProportionSeverity.Balanced => Constants.Colors.Active,
+            ProportionSeverity.Mild => Constants.Colors.Info,
+            ProportionSeverity.Strong => Constants.Colors.Warning,
+            ProportionSeverity.Extreme => Constants.Colors.Warning,
+            _ => Constants.Colors.Warning
+        };
+
+    private static string FormatProtectionSummary(BoneTransform? transform, int pinnedAxisCount)
+    {
+        if (transform == null)
+            return "-";
+
+        var pins = pinnedAxisCount == 0 ? string.Empty : $" / {pinnedAxisCount} pin{(pinnedAxisCount == 1 ? string.Empty : "s")}";
+        return transform.LockState == BoneLockState.Unlocked && pinnedAxisCount == 0
+            ? "-"
+            : $"{transform.LockState}{pins}";
+    }
+
+    private static string FormatPropagationSummary(BoneTransform? transform)
+    {
+        if (transform == null || !(transform.PropagateTranslation || transform.PropagateRotation || transform.PropagateScale))
+            return "-";
+
+        var flags = string.Concat(
+            transform.PropagateTranslation ? "P" : string.Empty,
+            transform.PropagateRotation ? "R" : string.Empty,
+            transform.PropagateScale ? "S" : string.Empty);
+        return $"{flags} {transform.PropagationFalloff:0.##}";
+    }
+
+    private static string FormatDelta(float value)
+        => MathF.Abs(value) < 0.0005f ? "-" : value.ToString("0.###");
+
+    private static float VectorMagnitude(Vector3 value)
+        => MathF.Sqrt((value.X * value.X) + (value.Y * value.Y) + (value.Z * value.Z));
+
+    private static float MaxAxisDelta(Vector3 value, Vector3 baseline)
+        => MathF.Max(
+            MathF.Abs(value.X - baseline.X),
+            MathF.Max(MathF.Abs(value.Y - baseline.Y), MathF.Abs(value.Z - baseline.Z)));
+
+    private void DrawUnknownBoneWorkbench()
+    {
+        var armature = GetPrimaryEditorArmature();
+        var liveBoneNames = armature?.GetAllBones()
+            .Select(b => b.BoneName)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(BoneData.GetBoneRanking)
+            .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToArray() ?? Array.Empty<string>();
+
+        var unknownBones = liveBoneNames
+            .Where(name => BoneData.GetBoneFamily(name) == BoneData.BoneFamily.Unknown)
+            .ToArray();
+
+        if (!ImGui.CollapsingHeader($"Unknown Bone Workbench ({unknownBones.Length})"))
+            return;
+
+        ImGui.PushStyleColor(ImGuiCol.Text, Constants.Colors.Warning);
+        ImGuiUtil.TextWrapped("Unknown/custom bones are manual and experimental. Local metadata can improve labels, search aliases, and notes, but it does not make these bones trusted for mirroring, propagation safety, parent changes, guardrails, BIW, or advanced automation.");
+        ImGui.PopStyleColor();
+
+        ImGui.TextDisabled($"Metadata folder: {_boneMetadataService.MetadataDirectory}");
+        ImGui.TextDisabled($"Metadata packs: {_boneMetadataService.LoadedPackCount} loaded, {_boneMetadataService.LoadedEntryCount} entr{(_boneMetadataService.LoadedEntryCount == 1 ? "y" : "ies")} available.");
+
+        if (ImGui.Button("Reload metadata packs"))
+        {
+            _boneMetadataService.Reload();
+            SetUnknownWorkbenchStatus("Reloaded local bone metadata packs.");
+            _templateHealthReport = null;
+        }
+        CtrlHelper.AddHoverText("Reloads local JSON metadata packs from the bone_metadata folder. This only affects editor display, search, and explanations.");
+
+        ImGui.SameLine();
+        using (ImRaii.Disabled(unknownBones.Length == 0))
+        {
+            if (ImGui.Button("Copy unknown bone names"))
+                TryCopyUnknownWorkbenchText(
+                    string.Join(Environment.NewLine, unknownBones),
+                    $"Copied {unknownBones.Length} unknown bone name{(unknownBones.Length == 1 ? string.Empty : "s")} to clipboard.");
+        }
+        CtrlHelper.AddHoverText("Copies the currently detected unknown/custom live bone code names to the clipboard.");
+
+        ImGui.SameLine();
+        using (ImRaii.Disabled(unknownBones.Length == 0))
+        {
+            if (ImGui.Button("Copy starter metadata draft"))
+                TryCopyUnknownWorkbenchText(
+                    _boneMetadataService.CreateStarterPackDraft(unknownBones),
+                    "Copied a starter local metadata pack draft to clipboard.");
+        }
+        CtrlHelper.AddHoverText("Copies a schemaVersion 1 metadata pack draft for the detected unknown/custom bones. Draft entries remain manual-only.");
+
+        ImGui.SameLine();
+        using (ImRaii.Disabled(unknownBones.Length == 0))
+        {
+            if (ImGui.Button("Save starter draft"))
+            {
+                try
+                {
+                    var path = _boneMetadataService.SaveStarterPackDraft(unknownBones);
+                    _boneMetadataService.Reload();
+                    SetUnknownWorkbenchStatus($"Saved starter metadata draft: {path}");
+                    _templateHealthReport = null;
+                }
+                catch (Exception ex)
+                {
+                    SetUnknownWorkbenchStatus($"Could not save starter metadata draft: {ex.Message}");
+                    _logger.Error($"Could not save starter metadata draft: {ex}");
+                    _popupSystem.ShowPopup(PopupSystem.Messages.ActionError);
+                }
+            }
+        }
+        CtrlHelper.AddHoverText("Writes a starter JSON metadata pack into the local bone_metadata folder and reloads metadata packs.");
+
+        ClearExpiredUnknownWorkbenchStatus();
+        if (!string.IsNullOrWhiteSpace(_unknownWorkbenchStatus))
+            ImGuiUtil.TextWrapped(_unknownWorkbenchStatus);
+
+        DrawMetadataPackStatus();
+
+        ImGui.SetNextItemWidth(MathF.Min(320 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
+        ImGui.InputTextWithHint("##UnknownBoneSearch", "Filter unknown bones...", ref _unknownBoneSearch, 64);
+        CtrlHelper.AddHoverText("Filters by code name, metadata display name, support class, family, notes, or aliases.");
+
+        var templateBones = _editorManager.CurrentlyEditedTemplate?.Bones ?? _templateFileSystemSelector.Selected?.Bones;
+        var rows = unknownBones
+            .Where(name => string.IsNullOrWhiteSpace(_unknownBoneSearch) ||
+                           name.Contains(_unknownBoneSearch.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                           _boneMetadataService.MatchesSearch(name, _unknownBoneSearch))
+            .Select(name =>
+            {
+                BoneTransform? transform = null;
+                templateBones?.TryGetValue(name, out transform);
+                var inTemplate = transform != null;
+                var edited = transform?.IsEdited(true) == true;
+                _boneMetadataService.TryGetEntry(name, out var metadata);
+                return new UnknownBoneWorkbenchRow(
+                    name,
+                    _boneMetadataService.GetDisplayName(name),
+                    _boneMetadataService.GetSupportLabel(name),
+                    inTemplate,
+                    edited,
+                    metadata?.PackName,
+                    _boneMetadataService.GetRiskNote(name));
+            })
+            .ToList();
+
+        if (unknownBones.Length == 0)
+        {
+            ImGui.TextDisabled(armature?.IsBuilt == true
+                ? "No unknown/custom live bones are currently detected for the preview actor."
+                : "Waiting for a live preview armature before unknown/custom bones can be listed.");
+            return;
+        }
+
+        using var table = ImRaii.Table("UnknownBoneWorkbenchTable", 5, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp);
+        if (!table)
+            return;
+
+        ImGui.TableSetupColumn("Bone code", ImGuiTableColumnFlags.WidthFixed, 190 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Label", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Support", ImGuiTableColumnFlags.WidthFixed, 180 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Template", ImGuiTableColumnFlags.WidthFixed, 120 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Notes", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableHeadersRow();
+
+        foreach (var row in rows)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(row.BoneName);
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(row.DisplayName);
+
+            ImGui.TableNextColumn();
+            ImGui.TextWrapped(row.SupportLabel);
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(row.Edited
+                ? "Edited"
+                : row.InTemplate
+                    ? "In template"
+                    : "Live only");
+
+            ImGui.TableNextColumn();
+            ImGuiUtil.TextWrapped(string.IsNullOrWhiteSpace(row.PackName)
+                ? row.RiskNote
+                : $"{row.RiskNote} Pack: {row.PackName}.");
+        }
+    }
+
+    private void DrawMetadataPackStatus()
+    {
+        if (!ImGui.TreeNode("Metadata pack status"))
+            return;
+
+        if (_boneMetadataService.PackStatuses.Count == 0)
+        {
+            ImGui.TextDisabled("No local metadata packs found yet. Add schemaVersion 1 JSON files to the bone_metadata folder.");
+            ImGui.TreePop();
+            return;
+        }
+
+        foreach (var status in _boneMetadataService.PackStatuses)
+        {
+            ImGui.BulletText(status.Summary);
+            if (!string.IsNullOrWhiteSpace(status.MessageText))
+            {
+                ImGui.SameLine();
+                ImGui.TextDisabled(status.MessageText);
+            }
+        }
+
+        ImGui.TreePop();
+    }
+
+    private void TryCopyUnknownWorkbenchText(string text, string successStatus)
+    {
+        try
+        {
+            ImUtf8.SetClipboardText(text);
+            SetUnknownWorkbenchStatus(successStatus);
+            _popupSystem.ShowPopup(PopupSystem.Messages.IPCCopiedToClipboard);
+        }
+        catch (Exception ex)
+        {
+            SetUnknownWorkbenchStatus($"Could not copy Unknown Bone Workbench text: {ex.Message}");
+            _logger.Error($"Could not copy Unknown Bone Workbench text: {ex}");
+            _popupSystem.ShowPopup(PopupSystem.Messages.ActionError);
+        }
+    }
+
+    private void SetUnknownWorkbenchStatus(string message)
+    {
+        _unknownWorkbenchStatus = message;
+        _unknownWorkbenchStatusAtMs = Environment.TickCount64;
+    }
+
+    private void ClearExpiredUnknownWorkbenchStatus()
+    {
+        if (string.IsNullOrWhiteSpace(_unknownWorkbenchStatus))
+            return;
+
+        if (Environment.TickCount64 - _unknownWorkbenchStatusAtMs <= UnknownWorkbenchStatusLifetimeMs)
+            return;
+
+        _unknownWorkbenchStatus = null;
     }
 
     private static void DrawWrappedBullet(string text)
@@ -1042,7 +2349,7 @@ public class BoneEditorPanel
     private void CompleteBoneEditor(BoneData.BoneFamily boneFamily, EditRowParams bone)
     {
         var codename = bone.BoneCodeName;
-        var displayName = bone.BoneDisplayName;
+        var displayName = _boneMetadataService.GetDisplayName(codename);
         var transform = new BoneTransform(bone.Transform);
 
         var newVector = _editingAttribute switch
@@ -1235,7 +2542,7 @@ public class BoneEditorPanel
             ImGuiUtil.PrintIcon(FontAwesomeIcon.Wrench);
             ImGui.PopStyleColor();
             CtrlHelper.AddHoverText(isUnknownBone
-                ? "Unknown/custom bone detected.\r\nThe plugin shows this bone for manual experimentation, but it is not trusted for mirroring, propagation safety, or advanced automation by default.\r\nMovement depends on the active skeleton and whether the body or clothing mesh is weighted to this bone."
+                ? $"Unknown/custom bone detected.\r\nThe plugin shows this bone for manual experimentation, but it is not trusted for mirroring, propagation safety, guardrails, BIW, or advanced automation by default.\r\nMovement depends on the active skeleton and whether the body or clothing mesh is weighted to this bone.\r\n\r\nMetadata note: {_boneMetadataService.GetRiskNote(codename)}"
                 : "Known IVCS/modded skeleton bone.\r\nThis needs a compatible skeleton, body, and clothing weights designed for the bone.\r\nEven compatible outfits may not support every modded bone, so test body and clothing behavior separately.");
             ImGui.SameLine();
         }
@@ -1604,4 +2911,82 @@ internal struct EditRowParams
         Transform = tr;
         Basis = null;
     }
+}
+
+internal sealed record UnknownBoneWorkbenchRow(
+    string BoneName,
+    string DisplayName,
+    string SupportLabel,
+    bool InTemplate,
+    bool Edited,
+    string? PackName,
+    string RiskNote);
+
+internal sealed record TemplateHealthReport(
+    TemplateHealthSummary Summary,
+    ProportionDashboardReport ProportionDashboard,
+    IReadOnlyList<TemplateHealthDeltaRow> Rows,
+    int Signature);
+
+internal sealed record TemplateHealthSummary(
+    int EditedBoneCount,
+    int MissingEditedBoneCount,
+    int UnknownEditedBoneCount,
+    int RiskyEditedBoneCount,
+    int LockedRowCount,
+    int PinnedAxisCount,
+    int PropagationCount,
+    int LeftRightAsymmetryCount,
+    int LiveBoneCount,
+    int MetadataPackCount,
+    int MetadataEntryCount);
+
+internal sealed record TemplateHealthDeltaRow(
+    string BoneName,
+    string DisplayName,
+    string Family,
+    string SupportLabel,
+    bool InTemplate,
+    bool InLiveSkeleton,
+    bool IsEdited,
+    bool IsMissingLiveBone,
+    bool IsUnknown,
+    bool IsIvcs,
+    bool IsRisky,
+    bool IsAsymmetric,
+    BoneLockState LockState,
+    int PinnedAxisCount,
+    bool IsPropagated,
+    float PositionDelta,
+    float RotationDelta,
+    float ScaleDelta,
+    float ChildScaleDelta,
+    string? MirrorBoneName,
+    float? MirrorDelta,
+    string ProtectionSummary,
+    string PropagationSummary,
+    string Note)
+{
+    public bool IsLockedOrPinned => LockState != BoneLockState.Unlocked || PinnedAxisCount > 0;
+}
+
+internal sealed record ProportionDashboardReport(
+    string OverallStatus,
+    string Summary,
+    IReadOnlyList<ProportionDashboardItem> Items);
+
+internal sealed record ProportionDashboardItem(
+    string Label,
+    string Value,
+    string Status,
+    ProportionSeverity Severity,
+    string Note);
+
+internal enum ProportionSeverity
+{
+    Balanced = 0,
+    Mild = 1,
+    Strong = 2,
+    Extreme = 3,
+    Review = 4
 }

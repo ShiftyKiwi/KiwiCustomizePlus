@@ -49,6 +49,7 @@ public class CPlusChangeLog
         Add2_1_3_0(Changelog);
         Add2_1_10_0(Changelog);
         Add2_1_10_1(Changelog);
+        Add3_0_0(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -60,6 +61,22 @@ public class CPlusChangeLog
         _config.ChangelogSettings.ChangeLogDisplayType = type;
         _config.Save();
     }
+
+    private static void Add3_0_0(Changelog log)
+        => log.NextVersion("Version 3.0.0")
+        .RegisterHighlight("Added Template Editor advisory tools for safer work with unknown and custom bones.")
+        .RegisterEntry("Local Bone Metadata Packs can provide advisory labels, search aliases, notes, and support hints for unknown/custom bones.", 1)
+        .RegisterEntry("Added the Unknown Bone Workbench for inspecting unknown bones and creating starter metadata drafts.", 1)
+        .RegisterEntry("Added read-only Template Health / Delta Details and a read-only Proportion Dashboard.", 1)
+        .RegisterHighlight("Added Semantic Body Goals and built-in Shape Recipes as conservative creative authoring helpers.")
+        .RegisterEntry("Semantic Body Goals preview changes first, then apply ordinary scale-only bone transform edits through the normal editor path.", 1)
+        .RegisterEntry("Shape Recipes only load semantic slider values until you preview and apply them.", 1)
+        .RegisterHighlight("Added Preview with Profile Context so other assigned templates can remain visible while editing one template.")
+        .RegisterEntry("Profile context templates are visual-only context; only the currently edited template is mutated or saved.", 1)
+        .RegisterImportant("Metadata remains advisory only and does not grant runtime trust, mirroring, propagation, guardrails, BIW, automation, or transform write authority.")
+        .RegisterImportant("This release does not add automatic correction, automatic balancing, generated fix suggestions, or runtime semantic solving.")
+        .RegisterImportant("Runtime transform behavior, Bone Importance Weighting, skeleton hardening, IPC/API, sync behavior, and plugin identity are unchanged.");
+
     private static void Add2_1_10_1(Changelog log)
         => log.NextVersion("Version 2.1.10.1")
         .RegisterEntry("Duplicating templates now preserves row locks and pinned scale axes, including rows that are locked without other transform edits.");

@@ -105,6 +105,8 @@ public class PluginConfiguration : IPluginConfiguration, ISavable
 
         public bool SetPreviewToCurrentCharacterOnLogin { get; set; } = false;
 
+        public bool PreviewWithProfileContext { get; set; } = false;
+
         public HashSet<string> FavoriteBones { get; set; } = new();
     }
 

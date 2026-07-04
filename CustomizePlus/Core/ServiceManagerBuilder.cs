@@ -158,6 +158,8 @@ public static class ServiceManagerBuilder
             .AddSingleton<SaveService>()
             .AddSingleton<FilenameService>()
             .AddSingleton<BackupService>()
+            .AddSingleton<LocalBoneMetadataService>()
+            .AddSingleton<SemanticBodyGoalService>()
             .AddSingleton<FrameworkManager>()
             .AddSingleton<AdvancedBodyScalingBoneImportanceService>()
             .AddSingleton<SupportLogBuilderService>()
