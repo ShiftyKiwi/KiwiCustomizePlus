@@ -5,7 +5,7 @@
   "Description": "A plugin that allows you to customize your character beyond FFXIV limitations by directly editing bone parameters.",
   "InternalName": "CustomizePlus",
   "ApplicableVersion": "any",
-  "AssemblyVersion": "3.0.2.0",
+  "AssemblyVersion": "3.0.3.0",
   "DalamudApiLevel": 15,
   "TestingDalamudApiLevel": 15,
   "Tags": [

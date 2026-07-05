@@ -78,8 +78,11 @@ public class BoneEditorPanel
     private string? _pendingImportText;
     private string? _lastGroupImportStatus;
     private string? _unknownWorkbenchStatus;
+    private string? _pendingMetadataPackDeleteFileName;
+    private string? _pendingMetadataPackDeleteLabel;
     private TemplateHealthReport? _templateHealthReport;
     private bool _lastGroupImportFailed;
+    private bool _openMetadataPackDeletePopup;
     private long _lastGroupImportStatusAtMs;
     private long _unknownWorkbenchStatusAtMs;
     private string _unknownBoneSearch = string.Empty;
@@ -247,7 +250,8 @@ public class BoneEditorPanel
             DrawBoneEditorToolbar();
             ImGui.Spacing();
 
-            using (var table = ImRaii.Table($"BoneEditorContents", 6, ImGuiTableFlags.BordersOuterH | ImGuiTableFlags.BordersV | ImGuiTableFlags.ScrollY))
+            var boneTableHeight = MathF.Max(220 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().Y);
+            using (var table = ImRaii.Table($"BoneEditorContents", 6, ImGuiTableFlags.BordersOuterH | ImGuiTableFlags.BordersV | ImGuiTableFlags.ScrollY, new Vector2(0, boneTableHeight)))
             {
                 if (!table)
                     return;
@@ -1023,9 +1027,10 @@ public class BoneEditorPanel
             .ThenBy(r => r.BoneName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        ImGui.TextDisabled($"Showing {rows.Count} of {report.Rows.Count} delta row{(report.Rows.Count == 1 ? string.Empty : "s")}.");
+        ImGui.TextDisabled($"Showing {rows.Count} of {report.Rows.Count} delta row{(report.Rows.Count == 1 ? string.Empty : "s")}. Scroll the table for long reports.");
 
-        using (var table = ImRaii.Table("TemplateHealthDeltaTable", 9, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        var tableHeight = GetHelperScrollHeight(rows.Count, 260, 150);
+        using (var table = ImRaii.Table("TemplateHealthDeltaTable", 9, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.ScrollY, new Vector2(0, tableHeight)))
         {
             if (!table)
                 return;
@@ -1437,43 +1442,46 @@ public class BoneEditorPanel
         if (!ImGui.TreeNode("Proportion Dashboard"))
             return;
 
-        ImGuiUtil.TextWrapped("This dashboard uses bone transform ratios, not true mesh measurements. It is an advisory styling/debug tool.");
-        ImGui.TextDisabled($"Overall: {dashboard.OverallStatus}. {dashboard.Summary}");
-
-        using (var table = ImRaii.Table("ProportionDashboardTable", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        try
         {
-            if (!table)
+            ImGuiUtil.TextWrapped("This dashboard uses bone transform ratios, not true mesh measurements. It is an advisory styling/debug tool.");
+            ImGui.TextDisabled($"Overall: {dashboard.OverallStatus}. {dashboard.Summary}");
+
+            var tableHeight = GetHelperScrollHeight(dashboard.Items.Count, 190, 110, 7);
+            using (var table = ImRaii.Table("ProportionDashboardTable", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.ScrollY, new Vector2(0, tableHeight)))
             {
-                ImGui.TreePop();
-                return;
-            }
+                if (!table)
+                    return;
 
-            ImGui.TableSetupColumn("Signal", ImGuiTableColumnFlags.WidthFixed, 190 * ImGuiHelpers.GlobalScale);
-            ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthFixed, 85 * ImGuiHelpers.GlobalScale);
-            ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 90 * ImGuiHelpers.GlobalScale);
-            ImGui.TableSetupColumn("Note", ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableHeadersRow();
+                ImGui.TableSetupColumn("Signal", ImGuiTableColumnFlags.WidthFixed, 190 * ImGuiHelpers.GlobalScale);
+                ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthFixed, 85 * ImGuiHelpers.GlobalScale);
+                ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 90 * ImGuiHelpers.GlobalScale);
+                ImGui.TableSetupColumn("Note", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableHeadersRow();
 
-            foreach (var item in dashboard.Items)
-            {
-                ImGui.TableNextRow();
-                ImGui.TableNextColumn();
-                ImGui.TextUnformatted(item.Label);
+                foreach (var item in dashboard.Items)
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(item.Label);
 
-                ImGui.TableNextColumn();
-                ImGui.TextUnformatted(item.Value);
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(item.Value);
 
-                ImGui.TableNextColumn();
-                ImGui.PushStyleColor(ImGuiCol.Text, GetProportionSeverityColor(item.Severity));
-                ImGui.TextUnformatted(item.Status);
-                ImGui.PopStyleColor();
+                    ImGui.TableNextColumn();
+                    ImGui.PushStyleColor(ImGuiCol.Text, GetProportionSeverityColor(item.Severity));
+                    ImGui.TextUnformatted(item.Status);
+                    ImGui.PopStyleColor();
 
-                ImGui.TableNextColumn();
-                ImGuiUtil.TextWrapped(item.Note);
+                    ImGui.TableNextColumn();
+                    ImGuiUtil.TextWrapped(item.Note);
+                }
             }
         }
-
-        ImGui.TreePop();
+        finally
+        {
+            ImGui.TreePop();
+        }
     }
 
     private void DrawTemplateHealthFilters()
@@ -1959,7 +1967,7 @@ public class BoneEditorPanel
         ImGui.PopStyleColor();
 
         ImGui.TextDisabled($"Metadata folder: {_boneMetadataService.MetadataDirectory}");
-        ImGui.TextDisabled($"Metadata packs: {_boneMetadataService.LoadedPackCount} loaded, {_boneMetadataService.LoadedEntryCount} entr{(_boneMetadataService.LoadedEntryCount == 1 ? "y" : "ies")} available.");
+        ImGui.TextDisabled($"Metadata packs: {_boneMetadataService.LoadedPackCount}/{_boneMetadataService.TotalPackCount} loaded, {_boneMetadataService.LoadedEntryCount} entr{(_boneMetadataService.LoadedEntryCount == 1 ? "y" : "ies")} available, {_boneMetadataService.IgnoredEntryCount} ignored.");
 
         if (ImGui.Button("Reload metadata packs"))
         {
@@ -1968,6 +1976,11 @@ public class BoneEditorPanel
             _templateHealthReport = null;
         }
         CtrlHelper.AddHoverText("Reloads local JSON metadata packs from the bone_metadata folder. This only affects editor display, search, and explanations.");
+
+        ImGui.SameLine();
+        if (ImGui.Button("Copy metadata folder path"))
+            TryCopyUnknownWorkbenchText(_boneMetadataService.MetadataDirectory, "Copied local bone metadata folder path to clipboard.");
+        CtrlHelper.AddHoverText("Copies the local bone_metadata folder path so you can inspect or back up metadata packs outside the plugin.");
 
         ImGui.SameLine();
         using (ImRaii.Disabled(unknownBones.Length == 0))
@@ -2016,6 +2029,7 @@ public class BoneEditorPanel
             ImGuiUtil.TextWrapped(_unknownWorkbenchStatus);
 
         DrawMetadataPackStatus();
+        DrawMetadataPackDeleteConfirmationPopup();
 
         ImGui.SetNextItemWidth(MathF.Min(320 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
         ImGui.InputTextWithHint("##UnknownBoneSearch", "Filter unknown bones...", ref _unknownBoneSearch, 64);
@@ -2052,7 +2066,8 @@ public class BoneEditorPanel
             return;
         }
 
-        using var table = ImRaii.Table("UnknownBoneWorkbenchTable", 5, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp);
+        var tableHeight = GetHelperScrollHeight(rows.Count, 260, 140);
+        using var table = ImRaii.Table("UnknownBoneWorkbenchTable", 5, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.ScrollY, new Vector2(0, tableHeight));
         if (!table)
             return;
 
@@ -2087,6 +2102,7 @@ public class BoneEditorPanel
                 ? row.RiskNote
                 : $"{row.RiskNote} Pack: {row.PackName}.");
         }
+
     }
 
     private void DrawMetadataPackStatus()
@@ -2094,24 +2110,116 @@ public class BoneEditorPanel
         if (!ImGui.TreeNode("Metadata pack status"))
             return;
 
-        if (_boneMetadataService.PackStatuses.Count == 0)
+        try
         {
-            ImGui.TextDisabled("No local metadata packs found yet. Add schemaVersion 1 JSON files to the bone_metadata folder.");
+            if (_boneMetadataService.PackStatuses.Count == 0)
+            {
+                ImGui.TextDisabled("No local metadata packs found yet. Add schemaVersion 1 JSON files to the bone_metadata folder.");
+                return;
+            }
+
+            var tableHeight = GetHelperScrollHeight(_boneMetadataService.PackStatuses.Count, 170, 90, 5);
+            using (var table = ImRaii.Table("MetadataPackStatusTable", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.ScrollY, new Vector2(0, tableHeight)))
+            {
+                if (!table)
+                    return;
+
+                ImGui.TableSetupColumn("Pack", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Result", ImGuiTableColumnFlags.WidthFixed, 95 * ImGuiHelpers.GlobalScale);
+                ImGui.TableSetupColumn("Messages", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 75 * ImGuiHelpers.GlobalScale);
+                ImGui.TableHeadersRow();
+
+                foreach (var status in _boneMetadataService.PackStatuses)
+                {
+                    ImGui.TableNextRow();
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(status.PackName);
+                    ImGui.TextDisabled(status.FileName);
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(status.Loaded ? $"Loaded {status.EntryCount}" : "Failed");
+                    if (status.IgnoredEntryCount > 0)
+                        ImGui.TextDisabled($"Ignored {status.IgnoredEntryCount}");
+
+                    ImGui.TableNextColumn();
+                    if (!string.IsNullOrWhiteSpace(status.MessageText))
+                        ImGuiUtil.TextWrapped(status.MessageText);
+                    else
+                        ImGui.TextDisabled("No issues.");
+
+                    ImGui.TableNextColumn();
+                    using (ImRaii.Disabled(!_boneMetadataService.CanDeletePackFile(status.FileName)))
+                    {
+                        using var id = ImRaii.PushId($"MetadataPackDelete{status.FileName}");
+                        if (ImGui.SmallButton("Delete"))
+                        {
+                            _pendingMetadataPackDeleteFileName = status.FileName;
+                            _pendingMetadataPackDeleteLabel = string.IsNullOrWhiteSpace(status.PackName)
+                                ? status.FileName
+                                : $"{status.PackName} ({status.FileName})";
+                            _openMetadataPackDeletePopup = true;
+                        }
+                    }
+                    CtrlHelper.AddHoverText("Deletes this local JSON metadata pack file from the bone_metadata folder after confirmation.");
+                }
+            }
+        }
+        finally
+        {
             ImGui.TreePop();
-            return;
+        }
+    }
+
+    private void DrawMetadataPackDeleteConfirmationPopup()
+    {
+        if (_openMetadataPackDeletePopup)
+        {
+            ImGui.OpenPopup("DeleteMetadataPackPopup");
+            _openMetadataPackDeletePopup = false;
         }
 
-        foreach (var status in _boneMetadataService.PackStatuses)
+        var viewportSize = ImGui.GetWindowViewport().Size;
+        var scale = ImGuiHelpers.GlobalScale;
+        var popupWidth = MathF.Min(520 * scale, MathF.Max(1, viewportSize.X - 48 * scale));
+        ImGui.SetNextWindowSize(new Vector2(popupWidth, 0));
+        ImGui.SetNextWindowPos(viewportSize / 2, ImGuiCond.Always, new Vector2(0.5f));
+        using var popup = ImRaii.Popup("DeleteMetadataPackPopup", ImGuiWindowFlags.Modal);
+        if (!popup)
+            return;
+
+        var fileName = _pendingMetadataPackDeleteFileName;
+        ImGuiUtil.TextWrapped($"Delete local metadata pack '{_pendingMetadataPackDeleteLabel ?? fileName ?? "unknown"}'?");
+        ImGuiUtil.TextWrapped("This deletes the JSON metadata pack file from disk. It does not delete built-in bone data, templates, profiles, or plugin files.");
+        ImGui.Spacing();
+
+        var style = ImGui.GetStyle();
+        var buttonWidth = (ImGui.GetContentRegionAvail().X - style.ItemSpacing.X) / 2;
+        var buttonSize = new Vector2(buttonWidth, 0);
+        using (ImRaii.Disabled(string.IsNullOrWhiteSpace(fileName)))
         {
-            ImGui.BulletText(status.Summary);
-            if (!string.IsNullOrWhiteSpace(status.MessageText))
+            if (ImGui.Button("Delete metadata pack", buttonSize) && !string.IsNullOrWhiteSpace(fileName))
             {
-                ImGui.SameLine();
-                ImGui.TextDisabled(status.MessageText);
+                if (_boneMetadataService.TryDeletePackFile(fileName, out var message))
+                    _templateHealthReport = null;
+                else
+                    _popupSystem.ShowPopup(PopupSystem.Messages.ActionError);
+
+                SetUnknownWorkbenchStatus(message);
+                _pendingMetadataPackDeleteFileName = null;
+                _pendingMetadataPackDeleteLabel = null;
+                ImGui.CloseCurrentPopup();
             }
         }
 
-        ImGui.TreePop();
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel", buttonSize))
+        {
+            _pendingMetadataPackDeleteFileName = null;
+            _pendingMetadataPackDeleteLabel = null;
+            ImGui.CloseCurrentPopup();
+        }
     }
 
     private void TryCopyUnknownWorkbenchText(string text, string successStatus)
@@ -2152,6 +2260,15 @@ public class BoneEditorPanel
         ImGui.Bullet();
         ImGui.SameLine();
         ImGuiUtil.TextWrapped(text);
+    }
+
+    private static float GetHelperScrollHeight(int rowCount, float maxUnscaled, float minUnscaled, int visibleRows = 8)
+    {
+        var scale = ImGuiHelpers.GlobalScale;
+        var headerAndPadding = 2.5f * ImGui.GetTextLineHeightWithSpacing();
+        var desiredRows = MathF.Max(1, MathF.Min(rowCount, visibleRows));
+        var desiredHeight = headerAndPadding + desiredRows * ImGui.GetTextLineHeightWithSpacing();
+        return MathF.Min(maxUnscaled * scale, MathF.Max(minUnscaled * scale, desiredHeight));
     }
 
     #region ImGui helper functions

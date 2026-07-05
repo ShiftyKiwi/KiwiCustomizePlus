@@ -31,6 +31,8 @@ public sealed class LocalBoneMetadataService
     public IReadOnlyList<LocalBoneMetadataPackStatus> PackStatuses => _packStatuses;
     public int LoadedPackCount => _packStatuses.Count(p => p.Loaded);
     public int LoadedEntryCount => _entries.Count;
+    public int TotalPackCount => _packStatuses.Count(p => IsMetadataPackFileName(p.FileName));
+    public int IgnoredEntryCount => _packStatuses.Sum(p => p.IgnoredEntryCount);
 
     public void Reload()
     {
@@ -154,6 +156,36 @@ public sealed class LocalBoneMetadataService
         return path;
     }
 
+    public bool CanDeletePackFile(string fileName)
+        => TryGetValidatedPackPath(fileName, out _, out _);
+
+    public bool TryDeletePackFile(string fileName, out string message)
+    {
+        if (!TryGetValidatedPackPath(fileName, out var path, out message))
+            return false;
+
+        try
+        {
+            if (!File.Exists(path))
+            {
+                message = $"Metadata pack '{fileName}' no longer exists.";
+                Reload();
+                return false;
+            }
+
+            File.Delete(path);
+            message = $"Deleted metadata pack '{fileName}'.";
+            Reload();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = $"Could not delete metadata pack '{fileName}': {ex.Message}";
+            _logger.Error($"Could not delete local bone metadata pack '{path}': {ex}");
+            return false;
+        }
+    }
+
     private void LoadPack(string file)
     {
         var fileName = Path.GetFileName(file);
@@ -269,6 +301,35 @@ public sealed class LocalBoneMetadataService
 
     private static LocalBoneMetadataPackStatus FailedStatus(string fileName, string message)
         => new(fileName, Path.GetFileNameWithoutExtension(fileName), false, 0, 0, [message]);
+
+    private bool TryGetValidatedPackPath(string fileName, out string path, out string message)
+    {
+        path = string.Empty;
+        message = string.Empty;
+
+        if (!IsMetadataPackFileName(fileName))
+        {
+            message = "Only local .json metadata pack files can be deleted.";
+            return false;
+        }
+
+        var root = Path.GetFullPath(MetadataDirectory);
+        var candidate = Path.GetFullPath(Path.Combine(root, fileName));
+        var relative = Path.GetRelativePath(root, candidate);
+        if (relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relative))
+        {
+            message = "Refusing to delete a file outside the local bone metadata folder.";
+            return false;
+        }
+
+        path = candidate;
+        return true;
+    }
+
+    private static bool IsMetadataPackFileName(string fileName)
+        => !string.IsNullOrWhiteSpace(fileName) &&
+           string.Equals(Path.GetFileName(fileName), fileName, StringComparison.Ordinal) &&
+           string.Equals(Path.GetExtension(fileName), ".json", StringComparison.OrdinalIgnoreCase);
 
     private static bool Matches(string? value, string query)
         => !string.IsNullOrWhiteSpace(value) && value.Contains(query, StringComparison.OrdinalIgnoreCase);

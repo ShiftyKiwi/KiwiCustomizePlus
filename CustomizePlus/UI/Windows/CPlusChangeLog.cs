@@ -52,6 +52,7 @@ public class CPlusChangeLog
         Add3_0_0(Changelog);
         Add3_0_1(Changelog);
         Add3_0_2(Changelog);
+        Add3_0_3(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -63,6 +64,13 @@ public class CPlusChangeLog
         _config.ChangelogSettings.ChangeLogDisplayType = type;
         _config.Save();
     }
+
+    private static void Add3_0_3(Changelog log)
+        => log.NextVersion("Version 3.0.3")
+        .RegisterEntry("Improved Template Editor helper-section scrolling so bone rows remain easier to reach.")
+        .RegisterEntry("Added safe in-plugin deletion for local bone metadata pack JSON files.")
+        .RegisterEntry("Fixed UI stack safety around metadata pack status and dashboard helper sections.")
+        .RegisterEntry("No runtime behavior changes.");
 
     private static void Add3_0_2(Changelog log)
         => log.NextVersion("Version 3.0.2")
