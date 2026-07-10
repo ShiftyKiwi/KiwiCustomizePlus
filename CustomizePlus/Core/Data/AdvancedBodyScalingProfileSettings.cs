@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Penumbra.GameData.Enums;
 
 namespace CustomizePlus.Core.Data;
 
@@ -13,8 +14,19 @@ public sealed class AdvancedBodyScalingProfileSettings
     public bool UseProfileOverrides { get; set; } = false;
     public AdvancedBodyScalingOverrides Overrides { get; set; } = new();
 
-    public AdvancedBodyScalingSettings Resolve(AdvancedBodyScalingSettings baseline)
-        => UseProfileOverrides ? Overrides.MergeOnto(baseline) : baseline.DeepCopy();
+    public AdvancedBodyScalingSettings Resolve(AdvancedBodyScalingSettings baseline, Race race)
+    {
+        // Keep the resolved runtime settings isolated from the global configuration even
+        // when no race preset applies. The former resolution path always returned a copy.
+        if (!UseProfileOverrides)
+            return baseline.DeepCopy().ApplyRaceNeckPreset(race);
+
+        // Preserve the legacy order until a profile explicitly takes ownership of the
+        // race-preset group. Existing profiles therefore keep their current behavior.
+        return Overrides.HasRaceSpecificNeckOverrides
+            ? Overrides.MergeOnto(baseline).ApplyRaceNeckPreset(race)
+            : Overrides.MergeOnto(baseline.ApplyRaceNeckPreset(race));
+    }
 
     public AdvancedBodyScalingProfileSettings DeepCopy()
         => new()
@@ -23,6 +35,14 @@ public sealed class AdvancedBodyScalingProfileSettings
             Overrides = Overrides.DeepCopy()
         };
 }
+
+/// <summary>
+/// A transient before/after snapshot used only to describe explicit profile-setting edits
+/// in the local Activity Log. It is never persisted or used during runtime resolution.
+/// </summary>
+internal sealed record AdvancedBodyScalingProfileOverrideChange(
+    AdvancedBodyScalingProfileSettings Previous,
+    AdvancedBodyScalingProfileSettings Current);
 
 [Serializable]
 public sealed class AdvancedBodyScalingOverrides
@@ -79,6 +99,16 @@ public sealed class AdvancedBodyScalingOverrides
     public float? NeckLengthCompensation { get; set; }
     public float? NeckShoulderBlendStrength { get; set; }
     public float? ClavicleShoulderSmoothing { get; set; }
+    public bool? UseRaceSpecificNeckCompensation { get; set; }
+
+    /// <summary>
+    /// A complete profile-local race preset map. Null means the profile inherits the
+    /// global preset map unchanged; a populated map is intentionally self-contained.
+    /// </summary>
+    public Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset>? RaceNeckPresetOverrides { get; set; }
+
+    internal bool HasRaceSpecificNeckOverrides
+        => UseRaceSpecificNeckCompensation.HasValue || RaceNeckPresetOverrides != null;
     public Dictionary<AdvancedBodyRegion, AdvancedBodyScalingRegionProfileOverrides> RegionOverrides { get; set; } = new();
     public Dictionary<AdvancedBodyScalingCorrectiveRegion, AdvancedBodyScalingCorrectiveRegionOverrides> PoseCorrectiveRegionOverrides { get; set; } = new();
     public Dictionary<AdvancedBodyScalingFullBodyIkChain, AdvancedBodyScalingFullIkRetargetingChainOverrides> FullIkRetargetingChainOverrides { get; set; } = new();
@@ -245,6 +275,16 @@ public sealed class AdvancedBodyScalingOverrides
         if (ClavicleShoulderSmoothing.HasValue)
             merged.ClavicleShoulderSmoothing = ClavicleShoulderSmoothing.Value;
 
+        if (UseRaceSpecificNeckCompensation.HasValue)
+            merged.UseRaceSpecificNeckCompensation = UseRaceSpecificNeckCompensation.Value;
+
+        if (RaceNeckPresetOverrides != null)
+        {
+            merged.RaceNeckPresets = RaceNeckPresetOverrides.ToDictionary(
+                kvp => kvp.Key,
+                kvp => kvp.Value.DeepCopy());
+        }
+
         if (RegionOverrides.Count > 0)
         {
             foreach (var (region, overrides) in RegionOverrides)
@@ -363,6 +403,10 @@ public sealed class AdvancedBodyScalingOverrides
             NeckLengthCompensation = NeckLengthCompensation,
             NeckShoulderBlendStrength = NeckShoulderBlendStrength,
             ClavicleShoulderSmoothing = ClavicleShoulderSmoothing,
+            UseRaceSpecificNeckCompensation = UseRaceSpecificNeckCompensation,
+            RaceNeckPresetOverrides = RaceNeckPresetOverrides == null
+                ? null
+                : RaceNeckPresetOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
             RegionOverrides = RegionOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
             PoseCorrectiveRegionOverrides = PoseCorrectiveRegionOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),
             FullIkRetargetingChainOverrides = FullIkRetargetingChainOverrides.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy()),

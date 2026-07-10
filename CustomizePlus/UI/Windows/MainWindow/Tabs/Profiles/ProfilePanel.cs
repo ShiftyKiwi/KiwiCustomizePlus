@@ -10,6 +10,7 @@ using OtterGui.Extensions;
 using OtterGui.Log;
 using OtterGui.Text;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using CustomizePlus.Profiles;
@@ -21,6 +22,7 @@ using CustomizePlus.Core.Data;
 using CustomizePlus.Core.Helpers;
 using CustomizePlus.Templates.Events;
 using Penumbra.GameData.Actors;
+using Penumbra.GameData.Enums;
 using CustomizePlus.GameData.Extensions;
 using Dalamud.Interface.Components;
 
@@ -60,6 +62,7 @@ public class ProfilePanel
     private Action? _endAction;
 
     private int _dragIndex = -1;
+    private Race _profileRaceNeckPresetRace = Race.Elezen;
 
     private string SelectionName
         => _selector.Selected == null ? "No Selection" : _selector.IncognitoMode ? _selector.Selected.Incognito : _selector.Selected.Name.Text;
@@ -735,6 +738,9 @@ public class ProfilePanel
             if (ImGui.Checkbox("##ProfileAdvScalingClavicleSmoothingOverride", ref clavicleOverride))
                 ToggleOverride(o => o.ClavicleShoulderSmoothing = clavicleOverride ? globalSettings.ClavicleShoulderSmoothing : null);
         }
+
+        ImGui.Spacing();
+        DrawRaceSpecificNeckPresetOverrides(profile, globalSettings, overrides);
 
         ImGui.Spacing();
         if (ImGui.CollapsingHeader("Bone Importance Weighting Overrides"))
@@ -2092,6 +2098,178 @@ public class ProfilePanel
             _popupSystem.ShowPopup(PopupSystem.Messages.ActionError);
         }
     }
+
+    private void DrawRaceSpecificNeckPresetOverrides(
+        Profile profile,
+        AdvancedBodyScalingSettings globalSettings,
+        AdvancedBodyScalingOverrides overrides)
+    {
+        if (!ImGui.CollapsingHeader("Race-specific neck preset overrides"))
+            return;
+
+        ImGui.TextDisabled("Profile-local race presets replace the global race-preset group for this profile only. They do not change global settings.");
+
+        var groupOverrideEnabled = overrides.HasRaceSpecificNeckOverrides;
+        if (ImGui.Checkbox("Override race-specific neck settings", ref groupOverrideEnabled))
+        {
+            _manager.UpdateAdvancedBodyScalingOverrides(profile, settings =>
+            {
+                if (groupOverrideEnabled)
+                {
+                    settings.Overrides.UseRaceSpecificNeckCompensation = globalSettings.UseRaceSpecificNeckCompensation;
+                    settings.Overrides.RaceNeckPresetOverrides = CloneRaceNeckPresets(globalSettings.RaceNeckPresets);
+                }
+                else
+                {
+                    settings.Overrides.UseRaceSpecificNeckCompensation = null;
+                    settings.Overrides.RaceNeckPresetOverrides = null;
+                }
+            });
+            return;
+        }
+        CtrlHelper.AddHoverText("Enable this only when the profile needs its own race-specific neck behavior. When disabled, both the toggle and all race presets inherit from global Advanced Body Scaling settings.");
+
+        if (!groupOverrideEnabled)
+        {
+            ImGui.TextDisabled($"Global: race-specific presets are {(globalSettings.UseRaceSpecificNeckCompensation ? "enabled" : "disabled")}.");
+            return;
+        }
+
+        var useRacePresets = overrides.UseRaceSpecificNeckCompensation ?? globalSettings.UseRaceSpecificNeckCompensation;
+        if (ImGui.Checkbox("Enable profile race-specific presets", ref useRacePresets))
+        {
+            _manager.UpdateAdvancedBodyScalingOverrides(profile, settings =>
+                settings.Overrides.UseRaceSpecificNeckCompensation = useRacePresets);
+        }
+        CtrlHelper.AddHoverText("When disabled, this profile uses its normal profile neck/shoulder baseline values instead of a race preset.");
+
+        using var disabled = ImRaii.Disabled(!useRacePresets);
+        ImGui.TextDisabled("Runtime follows each actor's detected race. The selector below only chooses which profile-local preset you edit.");
+
+        if (ImGui.BeginCombo("Profile preset race", GetRaceLabel(_profileRaceNeckPresetRace)))
+        {
+            foreach (var race in Enum.GetValues<Race>())
+            {
+                if (race == Race.Unknown)
+                    continue;
+
+                var selected = race == _profileRaceNeckPresetRace;
+                if (ImGui.Selectable(GetRaceLabel(race), selected))
+                    _profileRaceNeckPresetRace = race;
+
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+
+        var baseline = new AdvancedBodyScalingNeckCompensationPreset
+        {
+            NeckLengthCompensation = overrides.NeckLengthCompensation ?? globalSettings.NeckLengthCompensation,
+            NeckShoulderBlendStrength = overrides.NeckShoulderBlendStrength ?? globalSettings.NeckShoulderBlendStrength,
+            ClavicleShoulderSmoothing = overrides.ClavicleShoulderSmoothing ?? globalSettings.ClavicleShoulderSmoothing,
+        };
+        var working = GetProfileRacePreset(overrides, globalSettings, _profileRaceNeckPresetRace, baseline);
+
+        var neckLength = working.NeckLengthCompensation;
+        if (ImGui.SliderFloat("Profile race neck length compensation", ref neckLength, 0f, 1f, "%.2f"))
+        {
+            UpdateProfileRacePreset(profile, globalSettings, _profileRaceNeckPresetRace, baseline,
+                preset => preset.NeckLengthCompensation = neckLength);
+        }
+        CtrlHelper.AddHoverText("Profile-local race override for neck length compensation. It does not modify the global preset.");
+
+        var blend = working.NeckShoulderBlendStrength;
+        if (ImGui.SliderFloat("Profile race neck-to-shoulder blend", ref blend, 0f, 1f, "%.2f"))
+        {
+            UpdateProfileRacePreset(profile, globalSettings, _profileRaceNeckPresetRace, baseline,
+                preset => preset.NeckShoulderBlendStrength = blend);
+        }
+        CtrlHelper.AddHoverText("Profile-local race override for neck-to-shoulder blending. It does not modify the global preset.");
+
+        var clavicle = working.ClavicleShoulderSmoothing;
+        if (ImGui.SliderFloat("Profile race clavicle/shoulder smoothing", ref clavicle, 0f, 1f, "%.2f"))
+        {
+            UpdateProfileRacePreset(profile, globalSettings, _profileRaceNeckPresetRace, baseline,
+                preset => preset.ClavicleShoulderSmoothing = clavicle);
+        }
+        CtrlHelper.AddHoverText("Profile-local race override for clavicle/shoulder smoothing. It does not modify the global preset.");
+
+        if (ImGui.Button("Restore selected preset from global"))
+        {
+            var globalPreset = GetGlobalRacePreset(globalSettings, _profileRaceNeckPresetRace, baseline);
+            UpdateProfileRacePreset(profile, globalSettings, _profileRaceNeckPresetRace, baseline,
+                preset =>
+                {
+                    preset.NeckLengthCompensation = globalPreset.NeckLengthCompensation;
+                    preset.NeckShoulderBlendStrength = globalPreset.NeckShoulderBlendStrength;
+                    preset.ClavicleShoulderSmoothing = globalPreset.ClavicleShoulderSmoothing;
+                });
+        }
+        CtrlHelper.AddHoverText("Copies the current global preset for this race into the profile-local preset. This keeps the profile override enabled but discards local edits for the selected race.");
+    }
+
+    private void UpdateProfileRacePreset(
+        Profile profile,
+        AdvancedBodyScalingSettings globalSettings,
+        Race race,
+        AdvancedBodyScalingNeckCompensationPreset baseline,
+        Action<AdvancedBodyScalingNeckCompensationPreset> update)
+    {
+        _manager.UpdateAdvancedBodyScalingOverrides(profile, settings =>
+        {
+            settings.Overrides.RaceNeckPresetOverrides ??= CloneRaceNeckPresets(globalSettings.RaceNeckPresets);
+            if (!settings.Overrides.RaceNeckPresetOverrides.TryGetValue(race, out var preset))
+            {
+                preset = GetGlobalRacePreset(globalSettings, race, baseline);
+                settings.Overrides.RaceNeckPresetOverrides[race] = preset;
+            }
+
+            update(preset);
+        });
+    }
+
+    private static AdvancedBodyScalingNeckCompensationPreset GetProfileRacePreset(
+        AdvancedBodyScalingOverrides overrides,
+        AdvancedBodyScalingSettings globalSettings,
+        Race race,
+        AdvancedBodyScalingNeckCompensationPreset baseline)
+    {
+        if (overrides.RaceNeckPresetOverrides != null &&
+            overrides.RaceNeckPresetOverrides.TryGetValue(race, out var profilePreset))
+        {
+            return profilePreset;
+        }
+
+        return GetGlobalRacePreset(globalSettings, race, baseline);
+    }
+
+    private static AdvancedBodyScalingNeckCompensationPreset GetGlobalRacePreset(
+        AdvancedBodyScalingSettings globalSettings,
+        Race race,
+        AdvancedBodyScalingNeckCompensationPreset fallback)
+    {
+        return globalSettings.RaceNeckPresets != null && globalSettings.RaceNeckPresets.TryGetValue(race, out var preset)
+            ? preset.DeepCopy()
+            : fallback.DeepCopy();
+    }
+
+    private static Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset> CloneRaceNeckPresets(
+        Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset>? presets)
+    {
+        return presets == null
+            ? new Dictionary<Race, AdvancedBodyScalingNeckCompensationPreset>()
+            : presets.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy());
+    }
+
+    private static string GetRaceLabel(Race race)
+        => race switch
+        {
+            Race.AuRa => "Au Ra",
+            Race.Miqote => "Miqo'te",
+            _ => race.ToString(),
+        };
 
     private void DrawAddCharactersArea()
     {

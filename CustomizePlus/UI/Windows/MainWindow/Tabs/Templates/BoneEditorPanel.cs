@@ -24,6 +24,7 @@ using OtterGui.Raii;
 using OtterGui.Text;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 
@@ -44,6 +45,7 @@ public class BoneEditorPanel
     private readonly PopupSystem _popupSystem;
     private readonly LocalBoneMetadataService _boneMetadataService;
     private readonly SemanticBodyGoalService _semanticBodyGoalService;
+    private readonly ActivityLogService _activityLogService;
     private readonly Logger _logger;
 
     private BoneAttribute _editingAttribute;
@@ -75,6 +77,7 @@ public class BoneEditorPanel
     private HashSet<string> _favoriteBones;
 
     private string? _pendingClipboardText;
+    private int _pendingGroupExportCount;
     private string? _pendingImportText;
     private string? _lastGroupImportStatus;
     private string? _unknownWorkbenchStatus;
@@ -97,6 +100,7 @@ public class BoneEditorPanel
     private Dictionary<string, float> _semanticGoalValues = new(StringComparer.Ordinal);
     private SemanticBodyGoalPreview? _semanticGoalPreview;
     private string _selectedShapeRecipeId = string.Empty;
+    private string? _loadedShapeRecipeName;
     private string? _semanticGoalStatus;
     public bool HasChanges => _editorManager.HasChanges;
     public bool IsEditorActive => _editorManager.IsEditorActive;
@@ -113,6 +117,7 @@ public class BoneEditorPanel
         PopupSystem popupSystem,
         LocalBoneMetadataService boneMetadataService,
         SemanticBodyGoalService semanticBodyGoalService,
+        ActivityLogService activityLogService,
         Logger logger)
     {
         _templateFileSystemSelector = templateFileSystemSelector;
@@ -124,6 +129,7 @@ public class BoneEditorPanel
         _popupSystem = popupSystem;
         _boneMetadataService = boneMetadataService;
         _semanticBodyGoalService = semanticBodyGoalService;
+        _activityLogService = activityLogService;
         _logger = logger;
 
         _isShowLiveBones = configuration.EditorConfiguration.ShowLiveBones;
@@ -251,7 +257,7 @@ public class BoneEditorPanel
             ImGui.Spacing();
 
             var boneTableHeight = MathF.Max(220 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().Y);
-            using (var table = ImRaii.Table($"BoneEditorContents", 6, ImGuiTableFlags.BordersOuterH | ImGuiTableFlags.BordersV | ImGuiTableFlags.ScrollY, new Vector2(0, boneTableHeight)))
+            using (var table = ImRaii.Table($"BoneEditorContents", 6, ImGuiTableFlags.BordersOuterH | ImGuiTableFlags.BordersV | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Hideable, new Vector2(0, boneTableHeight)))
             {
                 if (!table)
                     return;
@@ -359,37 +365,49 @@ public class BoneEditorPanel
                             var importedBones = Base64Helper.ImportEditedBonesFromBase64(_pendingImportText, out var importError);
                             if (importedBones != null)
                             {
-                                foreach (var boneData in importedBones)
+                                using (_activityLogService.SuppressTemplateBoneEditEvents())
                                 {
-                                    _editorManager.ModifyBoneTransform(
-                                        boneData.BoneCodeName,
-                                        new BoneTransform
-                                        {
-                                            Translation = boneData.Translation,
-                                            Rotation = boneData.Rotation,
-                                            Scaling = boneData.Scaling,
-                                            ChildScaling = boneData.ChildScaling,
-                                            ChildScalingIndependent = boneData.ChildScalingIndependent,
-                                            PropagateTranslation = boneData.PropagateTranslation,
-                                            PropagateRotation = boneData.PropagateRotation,
-                                            PropagateScale = boneData.PropagateScale,
-                                            PropagationFalloff = boneData.PropagationFalloff,
-                                            LockState = boneData.LockState,
-                                            PinX = boneData.PinX,
-                                            PinY = boneData.PinY,
-                                            PinZ = boneData.PinZ
-                                        }
-                                    );
+                                    foreach (var boneData in importedBones)
+                                    {
+                                        _editorManager.ModifyBoneTransform(
+                                            boneData.BoneCodeName,
+                                            new BoneTransform
+                                            {
+                                                Translation = boneData.Translation,
+                                                Rotation = boneData.Rotation,
+                                                Scaling = boneData.Scaling,
+                                                ChildScaling = boneData.ChildScaling,
+                                                ChildScalingIndependent = boneData.ChildScalingIndependent,
+                                                PropagateTranslation = boneData.PropagateTranslation,
+                                                PropagateRotation = boneData.PropagateRotation,
+                                                PropagateScale = boneData.PropagateScale,
+                                                PropagationFalloff = boneData.PropagationFalloff,
+                                                LockState = boneData.LockState,
+                                                PinX = boneData.PinX,
+                                                PinY = boneData.PinY,
+                                                PinZ = boneData.PinZ
+                                            }
+                                        );
+                                    }
                                 }
 
                                 SetGroupImportStatus(
                                     $"Imported {importedBones.Count} grouped bone transform{(importedBones.Count == 1 ? string.Empty : "s")} from clipboard.",
                                     failed: false);
+                                _activityLogService.Record(
+                                    ActivityLogCategory.ImportExport,
+                                    "Grouped import",
+                                    $"Imported {importedBones.Count} grouped bone transform{(importedBones.Count == 1 ? string.Empty : "s")} from the clipboard.");
                                 _logger.Information(_lastGroupImportStatus);
                             }
                             else
                             {
                                 SetGroupImportStatus(importError, failed: true);
+                                _activityLogService.Record(
+                                    ActivityLogCategory.ImportExport,
+                                    "Grouped import failed",
+                                    "Could not import grouped bone transforms from the clipboard.",
+                                    _lastGroupImportStatus);
                                 _logger.Warning($"Group import failed: {_lastGroupImportStatus}");
                                 _popupSystem.ShowPopup(PopupSystem.Messages.ClipboardDataUnsupported);
                             }
@@ -397,6 +415,11 @@ public class BoneEditorPanel
                         catch (Exception ex)
                         {
                             SetGroupImportStatus($"Unexpected group import error: {ex.Message}", failed: true);
+                            _activityLogService.Record(
+                                ActivityLogCategory.ImportExport,
+                                "Grouped import failed",
+                                "An unexpected error occurred while importing grouped bone transforms.",
+                                ex.Message);
                             _logger.Error($"Error while importing grouped bone transforms: {ex}");
                             _popupSystem.ShowPopup(PopupSystem.Messages.ActionError);
                         }
@@ -464,10 +487,15 @@ public class BoneEditorPanel
                                     if (editedBones.Count > 0)
                                     {
                                         _pendingClipboardText = Base64Helper.ExportEditedBonesToBase64(editedBones);
+                                        _pendingGroupExportCount = editedBones.Count;
                                     }
                                 }
                                 catch (Exception)
                                 {
+                                    _activityLogService.Record(
+                                        ActivityLogCategory.ImportExport,
+                                        "Grouped export failed",
+                                        "Could not copy grouped bone transforms to the clipboard.");
                                     _popupSystem.ShowPopup(PopupSystem.Messages.ActionError);
                                 }
                             }
@@ -505,13 +533,22 @@ public class BoneEditorPanel
             try
             {
                 ImUtf8.SetClipboardText(_pendingClipboardText);
+                _activityLogService.Record(
+                    ActivityLogCategory.ImportExport,
+                    "Grouped export",
+                    $"Copied {_pendingGroupExportCount} grouped bone transform{(_pendingGroupExportCount == 1 ? string.Empty : "s")} to the clipboard.");
                 _logger.Debug("Copied grouped bone transforms to clipboard.");
             }
             catch (Exception)
             {
+                _activityLogService.Record(
+                    ActivityLogCategory.ImportExport,
+                    "Grouped export failed",
+                    "Could not copy grouped bone transforms to the clipboard.");
                 _logger.Debug("Could not copy grouped bone transforms to clipboard.");
             }
             _pendingClipboardText = null;
+            _pendingGroupExportCount = 0;
         }
 
     }
@@ -1142,6 +1179,7 @@ public class BoneEditorPanel
             if (ImGui.Button("Load recipe values") && selectedRecipe != null)
             {
                 _semanticGoalValues = _semanticBodyGoalService.CreateRecipeGoalValues(selectedRecipe);
+                _loadedShapeRecipeName = selectedRecipe.DisplayName;
                 _semanticGoalPreview = null;
                 _semanticGoalStatus = $"Loaded '{selectedRecipe.DisplayName}' slider values. Click Preview Goals before applying.";
             }
@@ -1152,6 +1190,7 @@ public class BoneEditorPanel
         if (ImGui.Button("Reset sliders"))
         {
             _semanticGoalValues = _semanticBodyGoalService.CreateDefaultGoalValues();
+            _loadedShapeRecipeName = null;
             _semanticGoalPreview = null;
             _semanticGoalStatus = "Reset semantic goal sliders.";
         }
@@ -1183,6 +1222,7 @@ public class BoneEditorPanel
             if (ImGui.SliderFloat($"##SemanticGoal{goal.Id}", ref value, -1f, 1f, "%.2f"))
             {
                 _semanticGoalValues[goal.Id] = Math.Clamp(value, -1f, 1f);
+                _loadedShapeRecipeName = null;
                 _semanticGoalPreview = null;
                 _semanticGoalStatus = "Slider changed. Click Preview Goals to inspect the new output.";
             }
@@ -1259,8 +1299,11 @@ public class BoneEditorPanel
 
         var snapshot = CaptureCurrentState();
         var changed = false;
-        foreach (var (boneName, transform) in preview.FinalTransforms)
-            changed |= _editorManager.ModifyBoneTransform(boneName, transform);
+        using (_activityLogService.SuppressTemplateBoneEditEvents())
+        {
+            foreach (var (boneName, transform) in preview.FinalTransforms)
+                changed |= _editorManager.ModifyBoneTransform(boneName, transform);
+        }
 
         if (!changed)
         {
@@ -1272,6 +1315,11 @@ public class BoneEditorPanel
         _templateHealthReport = null;
         _semanticGoalPreview = null;
         _semanticGoalStatus = $"Applied semantic goals to {preview.FinalTransforms.Count} bone row{(preview.FinalTransforms.Count == 1 ? string.Empty : "s")}. Undo is available from the bone editor toolbar.";
+        var recipeSuffix = string.IsNullOrWhiteSpace(_loadedShapeRecipeName) ? string.Empty : $" from '{_loadedShapeRecipeName}'";
+        _activityLogService.Record(
+            ActivityLogCategory.SemanticGoals,
+            "Applied goals",
+            $"Applied semantic goals{recipeSuffix} to {preview.FinalTransforms.Count} bone row{(preview.FinalTransforms.Count == 1 ? string.Empty : "s")}.");
     }
 
     private bool IsSemanticGoalPreviewStale()
@@ -1974,6 +2022,10 @@ public class BoneEditorPanel
             _boneMetadataService.Reload();
             SetUnknownWorkbenchStatus("Reloaded local bone metadata packs.");
             _templateHealthReport = null;
+            _activityLogService.Record(
+                ActivityLogCategory.Metadata,
+                "Packs reloaded",
+                "Reloaded local bone metadata packs.");
         }
         CtrlHelper.AddHoverText("Reloads local JSON metadata packs from the bone_metadata folder. This only affects editor display, search, and explanations.");
 
@@ -2013,10 +2065,20 @@ public class BoneEditorPanel
                     _boneMetadataService.Reload();
                     SetUnknownWorkbenchStatus($"Saved starter metadata draft: {path}");
                     _templateHealthReport = null;
+                    _activityLogService.Record(
+                        ActivityLogCategory.Metadata,
+                        "Starter pack saved",
+                        "Saved a local starter metadata pack.",
+                        Path.GetFileName(path));
                 }
                 catch (Exception ex)
                 {
                     SetUnknownWorkbenchStatus($"Could not save starter metadata draft: {ex.Message}");
+                    _activityLogService.Record(
+                        ActivityLogCategory.Metadata,
+                        "Starter pack save failed",
+                        "Could not save a local starter metadata pack.",
+                        ex.Message);
                     _logger.Error($"Could not save starter metadata draft: {ex}");
                     _popupSystem.ShowPopup(PopupSystem.Messages.ActionError);
                 }
@@ -2202,9 +2264,23 @@ public class BoneEditorPanel
             if (ImGui.Button("Delete metadata pack", buttonSize) && !string.IsNullOrWhiteSpace(fileName))
             {
                 if (_boneMetadataService.TryDeletePackFile(fileName, out var message))
+                {
                     _templateHealthReport = null;
+                    _activityLogService.Record(
+                        ActivityLogCategory.Metadata,
+                        "Pack deleted",
+                        "Deleted a local metadata pack.",
+                        fileName);
+                }
                 else
+                {
+                    _activityLogService.Record(
+                        ActivityLogCategory.Metadata,
+                        "Pack deletion failed",
+                        "Could not delete a local metadata pack.",
+                        message);
                     _popupSystem.ShowPopup(PopupSystem.Messages.ActionError);
+                }
 
                 SetUnknownWorkbenchStatus(message);
                 _pendingMetadataPackDeleteFileName = null;

@@ -236,10 +236,11 @@ public unsafe sealed class ArmatureManager : IDisposable
     private AdvancedBodyScalingSettings ResolveAdvancedBodyScaling(Profile profile, Actor actor)
     {
         var baseline = _configuration.AdvancedBodyScalingSettings;
-        if (TryGetActorRace(actor, out var race))
-            baseline = baseline.ApplyRaceNeckPreset(race);
+        var race = TryGetActorRace(actor, out var resolvedRace)
+            ? resolvedRace
+            : Race.Unknown;
 
-        return profile.AdvancedBodyScalingOverrides.Resolve(baseline);
+        return profile.AdvancedBodyScalingOverrides.Resolve(baseline, race);
     }
 
     private static bool TryGetActorRace(Actor actor, out Race race)

@@ -53,6 +53,7 @@ public class CPlusChangeLog
         Add3_0_1(Changelog);
         Add3_0_2(Changelog);
         Add3_0_3(Changelog);
+        Add3_1_0(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -71,6 +72,18 @@ public class CPlusChangeLog
         .RegisterEntry("Added safe in-plugin deletion for local bone metadata pack JSON files.")
         .RegisterEntry("Fixed UI stack safety around metadata pack status and dashboard helper sections.")
         .RegisterEntry("No runtime behavior changes.");
+
+    private static void Add3_1_0(Changelog log)
+        => log.NextVersion("Version 3.1.0")
+        .RegisterHighlight("Added profile-local race-specific neck preset overrides for Advanced Body Scaling.")
+        .RegisterEntry("Profiles can now own their race-specific neck preset behavior while runtime follows each actor's detected race.", 1)
+        .RegisterHighlight("Added six conservative Semantic Body Goal starting recipes and a current-session Activity Log.")
+        .RegisterEntry("The Activity Log supports filtering, copying, clearing, and concise entries for template, profile, Advanced Scaling, metadata, import/export, and semantic-goal actions.", 1)
+        .RegisterEntry("Global and profile Advanced Scaling changes now report clearer old-to-new Activity Log details where practical.", 1)
+        .RegisterEntry("Fixed the Template Editor bone-table column visibility assertion by using the required Hideable table flag.")
+        .RegisterImportant("The Activity Log is local to the current session, capped at 50 entries, and is not saved, synced, telemetered, IPC-exposed, exported, or used for rollback.")
+        .RegisterImportant("Semantic recipes only populate existing sliders; preview remains read-only and Apply remains the only semantic mutation path.")
+        .RegisterImportant("No runtime transform, BIW, skeleton hardening, IPC/API, sync, metadata-trust, or Profile Context Preview behavior changed.");
 
     private static void Add3_0_2(Changelog log)
         => log.NextVersion("Version 3.0.2")

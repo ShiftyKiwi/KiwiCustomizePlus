@@ -311,6 +311,76 @@ public sealed class SemanticBodyGoalService
                     ["thicker_thighs"] = 0.60f,
                     ["softer_calves"] = 0.45f,
                     ["broader_shoulders"] = 0.15f
+                }),
+            new(
+                "subtle_athletic",
+                "Subtle Athletic",
+                "A restrained shoulder, arm, waist, and thigh emphasis for a lightly athletic starting point.",
+                new Dictionary<string, float>(StringComparer.Ordinal)
+                {
+                    ["broader_shoulders"] = 0.40f,
+                    ["narrower_waist"] = 0.20f,
+                    ["stronger_arms"] = 0.30f,
+                    ["thicker_thighs"] = 0.15f
+                }),
+            new(
+                "gentle_taper",
+                "Gentle Taper",
+                "A mild upper-frame and waist contrast with a small amount of lower-body support.",
+                new Dictionary<string, float>(StringComparer.Ordinal)
+                {
+                    ["broader_shoulders"] = 0.35f,
+                    ["narrower_waist"] = 0.35f,
+                    ["wider_hips"] = 0.15f,
+                    ["thicker_thighs"] = 0.10f
+                }),
+            new(
+                "balanced_silhouette",
+                "Balanced Silhouette",
+                "A modest, even starting point across shoulders, waist, hips, thighs, and lower legs.",
+                new Dictionary<string, float>(StringComparer.Ordinal)
+                {
+                    ["broader_shoulders"] = 0.22f,
+                    ["narrower_waist"] = 0.18f,
+                    ["wider_hips"] = 0.22f,
+                    ["thicker_thighs"] = 0.20f,
+                    ["softer_calves"] = 0.14f
+                }),
+            new(
+                "soft_frame",
+                "Soft Frame",
+                "A gentle chest, hip, thigh, and calf emphasis with only a light shoulder adjustment.",
+                new Dictionary<string, float>(StringComparer.Ordinal)
+                {
+                    ["fuller_chest"] = 0.32f,
+                    ["wider_hips"] = 0.30f,
+                    ["thicker_thighs"] = 0.22f,
+                    ["softer_calves"] = 0.16f,
+                    ["broader_shoulders"] = 0.10f
+                }),
+            new(
+                "compact_power",
+                "Compact Power",
+                "A conservative arm, shoulder, thigh, and calf emphasis while preserving a measured waist taper.",
+                new Dictionary<string, float>(StringComparer.Ordinal)
+                {
+                    ["broader_shoulders"] = 0.34f,
+                    ["stronger_arms"] = 0.44f,
+                    ["narrower_waist"] = 0.10f,
+                    ["thicker_thighs"] = 0.34f,
+                    ["softer_calves"] = 0.24f
+                }),
+            new(
+                "broad_but_balanced",
+                "Broad but Balanced",
+                "A broader upper frame paired with modest hip and leg support to keep the overall starting point balanced.",
+                new Dictionary<string, float>(StringComparer.Ordinal)
+                {
+                    ["broader_shoulders"] = 0.55f,
+                    ["stronger_arms"] = 0.34f,
+                    ["narrower_waist"] = 0.20f,
+                    ["wider_hips"] = 0.16f,
+                    ["thicker_thighs"] = 0.20f
                 })
         ];
 }

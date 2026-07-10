@@ -251,11 +251,16 @@ public partial class ProfileManager : IDisposable
 
     public void UpdateAdvancedBodyScalingOverrides(Profile profile, Action<AdvancedBodyScalingProfileSettings> update)
     {
+        var previous = profile.AdvancedBodyScalingOverrides.DeepCopy();
         update(profile.AdvancedBodyScalingOverrides);
+        var current = profile.AdvancedBodyScalingOverrides.DeepCopy();
 
         SaveProfile(profile);
 
-        _event.Invoke(ProfileChanged.Type.AdvancedBodyScalingSettingsChanged, profile, null);
+        _event.Invoke(
+            ProfileChanged.Type.AdvancedBodyScalingSettingsChanged,
+            profile,
+            new AdvancedBodyScalingProfileOverrideChange(previous, current));
     }
     
     public void SetEnabled(Guid profileId, bool value)

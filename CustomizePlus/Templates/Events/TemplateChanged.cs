@@ -34,6 +34,7 @@ public class TemplateChanged() : EventWrapper<TemplateChanged.Type, Template?, o
         TemplateFileSystem,
         ArmatureManager,
         ProfileManager,
-        CustomizePlusIpc
+        CustomizePlusIpc,
+        ActivityLog,
     }
 }

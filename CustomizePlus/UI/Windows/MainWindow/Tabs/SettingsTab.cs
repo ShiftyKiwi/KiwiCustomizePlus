@@ -54,11 +54,14 @@ public class SettingsTab
     private readonly CPlusChangeLog _changeLog;
     private readonly MessageService _messageService;
     private readonly SupportLogBuilderService _supportLogBuilderService;
+    private readonly ActivityLogService _activityLogService;
     private readonly PcpService _pcpService;
     private readonly GameObjectService _gameObjectService;
     private Race _neckPresetRace = Race.Elezen;
     private Race _lastDetectedNeckPresetRace = Race.Unknown;
     private bool _followDetectedNeckPresetRace;
+    private ActivityLogCategory? _activityLogFilter;
+    private long? _selectedActivityLogEntryId;
 
     public SettingsTab(
         IDalamudPluginInterface pluginInterface,
@@ -69,6 +72,7 @@ public class SettingsTab
         CPlusChangeLog changeLog,
         MessageService messageService,
         SupportLogBuilderService supportLogBuilderService,
+        ActivityLogService activityLogService,
         PcpService pcpService,
         GameObjectService gameObjectService)
     {
@@ -80,6 +84,7 @@ public class SettingsTab
         _changeLog = changeLog;
         _messageService = messageService;
         _supportLogBuilderService = supportLogBuilderService;
+        _activityLogService = activityLogService;
         _pcpService = pcpService;
         _gameObjectService = gameObjectService;
         _followDetectedNeckPresetRace = configuration.UISettings.FollowDetectedNeckPresetRace;
@@ -106,6 +111,7 @@ public class SettingsTab
             DrawCommands();
             DrawExternal();
             DrawAdvancedSettings();
+            DrawActivityLog();
         }
 
         DrawSupportButtons();
@@ -131,6 +137,10 @@ public class SettingsTab
                 _configuration.PluginEnabled = isChecked;
                 _configuration.Save();
                 _hookingService.ReloadHooks();
+                _activityLogService.Record(
+                    ActivityLogCategory.Settings,
+                    "Plugin enabled state changed",
+                    $"Customize+ was {(isChecked ? "enabled" : "disabled")}.");
             }
         }
     }
@@ -398,6 +408,112 @@ public class SettingsTab
         DrawDebugModeCheckbox();
     }
 
+    private void DrawActivityLog()
+    {
+        if (!ImGui.CollapsingHeader("Activity Log"))
+            return;
+
+        ImGui.TextDisabled($"Current-session local history only. Keeps the last {ActivityLogService.Capacity} meaningful actions; it is not saved, synced, or used for rollback.");
+
+        var filterLabel = _activityLogFilter.HasValue
+            ? ActivityLogService.GetCategoryLabel(_activityLogFilter.Value)
+            : "All";
+        ImGui.SetNextItemWidth(MathF.Min(220 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
+        if (ImGui.BeginCombo("Category", filterLabel))
+        {
+            if (ImGui.Selectable("All", !_activityLogFilter.HasValue))
+                _activityLogFilter = null;
+
+            foreach (var category in Enum.GetValues<ActivityLogCategory>())
+            {
+                var selected = _activityLogFilter == category;
+                if (ImGui.Selectable(ActivityLogService.GetCategoryLabel(category), selected))
+                    _activityLogFilter = category;
+
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+
+        var entries = _activityLogService.Entries
+            .Where(entry => !_activityLogFilter.HasValue || entry.Category == _activityLogFilter.Value)
+            .ToList();
+        var selectedEntry = entries.FirstOrDefault(entry => entry.Id == _selectedActivityLogEntryId);
+
+        ImGui.SameLine();
+        using (ImRaii.Disabled(selectedEntry == null))
+        {
+            if (ImGui.Button("Copy selected entry") && selectedEntry != null)
+            {
+                ImGui.SetClipboardText(ActivityLogService.FormatEntry(selectedEntry));
+                _messageService.NotificationMessage("Copied activity entry to clipboard.", NotificationType.Success, false);
+            }
+        }
+
+        ImGui.SameLine();
+        using (ImRaii.Disabled(_activityLogService.Entries.Count == 0))
+        {
+            if (ImGui.Button("Copy activity log"))
+            {
+                ImGui.SetClipboardText(_activityLogService.BuildClipboardText(_activityLogService.Entries));
+                _messageService.NotificationMessage("Copied activity log to clipboard.", NotificationType.Success, false);
+            }
+        }
+
+        ImGui.SameLine();
+        using (ImRaii.Disabled(_activityLogService.Entries.Count == 0))
+        {
+            if (ImGui.Button("Clear activity log"))
+            {
+                _activityLogService.Clear();
+                _selectedActivityLogEntryId = null;
+            }
+        }
+
+        if (entries.Count == 0)
+        {
+            ImGui.TextDisabled("No matching activity has been recorded in this session yet.");
+            return;
+        }
+
+        var height = MathF.Min(250 * ImGuiHelpers.GlobalScale, MathF.Max(120 * ImGuiHelpers.GlobalScale, entries.Count * ImGui.GetFrameHeightWithSpacing()));
+        using var child = ImRaii.Child("ActivityLogEntries", new Vector2(0, height), true);
+        if (!child)
+            return;
+
+        using var table = ImRaii.Table("ActivityLogTable", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.ScrollY);
+        if (!table)
+            return;
+
+        ImGui.TableSetupColumn("Time", ImGuiTableColumnFlags.WidthFixed, 78 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Category", ImGuiTableColumnFlags.WidthFixed, 125 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 145 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Summary", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableHeadersRow();
+
+        foreach (var entry in entries)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            var selected = _selectedActivityLogEntryId == entry.Id;
+            if (ImGui.Selectable($"{entry.Timestamp:HH:mm:ss}##ActivityLog{entry.Id}", selected, ImGuiSelectableFlags.SpanAllColumns))
+                _selectedActivityLogEntryId = entry.Id;
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(ActivityLogService.GetCategoryLabel(entry.Category));
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(entry.Action);
+
+            ImGui.TableNextColumn();
+            ImGuiUtil.TextWrapped(entry.Summary);
+            if (!string.IsNullOrWhiteSpace(entry.Detail))
+                CtrlHelper.AddHoverText(entry.Detail);
+        }
+    }
+
     private void DrawRuntimeAndSafetySettings()
     {
         if (!ImGui.CollapsingHeader("Runtime & Safety", ImGuiTreeNodeFlags.DefaultOpen))
@@ -487,9 +603,15 @@ public class SettingsTab
         if (CtrlHelper.CheckboxWithTextAndHelp("##advancedbodyscaling", "Enable advanced body scaling",
                 "Enable the advanced body scaling pipeline with influence propagation, smoothing, and guardrails. Runtime only.", ref isEnabled))
         {
+            var previousEnabled = settings.Enabled;
             settings.Enabled = isEnabled;
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
+            RecordGlobalAdvancedScalingChange(
+                "Advanced Body Scaling",
+                GetEnabledStateLabel(previousEnabled),
+                GetEnabledStateLabel(isEnabled),
+                "enabled");
         }
 
         using (var disabled = ImRaii.Disabled(!settings.Enabled))
@@ -504,9 +626,11 @@ public class SettingsTab
                     var selected = value == mode;
                     if (ImGui.Selectable(value.ToString(), selected))
                     {
+                        var previousMode = settings.Mode;
                         settings.Mode = value;
                         _configuration.Save();
                         _armatureManager.RebindAllArmatures();
+                        RecordGlobalAdvancedScalingChange("Automation mode", previousMode.ToString(), value.ToString(), "automation-mode");
                     }
 
                     if (selected)
@@ -523,27 +647,33 @@ public class SettingsTab
             var surfaceBalancing = settings.SurfaceBalancingStrength;
             if (ImGui.SliderFloat("Surface balancing strength", ref surfaceBalancing, 0f, 1f, "%.2f"))
             {
+                var previousSurfaceBalancing = settings.SurfaceBalancingStrength;
                 settings.SurfaceBalancingStrength = surfaceBalancing;
                 _configuration.Save();
                 _armatureManager.RebindAllArmatures();
+                RecordGlobalAdvancedScalingChange("Surface balancing strength", previousSurfaceBalancing, surfaceBalancing, "surface-balancing");
             }
             CtrlHelper.AddHoverText("Scales how strongly neighboring bones are smoothed. 0 disables, 1 uses the mode default.");
 
             var massRedistribution = settings.MassRedistributionStrength;
             if (ImGui.SliderFloat("Mass redistribution strength", ref massRedistribution, 0f, 1f, "%.2f"))
             {
+                var previousMassRedistribution = settings.MassRedistributionStrength;
                 settings.MassRedistributionStrength = massRedistribution;
                 _configuration.Save();
                 _armatureManager.RebindAllArmatures();
+                RecordGlobalAdvancedScalingChange("Mass redistribution strength", previousMassRedistribution, massRedistribution, "mass-redistribution");
             }
             CtrlHelper.AddHoverText("Scales how much scale deltas are redistributed across neighboring bones. 0 disables, 1 uses the mode default.");
 
             var naturalization = settings.NaturalizationStrength;
             if (ImGui.SliderFloat("Naturalization strength", ref naturalization, 0f, 1f, "%.2f"))
             {
+                var previousNaturalization = settings.NaturalizationStrength;
                 settings.NaturalizationStrength = naturalization;
                 _configuration.Save();
                 _armatureManager.RebindAllArmatures();
+                RecordGlobalAdvancedScalingChange("Naturalization strength", previousNaturalization, naturalization, "naturalization");
             }
             CtrlHelper.AddHoverText("Blends between your edits and the balanced result. 0 keeps your edits, 1 fully balances.");
 
@@ -558,9 +688,11 @@ public class SettingsTab
                     var selected = value == guardrailMode;
                     if (ImGui.Selectable(value.ToString(), selected))
                     {
+                        var previousGuardrailMode = settings.GuardrailMode;
                         settings.GuardrailMode = value;
                         _configuration.Save();
                         _armatureManager.RebindAllArmatures();
+                        RecordGlobalAdvancedScalingChange("Proportion guardrail mode", previousGuardrailMode.ToString(), value.ToString(), "guardrail-mode");
                     }
 
                     if (selected)
@@ -579,9 +711,11 @@ public class SettingsTab
                     var selected = value == poseValidation;
                     if (ImGui.Selectable(value.ToString(), selected))
                     {
+                        var previousPoseValidationMode = settings.PoseValidationMode;
                         settings.PoseValidationMode = value;
                         _configuration.Save();
                         _armatureManager.RebindAllArmatures();
+                        RecordGlobalAdvancedScalingChange("Pose-aware validation mode", previousPoseValidationMode.ToString(), value.ToString(), "pose-validation-mode");
                     }
 
                     if (selected)
@@ -595,9 +729,15 @@ public class SettingsTab
             var animationSafeMode = settings.AnimationSafeModeEnabled;
             if (ImGui.Checkbox("Animation-safe mode", ref animationSafeMode))
             {
+                var previousAnimationSafeMode = settings.AnimationSafeModeEnabled;
                 settings.AnimationSafeModeEnabled = animationSafeMode;
                 _configuration.Save();
                 _armatureManager.RebindAllArmatures();
+                RecordGlobalAdvancedScalingChange(
+                    "Animation-safe mode",
+                    GetEnabledStateLabel(previousAnimationSafeMode),
+                    GetEnabledStateLabel(animationSafeMode),
+                    "animation-safe-mode");
             }
             CtrlHelper.AddHoverText("Biases advanced scaling and RBF pose-space correctives toward safer, more motion-friendly behavior. It increases smoothing near joints, keeps extremities calmer, and makes corrective behavior more conservative without removing manual control.");
 
@@ -635,6 +775,24 @@ public class SettingsTab
         ImGui.Separator();
         ImGui.TextDisabled(label);
     }
+
+    private void RecordGlobalAdvancedScalingChange(string setting, float previous, float current, string key)
+        => RecordGlobalAdvancedScalingChange(setting, previous.ToString("0.00"), current.ToString("0.00"), key);
+
+    private void RecordGlobalAdvancedScalingChange(string setting, string previous, string current, string key)
+    {
+        if (string.Equals(previous, current, StringComparison.Ordinal))
+            return;
+
+        _activityLogService.Record(
+            ActivityLogCategory.AdvancedScaling,
+            "Global setting changed",
+            $"{setting}: {previous} -> {current}.",
+            coalesceKey: $"global-advanced-scaling:{key}");
+    }
+
+    private static string GetEnabledStateLabel(bool value)
+        => value ? "enabled" : "disabled";
 
     private void DrawBoneImportanceWeightingSettings(AdvancedBodyScalingSettings settings)
     {
@@ -786,27 +944,33 @@ public class SettingsTab
         var neckLength = settings.NeckLengthCompensation;
         if (ImGui.SliderFloat("Neck length compensation", ref neckLength, 0f, 1f, "%.2f"))
         {
+            var previousNeckLength = settings.NeckLengthCompensation;
             settings.NeckLengthCompensation = neckLength;
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
+            RecordGlobalAdvancedScalingChange("Neck length compensation", previousNeckLength, neckLength, "neck-length");
         }
         CtrlHelper.AddHoverText("Shortens neck length along its primary axis without shrinking width. 0 disables.");
 
         var blend = settings.NeckShoulderBlendStrength;
         if (ImGui.SliderFloat("Neck-to-shoulder blend", ref blend, 0f, 1f, "%.2f"))
         {
+            var previousBlend = settings.NeckShoulderBlendStrength;
             settings.NeckShoulderBlendStrength = blend;
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
+            RecordGlobalAdvancedScalingChange("Neck-to-shoulder blend", previousBlend, blend, "neck-shoulder-blend");
         }
         CtrlHelper.AddHoverText("Blends the length correction into upper spine and shoulder roots to keep transitions smooth.");
 
         var clavicleSmoothing = settings.ClavicleShoulderSmoothing;
         if (ImGui.SliderFloat("Clavicle/shoulder bridge smoothing", ref clavicleSmoothing, 0f, 1f, "%.2f"))
         {
+            var previousClavicleSmoothing = settings.ClavicleShoulderSmoothing;
             settings.ClavicleShoulderSmoothing = clavicleSmoothing;
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
+            RecordGlobalAdvancedScalingChange("Clavicle/shoulder smoothing", previousClavicleSmoothing, clavicleSmoothing, "clavicle-shoulder-smoothing");
         }
         CtrlHelper.AddHoverText("Adds extra smoothing across clavicles and shoulder roots to avoid abrupt transitions.");
 
@@ -816,9 +980,15 @@ public class SettingsTab
         var useRacePresets = settings.UseRaceSpecificNeckCompensation;
         if (ImGui.Checkbox("Enable race-specific presets", ref useRacePresets))
         {
+            var previousUseRacePresets = settings.UseRaceSpecificNeckCompensation;
             settings.UseRaceSpecificNeckCompensation = useRacePresets;
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
+            RecordGlobalAdvancedScalingChange(
+                "Enable race-specific presets",
+                GetEnabledStateLabel(previousUseRacePresets),
+                GetEnabledStateLabel(useRacePresets),
+                "race-presets-enabled");
         }
         CtrlHelper.AddHoverText("When enabled, race presets override the global neck/shoulder baseline for the detected actor race when a preset exists.");
         ImGui.TextDisabled("Race-specific presets override the global neck/shoulder baseline for the selected or detected race.");
@@ -892,32 +1062,38 @@ public class SettingsTab
         var working = hasPreset ? preset! : baseline;
 
         var raceLength = working.NeckLengthCompensation;
+        var previousRaceLength = raceLength;
         if (ImGui.SliderFloat("Race neck length compensation", ref raceLength, 0f, 1f, "%.2f"))
         {
             preset = EnsureRacePreset(settings, _neckPresetRace, baseline);
             preset.NeckLengthCompensation = raceLength;
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
+            RecordGlobalAdvancedScalingChange($"{GetRaceLabel(_neckPresetRace)} race neck length compensation", previousRaceLength, raceLength, $"race-{_neckPresetRace}-neck-length");
         }
         CtrlHelper.AddHoverText("Overrides the global neck length compensation baseline for this race preset.");
 
         var raceBlend = working.NeckShoulderBlendStrength;
+        var previousRaceBlend = raceBlend;
         if (ImGui.SliderFloat("Race neck-to-shoulder blend", ref raceBlend, 0f, 1f, "%.2f"))
         {
             preset = EnsureRacePreset(settings, _neckPresetRace, baseline);
             preset.NeckShoulderBlendStrength = raceBlend;
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
+            RecordGlobalAdvancedScalingChange($"{GetRaceLabel(_neckPresetRace)} race neck-to-shoulder blend", previousRaceBlend, raceBlend, $"race-{_neckPresetRace}-neck-shoulder-blend");
         }
         CtrlHelper.AddHoverText("Overrides the global neck-to-shoulder blend baseline for this race preset.");
 
         var raceClavicle = working.ClavicleShoulderSmoothing;
+        var previousRaceClavicle = raceClavicle;
         if (ImGui.SliderFloat("Race clavicle/shoulder smoothing", ref raceClavicle, 0f, 1f, "%.2f"))
         {
             preset = EnsureRacePreset(settings, _neckPresetRace, baseline);
             preset.ClavicleShoulderSmoothing = raceClavicle;
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
+            RecordGlobalAdvancedScalingChange($"{GetRaceLabel(_neckPresetRace)} race clavicle/shoulder smoothing", previousRaceClavicle, raceClavicle, $"race-{_neckPresetRace}-clavicle-smoothing");
         }
         CtrlHelper.AddHoverText("Overrides the global clavicle/shoulder smoothing baseline for this race preset.");
 
@@ -930,6 +1106,10 @@ public class SettingsTab
             working = preset;
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
+            _activityLogService.Record(
+                ActivityLogCategory.AdvancedScaling,
+                "Global race preset restored",
+                $"Restored the {GetRaceLabel(_neckPresetRace)} race preset to shipped defaults.");
         }
         CtrlHelper.AddHoverText(
             "Restore preset defaults = restore this race preset to the plugin's shipped default values. This does not copy the current global baseline.");
@@ -945,6 +1125,10 @@ public class SettingsTab
                 working = baseline;
                 _configuration.Save();
                 _armatureManager.RebindAllArmatures();
+                _activityLogService.Record(
+                    ActivityLogCategory.AdvancedScaling,
+                    "Global race preset cleared",
+                    $"Cleared the {GetRaceLabel(_neckPresetRace)} race preset; it now uses the global neck/shoulder baseline.");
             }
         }
         CtrlHelper.AddHoverText(
@@ -2340,6 +2524,10 @@ public class SettingsTab
             reset();
             _configuration.Save();
             _armatureManager.RebindAllArmatures();
+            _activityLogService.Record(
+                ActivityLogCategory.AdvancedScaling,
+                "Quick reset used",
+                $"Used '{buttonLabel}'.");
         }
         CtrlHelper.AddHoverText(tooltip);
     }
