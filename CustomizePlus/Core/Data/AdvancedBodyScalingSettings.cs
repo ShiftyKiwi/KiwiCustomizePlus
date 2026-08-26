@@ -321,6 +321,67 @@ public sealed class AdvancedBodyScalingSettings
         set => _massRedistributionStrength = Math.Clamp(value, 0f, 1f);
     }
 
+    // Shape-conditioning refinements stay opt-in so existing profiles retain their established output.
+    // Bilateral consistency is different: it preserves the existing symmetric automatic-support
+    // behavior unless an author deliberately provides materially different side-specific inputs.
+    public bool BilateralConsistencyEnabled { get; set; } = true;
+
+    public bool ProportionalBalanceEnabled { get; set; } = false;
+
+    private float _proportionalBalanceStrength = 0.45f;
+    public float ProportionalBalanceStrength
+    {
+        get => _proportionalBalanceStrength;
+        set => _proportionalBalanceStrength = Math.Clamp(value, 0f, 1f);
+    }
+
+    public bool SurfaceSmoothnessEnabled { get; set; } = false;
+
+    private float _surfaceSmoothnessStrength = 0.40f;
+    public float SurfaceSmoothnessStrength
+    {
+        get => _surfaceSmoothnessStrength;
+        set => _surfaceSmoothnessStrength = Math.Clamp(value, 0f, 1f);
+    }
+
+    // Shape conditioning is deliberately opt-in. Existing serialized profiles must retain
+    // their established output until the author explicitly enables a pass.
+    public bool CrossSectionConditioningEnabled { get; set; } = false;
+
+    private float _crossSectionConditioningStrength = 0.35f;
+    public float CrossSectionConditioningStrength
+    {
+        get => _crossSectionConditioningStrength;
+        set => _crossSectionConditioningStrength = Math.Clamp(value, 0f, 1f);
+    }
+
+    public bool ShapeFairnessEnabled { get; set; } = false;
+
+    private float _shapeFairnessStrength = 0.30f;
+    public float ShapeFairnessStrength
+    {
+        get => _shapeFairnessStrength;
+        set => _shapeFairnessStrength = Math.Clamp(value, 0f, 1f);
+    }
+
+    public bool LocalVolumeIntentEnabled { get; set; } = false;
+
+    private float _localVolumeIntentStrength = 0.35f;
+    public float LocalVolumeIntentStrength
+    {
+        get => _localVolumeIntentStrength;
+        set => _localVolumeIntentStrength = Math.Clamp(value, 0f, 1f);
+    }
+
+    public bool PoseAwareJointCorrectivesEnabled { get; set; } = false;
+
+    private float _poseAwareJointCorrectivesStrength = 0.45f;
+    public float PoseAwareJointCorrectivesStrength
+    {
+        get => _poseAwareJointCorrectivesStrength;
+        set => _poseAwareJointCorrectivesStrength = Math.Clamp(value, 0f, 1f);
+    }
+
     public AdvancedBodyScalingGuardrailMode GuardrailMode { get; set; } = AdvancedBodyScalingGuardrailMode.Standard;
     public AdvancedBodyScalingPoseValidationMode PoseValidationMode { get; set; } = AdvancedBodyScalingPoseValidationMode.Standard;
 
@@ -572,6 +633,19 @@ public sealed class AdvancedBodyScalingSettings
         AnimationSafeModeEnabled = defaults.AnimationSafeModeEnabled;
         SurfaceBalancingStrength = defaults.SurfaceBalancingStrength;
         MassRedistributionStrength = defaults.MassRedistributionStrength;
+        BilateralConsistencyEnabled = defaults.BilateralConsistencyEnabled;
+        ProportionalBalanceEnabled = defaults.ProportionalBalanceEnabled;
+        ProportionalBalanceStrength = defaults.ProportionalBalanceStrength;
+        SurfaceSmoothnessEnabled = defaults.SurfaceSmoothnessEnabled;
+        SurfaceSmoothnessStrength = defaults.SurfaceSmoothnessStrength;
+        CrossSectionConditioningEnabled = defaults.CrossSectionConditioningEnabled;
+        CrossSectionConditioningStrength = defaults.CrossSectionConditioningStrength;
+        ShapeFairnessEnabled = defaults.ShapeFairnessEnabled;
+        ShapeFairnessStrength = defaults.ShapeFairnessStrength;
+        LocalVolumeIntentEnabled = defaults.LocalVolumeIntentEnabled;
+        LocalVolumeIntentStrength = defaults.LocalVolumeIntentStrength;
+        PoseAwareJointCorrectivesEnabled = defaults.PoseAwareJointCorrectivesEnabled;
+        PoseAwareJointCorrectivesStrength = defaults.PoseAwareJointCorrectivesStrength;
         GuardrailMode = defaults.GuardrailMode;
         PoseValidationMode = defaults.PoseValidationMode;
         NaturalizationStrength = defaults.NaturalizationStrength;
@@ -602,6 +676,19 @@ public sealed class AdvancedBodyScalingSettings
             AnimationSafeModeEnabled = AnimationSafeModeEnabled,
             SurfaceBalancingStrength = SurfaceBalancingStrength,
             MassRedistributionStrength = MassRedistributionStrength,
+            BilateralConsistencyEnabled = BilateralConsistencyEnabled,
+            ProportionalBalanceEnabled = ProportionalBalanceEnabled,
+            ProportionalBalanceStrength = ProportionalBalanceStrength,
+            SurfaceSmoothnessEnabled = SurfaceSmoothnessEnabled,
+            SurfaceSmoothnessStrength = SurfaceSmoothnessStrength,
+            CrossSectionConditioningEnabled = CrossSectionConditioningEnabled,
+            CrossSectionConditioningStrength = CrossSectionConditioningStrength,
+            ShapeFairnessEnabled = ShapeFairnessEnabled,
+            ShapeFairnessStrength = ShapeFairnessStrength,
+            LocalVolumeIntentEnabled = LocalVolumeIntentEnabled,
+            LocalVolumeIntentStrength = LocalVolumeIntentStrength,
+            PoseAwareJointCorrectivesEnabled = PoseAwareJointCorrectivesEnabled,
+            PoseAwareJointCorrectivesStrength = PoseAwareJointCorrectivesStrength,
             GuardrailMode = GuardrailMode,
             PoseValidationMode = PoseValidationMode,
             NaturalizationStrength = NaturalizationStrength,

@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using Dalamud.Utility;
 
 namespace CustomizePlus.Core.Data;
 
@@ -59,11 +58,9 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
         "j_f_dmab_l,Eyelid Lower Left,Face,TRUE,FALSE,j_kao,j_f_dmab_r",
         "j_f_dmab_r,Eyelid Lower Right,Face,TRUE,FALSE,j_kao,j_f_dmab_l",
         "j_f_eye_l,Eye Left,Face,TRUE,FALSE,j_kao,j_f_eye_r", "j_f_eye_r,Eye Right,Face,TRUE,FALSE,j_kao,j_f_eye_l",
-        "j_f_hoho_l,Cheek Left,Face,TRUE,FALSE,j_kao,j_f_hoho_r",
-        "j_f_hoho_r,Cheek Right,Face,TRUE,FALSE,j_kao,j_f_hoho_l",
         "j_f_hige_l,Hrothgar Whiskers Left,Face,FALSE,FALSE,j_kao,j_f_hige_r",
         "j_f_hige_r,Hrothgar Whiskers Right,Face,FALSE,FALSE,j_kao,j_f_hige_l",
-        "j_f_hana,Nose,Face,TRUE,FALSE,j_kao,", "j_f_lip_l,Lips Left,Face,TRUE,FALSE,j_kao,j_f_lip_r",
+        "j_f_lip_l,Lips Left,Face,TRUE,FALSE,j_kao,j_f_lip_r",
         "j_f_lip_r,Lips Right,Face,TRUE,FALSE,j_kao,j_f_lip_l", "j_f_ulip_a,Lip Upper A,Face,TRUE,FALSE,j_kao,",
         "j_f_ulip_b,Lip Upper B,Face,TRUE,FALSE,j_kao,", "j_f_dlip_a,Lip Lower A,Face,TRUE,FALSE,j_kao,",
         "j_f_dlip_b,Lip Lower B,Face,TRUE,FALSE,j_kao,",
@@ -172,24 +169,24 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
         "j_asi_e_r,Toes Right,Feet,TRUE,FALSE,j_asi_d_r,j_asi_e_l",
         "iv_asi_oya_a_l,Big Toe A Left,Feet,FALSE,TRUE,j_asi_e_l,iv_asi_oya_a_r",
         "iv_asi_oya_a_r,Big Toe A Right,Feet,FALSE,TRUE,j_asi_e_r,iv_asi_oya_a_l",
-        "iv_asi_oya_b_l,Big Toe B Left,Feet,FALSE,TRUE,j_asi_oya_a_l,iv_asi_oya_b_r",
-        "iv_asi_oya_b_r,Big Toe B Right,Feet,FALSE,TRUE,j_asi_oya_a_r,iv_asi_oya_b_l",
+        "iv_asi_oya_b_l,Big Toe B Left,Feet,FALSE,TRUE,iv_asi_oya_a_l,iv_asi_oya_b_r",
+        "iv_asi_oya_b_r,Big Toe B Right,Feet,FALSE,TRUE,iv_asi_oya_a_r,iv_asi_oya_b_l",
         "iv_asi_hito_a_l,Index Toe A Left,Feet,FALSE,TRUE,j_asi_e_l,iv_asi_hito_a_r",
         "iv_asi_hito_a_r,Index Toe A Right,Feet,FALSE,TRUE,j_asi_e_r,iv_asi_hito_a_l",
-        "iv_asi_hito_b_l,Index Toe B Left,Feet,FALSE,TRUE,j_asi_hito_a_l,iv_asi_hito_b_r",
-        "iv_asi_hito_b_r,Index Toe B Right,Feet,FALSE,TRUE,j_asi_hito_a_r,iv_asi_hito_b_l",
+        "iv_asi_hito_b_l,Index Toe B Left,Feet,FALSE,TRUE,iv_asi_hito_a_l,iv_asi_hito_b_r",
+        "iv_asi_hito_b_r,Index Toe B Right,Feet,FALSE,TRUE,iv_asi_hito_a_r,iv_asi_hito_b_l",
         "iv_asi_naka_a_l,Middle Toe A Left,Feet,FALSE,TRUE,j_asi_e_l,iv_asi_naka_a_r",
         "iv_asi_naka_a_r,Middle Toe A Right,Feet,FALSE,TRUE,j_asi_e_r,iv_asi_naka_a_l",
-        "iv_asi_naka_b_l,Middle Toe B Left,Feet,FALSE,TRUE,j_asi_naka_a_l,iv_asi_naka_b_r",
-        "iv_asi_naka_b_r,Middle Toe B Right,Feet,FALSE,TRUE,j_asi_naka_a_r,iv_asi_naka_b_l",
+        "iv_asi_naka_b_l,Middle Toe B Left,Feet,FALSE,TRUE,iv_asi_naka_a_l,iv_asi_naka_b_r",
+        "iv_asi_naka_b_r,Middle Toe B Right,Feet,FALSE,TRUE,iv_asi_naka_a_r,iv_asi_naka_b_l",
         "iv_asi_kusu_a_l,Fore Toe A Left,Feet,FALSE,TRUE,j_asi_e_l,iv_asi_kusu_a_r",
         "iv_asi_kusu_a_r,Fore Toe A Right,Feet,FALSE,TRUE,j_asi_e_r,iv_asi_kusu_a_l",
-        "iv_asi_kusu_b_l,Fore Toe B Left,Feet,FALSE,TRUE,j_asi_kusu_a_l,iv_asi_kusu_b_r",
-        "iv_asi_kusu_b_r,Fore Toe B Right,Feet,FALSE,TRUE,j_asi_kusu_a_r,iv_asi_kusu_b_l",
+        "iv_asi_kusu_b_l,Fore Toe B Left,Feet,FALSE,TRUE,iv_asi_kusu_a_l,iv_asi_kusu_b_r",
+        "iv_asi_kusu_b_r,Fore Toe B Right,Feet,FALSE,TRUE,iv_asi_kusu_a_r,iv_asi_kusu_b_l",
         "iv_asi_ko_a_l,Pinky Toe A Left,Feet,FALSE,TRUE,j_asi_e_l,iv_asi_ko_a_r",
         "iv_asi_ko_a_r,Pinky Toe A Right,Feet,FALSE,TRUE,j_asi_e_r,iv_asi_ko_a_l",
-        "iv_asi_ko_b_l,Pinky Toe B Left,Feet,FALSE,TRUE,j_asi_ko_a_l,iv_asi_ko_b_r",
-        "iv_asi_ko_b_r,Pinky Toe B Right,Feet,FALSE,TRUE,j_asi_ko_a_r,iv_asi_ko_b_l",
+        "iv_asi_ko_b_l,Pinky Toe B Left,Feet,FALSE,TRUE,iv_asi_ko_a_l,iv_asi_ko_b_r",
+        "iv_asi_ko_b_r,Pinky Toe B Right,Feet,FALSE,TRUE,iv_asi_ko_a_r,iv_asi_ko_b_l",
         "j_ex_met_va,Visor,Hat,FALSE,FALSE,j_kao,", "j_ex_met_a,Hat Accessory A,Hat,FALSE,FALSE,j_kao,",
         "j_ex_met_b,Hat Accessory B,Hat,FALSE,FALSE,j_kao,",
         "n_ear_b_l,Earring B Left,Earrings,FALSE,FALSE,n_ear_a_l,n_ear_b_r",
@@ -303,8 +300,47 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
         "j_f_miken_01_r,Brow Ridge A Right,Eyes,TRUE,FALSE,j_f_mmayu_r,j_f_miken_01_l",
         "j_f_miken_02_r,Brow Ridge B Right,Eyes,TRUE,FALSE,j_f_miken_01_r,j_f_miken_02_l",
 
-        "iv_fukubu_phys,Upper Belly,Spine,TRUE,FALSE,j_sebo_a,j_sebo_a",
-        "ya_fukubu_phys,Lower Belly,Spine,TRUE,FALSE,j_kosi,j_kosi",
+        "iv_fukubu_phys,Upper Belly,Spine,TRUE,FALSE,j_sebo_a,",
+        "ya_fukubu_phys,Lower Belly,Spine,TRUE,FALSE,j_kosi,",
+        "iv_kyokin_phys_l,Chest Physics Left,Chest,FALSE,FALSE,j_sebo_b,iv_kyokin_phys_r",
+        "iv_kyokin_phys_r,Chest Physics Right,Chest,FALSE,FALSE,j_sebo_b,iv_kyokin_phys_l",
+        "iv_fukubu_phys_l,Belly Physics Left,Spine,FALSE,FALSE,j_sebo_a,iv_fukubu_phys_r",
+        "iv_fukubu_phys_r,Belly Physics Right,Spine,FALSE,FALSE,j_sebo_a,iv_fukubu_phys_l",
+        "iv_kintama_phys_l,Scrotum Physics Left,Groin,FALSE,FALSE,iv_kougan_l,iv_kintama_phys_r",
+        "iv_kintama_phys_r,Scrotum Physics Right,Groin,FALSE,FALSE,iv_kougan_r,iv_kintama_phys_l",
+        "iv_funyachin_phy_a,Flaccid Penis Physics A,Groin,FALSE,FALSE,j_kosi,",
+        "iv_funyachin_phy_b,Flaccid Penis Physics B,Groin,FALSE,FALSE,iv_funyachin_phy_a,",
+        "iv_funyachin_phy_c,Flaccid Penis Physics C,Groin,FALSE,FALSE,iv_funyachin_phy_b,",
+        "iv_funyachin_phy_d,Flaccid Penis Physics D,Groin,FALSE,FALSE,iv_funyachin_phy_c,",
+        "nf_bulge_a,NFLB Bulge,Groin,FALSE,FALSE,j_kosi,",
+        "nf_nipple_l,NFLB Nipple Left,Chest,FALSE,FALSE,iv_c_mune_l,nf_nipple_r",
+        "nf_nipple_r,NFLB Nipple Right,Chest,FALSE,FALSE,iv_c_mune_r,nf_nipple_l",
+        "nf_clitoris,NFLB Clitoris,Groin,FALSE,FALSE,iv_kuritto,",
+        "nf_labia_inner_l,NFLB Inner Labia Left,Groin,FALSE,FALSE,iv_inshin_l,nf_labia_inner_r",
+        "nf_labia_inner_r,NFLB Inner Labia Right,Groin,FALSE,FALSE,iv_inshin_r,nf_labia_inner_l",
+        "nf_labia_outer_l,NFLB Outer Labia Left,Groin,FALSE,FALSE,iv_inshin_l,nf_labia_outer_r",
+        "nf_labia_outer_r,NFLB Outer Labia Right,Groin,FALSE,FALSE,iv_inshin_r,nf_labia_outer_l",
+        "butt_left,Skelomae Buttock Left,Groin,FALSE,FALSE,,butt_right",
+        "butt_right,Skelomae Buttock Right,Groin,FALSE,FALSE,,butt_left",
+        "thigh_l,Skelomae Thigh Left,Legs,FALSE,FALSE,,thigh_r",
+        "thigh_r,Skelomae Thigh Right,Legs,FALSE,FALSE,,thigh_l",
+        "belly_sebo_a,Skelomae Belly Spine,Spine,FALSE,FALSE,,",
+        "belly_kosi,Skelomae Belly Waist,Spine,FALSE,FALSE,,",
+        "forebreas_l,Skelomae Forebreast Left,Chest,FALSE,FALSE,,forebreas_r",
+        "forebreas_r,Skelomae Forebreast Right,Chest,FALSE,FALSE,,forebreas_l",
+        "tongue_a,Skelomae Tongue A,Tongue,FALSE,FALSE,,", "tongue_b,Skelomae Tongue B,Tongue,FALSE,FALSE,tongue_a,",
+        "tongue_c,Skelomae Tongue C,Tongue,FALSE,FALSE,tongue_b,", "tongue_d,Skelomae Tongue D,Tongue,FALSE,FALSE,tongue_c,",
+        "tongue_e,Skelomae Tongue E,Tongue,FALSE,FALSE,tongue_d,",
+        "mkl_wingbase_l,Skelomae Wing Base Left,Equipment,FALSE,FALSE,,mkl_wingbase_r",
+        "mkl_wingbase_r,Skelomae Wing Base Right,Equipment,FALSE,FALSE,,mkl_wingbase_l",
+        "mkl_wingarm_a_l,Skelomae Wing Arm A Left,Equipment,FALSE,FALSE,mkl_wingbase_l,mkl_wingarm_a_r",
+        "mkl_wingarm_a_r,Skelomae Wing Arm A Right,Equipment,FALSE,FALSE,mkl_wingbase_r,mkl_wingarm_a_l",
+        "mkl_wingarm_b_l,Skelomae Wing Arm B Left,Equipment,FALSE,FALSE,mkl_wingarm_a_l,mkl_wingarm_b_r",
+        "mkl_wingarm_b_r,Skelomae Wing Arm B Right,Equipment,FALSE,FALSE,mkl_wingarm_a_r,mkl_wingarm_b_l",
+        "mkl_wingarm_c_l,Skelomae Wing Arm C Left,Equipment,FALSE,FALSE,mkl_wingarm_b_l,mkl_wingarm_c_r",
+        "mkl_wingarm_c_r,Skelomae Wing Arm C Right,Equipment,FALSE,FALSE,mkl_wingarm_b_r,mkl_wingarm_c_l",
+        "mkl_wingarm_d_l,Skelomae Wing Arm D Left,Equipment,FALSE,FALSE,mkl_wingarm_c_l,mkl_wingarm_d_r",
+        "mkl_wingarm_d_r,Skelomae Wing Arm D Right,Equipment,FALSE,FALSE,mkl_wingarm_c_r,mkl_wingarm_d_l",
     };
 
     public static readonly Dictionary<BoneFamily, string?> DisplayableFamilies = new()
@@ -380,7 +416,12 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
                     var codename = cells[0];
                     var dispName = cells[1];
 
-                    BoneTable[codename] = new BoneDatum(rowIndex, cells);
+                    if (BoneTable.ContainsKey(codename))
+                        throw new InvalidOperationException($"Duplicate canonical bone name '{codename}'.");
+
+                    var datum = new BoneDatum(rowIndex, cells);
+                    datum.Metadata = ResolveMetadata(codename, datum);
+                    BoneTable.Add(codename, datum);
                     BoneLookupByDispName[dispName] = codename;
 
                     if (BoneTable[codename].Family == BoneFamily.Unknown)
@@ -388,9 +429,9 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
                         throw new Exception("what the fuck?");
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    throw new InvalidCastException($"Couldn't parse raw bone table @ row {rowIndex}");
+                    throw new InvalidCastException($"Couldn't parse raw bone table @ row {rowIndex}", ex);
                 }
 
                 ++rowIndex;
@@ -412,30 +453,41 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
     {
         lock (BoneTable)
         {
-            var probablyHairstyleBones = boneNames.Where(IsProbablyHairstyle).ToArray();
+            var canonicalNames = boneNames
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .Select(CuratedBoneRegistry.Canonicalize)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            var probablyHairstyleBones = canonicalNames.Where(IsProbablyHairstyle).ToArray();
 
             foreach (var hairBone in ParseHairstyle(probablyHairstyleBones))
             {
-                BoneTable[hairBone.Codename] = hairBone;
-                BoneLookupByDispName[hairBone.DisplayName] = hairBone.Codename;
+                var datum = hairBone;
+                datum.Metadata = ResolveMetadata(datum.Codename, datum);
+                BoneTable[datum.Codename] = datum;
+                BoneLookupByDispName[datum.DisplayName] = datum.Codename;
             }
 
-            foreach (var boneName in boneNames.Except(BoneTable.Keys))
+            foreach (var boneName in canonicalNames.Except(BoneTable.Keys))
             {
-                var displayName = $"Unknown ({boneName})";
-                BoneTable[boneName] = new BoneDatum
+                var datum = new BoneDatum
                 {
                     RowIndex = int.MaxValue,
                     Codename = boneName,
-                    DisplayName = displayName,
-                    Family = BoneFamily.Unknown,
+                    DisplayName = boneName,
+                    Family = boneName.StartsWith("nf_", StringComparison.Ordinal) ? BoneFamily.Equipment : BoneFamily.Unknown,
                     IsDefault = false,
                     IsIVCSCompatible = false,
                     Parent = null,
                     Children = Array.Empty<string>(),
                     MirroredCodename = null
                 };
-                BoneLookupByDispName[displayName] = boneName;
+                datum.Metadata = ResolveMetadata(boneName, datum);
+                datum.DisplayName = datum.Metadata.Origin == BoneOrigin.UnknownCustom
+                    ? $"Unknown ({boneName})"
+                    : $"{datum.Metadata.Origin} ({boneName})";
+                BoneTable[boneName] = datum;
+                BoneLookupByDispName[datum.DisplayName] = boneName;
             }
         }
     }
@@ -454,7 +506,8 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
 
     public static string GetBoneDisplayName(string codename)
     {
-        return BoneTable.TryGetValue(codename, out var row) ? row.DisplayName : codename;
+        var canonical = CuratedBoneRegistry.Canonicalize(codename);
+        return BoneTable.TryGetValue(canonical, out var row) ? row.DisplayName : canonical;
     }
 
     public static string? GetBoneCodename(string boneDisplayName)
@@ -479,12 +532,51 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
 
     public static BoneFamily GetBoneFamily(string codename)
     {
-        return BoneTable.TryGetValue(codename, out var row) ? row.Family : BoneFamily.Unknown;
+        return BoneTable.TryGetValue(CuratedBoneRegistry.Canonicalize(codename), out var row) ? row.Family : BoneFamily.Unknown;
     }
+
+    public static string GetCanonicalBoneName(string codename)
+        => CuratedBoneRegistry.Canonicalize(codename);
+
+    public static BoneMetadata GetMetadata(string codename)
+    {
+        var canonical = CuratedBoneRegistry.Canonicalize(codename);
+        if (BoneTable.TryGetValue(canonical, out var row))
+            return row.Metadata;
+
+        return CuratedBoneRegistry.InferKnownExtension(canonical);
+    }
+
+    public static bool HasAutomationTrust(string codename, BoneAutomationTrust trust)
+        => GetMetadata(codename).HasTrust(trust);
+
+    public static bool IsUnknownCustomBone(string codename)
+        => GetMetadata(codename).Origin == BoneOrigin.UnknownCustom;
+
+    public static SkeletonCapabilityManifest EvaluateCapabilities(IEnumerable<string> liveBoneNames)
+        => CuratedBoneRegistry.EvaluateCapabilities(liveBoneNames, GetMetadata);
+
+    /// <summary>
+    /// Evaluates the published live topology for diagnostics only. The result does not alter bone trust or runtime behavior.
+    /// </summary>
+    public static SkeletonCapabilityManifest EvaluateCapabilityManifest(
+        IEnumerable<ObservedSkeletonBone> observedBones,
+        IReadOnlyList<int> partialBoneCounts,
+        long revision,
+        int stableObservations,
+        bool bindingCurrent)
+        => SkeletonCapabilityManifestEvaluator.Evaluate(
+            observedBones,
+            partialBoneCounts,
+            revision,
+            stableObservations,
+            bindingCurrent,
+            GetMetadata,
+            GetCanonicalBoneName);
 
     public static bool IsDefaultBone(string codename)
     {
-        return BoneTable.TryGetValue(codename, out var row) && row.IsDefault;
+        return BoneTable.TryGetValue(CuratedBoneRegistry.Canonicalize(codename), out var row) && row.IsDefault;
     }
 
     public static int GetBoneRanking(string codename)
@@ -494,17 +586,94 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
 
     public static bool IsIVCSCompatibleBone(string codename)
     {
-        return BoneTable.TryGetValue(codename, out var row) && row.IsIVCSCompatible;
+        return BoneTable.TryGetValue(CuratedBoneRegistry.Canonicalize(codename), out var row) && row.IsIVCSCompatible;
     }
 
     public static string? GetBoneMirror(string codename)
     {
-        return BoneTable.TryGetValue(codename, out var row) ? row.MirroredCodename : null;
+        return BoneTable.TryGetValue(CuratedBoneRegistry.Canonicalize(codename), out var row) ? row.MirroredCodename : null;
+    }
+
+    public static string? GetAutomationMirror(string codename)
+    {
+        var mirror = GetBoneMirror(codename);
+        return mirror != null
+               && HasAutomationTrust(codename, BoneAutomationTrust.MirrorSafe)
+               && HasAutomationTrust(mirror, BoneAutomationTrust.MirrorSafe)
+            ? mirror
+            : null;
     }
 
     public static string[] GetChildren(string codename)
     {
         return BoneTable.TryGetValue(codename, out var row) ? row.Children : Array.Empty<string>();
+    }
+
+    /// <summary>
+    /// Validates the static, advisory registry. Live armature topology is deliberately not checked here.
+    /// </summary>
+    public static IReadOnlyList<string> ValidateRegistry()
+    {
+        var issues = new List<string>();
+        foreach (var (name, datum) in BoneTable)
+        {
+            if (datum.MirroredCodename is { } mirror)
+            {
+                if (mirror == name)
+                    issues.Add($"{name} mirrors itself.");
+                else if (!BoneTable.TryGetValue(mirror, out var mirrorDatum))
+                    issues.Add($"{name} references missing mirror {mirror}.");
+                else if (mirrorDatum.MirroredCodename != name)
+                    issues.Add($"{name} and {mirror} are not symmetric mirrors.");
+            }
+
+            if (datum.Metadata.ScalingInheritance.SourceBone is { } source && !BoneTable.ContainsKey(source))
+                issues.Add($"{name} references missing scaling source {source}.");
+            if (datum.Parent is { } parent && !BoneTable.ContainsKey(parent))
+                issues.Add($"{name} references missing advisory parent {parent}.");
+        }
+
+        foreach (var (alias, canonical) in CuratedBoneRegistry.KnownAliases)
+        {
+            if (alias == canonical)
+                issues.Add($"Alias {alias} resolves to itself.");
+            else if (!BoneTable.ContainsKey(canonical))
+                issues.Add($"Alias {alias} references missing canonical bone {canonical}.");
+            else if (CuratedBoneRegistry.TryGetAliasTarget(canonical, out _))
+                issues.Add($"Alias {alias} resolves through another alias.");
+        }
+
+        foreach (var name in BoneTable.Keys)
+        {
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            var current = name;
+            while (BoneTable.TryGetValue(current, out var datum) && datum.Parent is { } parent)
+            {
+                if (!visited.Add(current))
+                {
+                    issues.Add($"Advisory parent cycle includes {name}.");
+                    break;
+                }
+
+                current = parent;
+            }
+
+            var metadata = BoneTable[name].Metadata;
+            if (metadata.Origin == BoneOrigin.UnknownCustom && metadata.Trust != BoneAutomationTrust.ManualOnly)
+                issues.Add($"Unknown/custom bone {name} has automation trust.");
+            if (metadata.Role is BoneFunctionalRole.ClothingRig or BoneFunctionalRole.PropRig
+                && metadata.HasTrust(BoneAutomationTrust.SemanticSafe | BoneAutomationTrust.PropagationSafe))
+            {
+                issues.Add($"{name} grants body automation to a clothing or prop rig.");
+            }
+            if (metadata.ScalingInheritance.Mode == BoneScalingInheritanceMode.None
+                && metadata.ScalingInheritance.SourceBone != null)
+            {
+                issues.Add($"{name} has a scaling source without an inheritance mode.");
+            }
+        }
+
+        return issues;
     }
 
     public static bool MatchesSearch(string codename, string search)
@@ -536,7 +705,7 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
 
     public static bool IsNewBone(string codename)
     {
-        return !BoneTable.ContainsKey(codename);
+        return !BoneTable.ContainsKey(CuratedBoneRegistry.Canonicalize(codename));
     }
 
     private static BoneFamily ParseFamilyName(string n)
@@ -589,6 +758,7 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
         public string? MirroredCodename;
 
         public string[] Children;
+        public BoneMetadata Metadata;
 
         public BoneDatum(int row, string[] fields)
         {
@@ -604,12 +774,13 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
             IsDefault = bool.Parse(fields[i++]);
             IsIVCSCompatible = bool.Parse(fields[i++]);
 
-            Parent = fields[i].IsNullOrEmpty() ? null : fields[i];
+            Parent = string.IsNullOrEmpty(fields[i]) ? null : fields[i];
             i++;
-            MirroredCodename = fields[i].IsNullOrEmpty() ? null : fields[i];
+            MirroredCodename = string.IsNullOrEmpty(fields[i]) ? null : fields[i];
             i++;
 
             Children = Array.Empty<string>();
+            Metadata = BoneMetadata.Unknown;
         }
 
         public int CompareTo(BoneDatum other)
@@ -666,6 +837,8 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
                         MirroredCodename = null
                     };
 
+                    result.Metadata = ResolveMetadata(result.Codename, result);
+
                     output.Add(result);
                 }
             }
@@ -680,6 +853,40 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
         return output;
     }
 
+    private static BoneMetadata ResolveMetadata(string codename, BoneDatum datum)
+    {
+        if (CuratedBoneRegistry.TryGet(codename, out var curated))
+            return curated;
+
+        if (codename.StartsWith("nf_", StringComparison.Ordinal))
+            return CuratedBoneRegistry.InferKnownExtension(codename);
+
+        if (datum.Family == BoneFamily.Unknown)
+            return BoneMetadata.Unknown;
+
+        var role = codename.Contains("_ex", StringComparison.Ordinal)
+            ? BoneFunctionalRole.ConditionalExtra
+            : datum.Family switch
+        {
+            BoneFamily.Root or BoneFamily.Spine or BoneFamily.Chest or BoneFamily.Arms or BoneFamily.Hands or BoneFamily.Legs or BoneFamily.Feet or BoneFamily.Tail or BoneFamily.Groin => BoneFunctionalRole.StructuralAnatomical,
+            BoneFamily.Face => BoneFunctionalRole.FacePrimary,
+            BoneFamily.Eyes or BoneFamily.Cheeks or BoneFamily.Jaw or BoneFamily.Lips or BoneFamily.Tongue => BoneFunctionalRole.FaceHelper,
+            BoneFamily.Equipment or BoneFamily.Hat or BoneFamily.Cape or BoneFamily.Armor or BoneFamily.Skirt or BoneFamily.Earrings => BoneFunctionalRole.GearAttachment,
+            _ => BoneFunctionalRole.AnimationHelper,
+        };
+        var availability = codename.Contains("_ex", StringComparison.Ordinal)
+            ? BoneAvailability.GearConditional | BoneAvailability.ConditionalExtra
+            : role is BoneFunctionalRole.FacePrimary or BoneFunctionalRole.FaceHelper
+                ? BoneAvailability.GPoseOrCutsceneOnly
+                : BoneAvailability.Gameplay;
+        var trust = datum.IsDefault && role == BoneFunctionalRole.StructuralAnatomical
+            ? BoneAutomationTrust.MirrorSafe | BoneAutomationTrust.PropagationSafe | BoneAutomationTrust.TemplateSafe | BoneAutomationTrust.SemanticSafe | BoneAutomationTrust.AdvancedCorrectiveSafe
+            : datum.IsDefault
+                ? BoneAutomationTrust.MirrorSafe | BoneAutomationTrust.TemplateSafe
+                : BoneAutomationTrust.TemplateSafe;
+        return new BoneMetadata(BoneOrigin.Vanilla, role, availability, trust, BoneAnimationCompatibility.VanillaBaseline, BoneScalingInheritance.None, datum.Parent);
+    }
+
     private static (string name, int id, string sub1, string? sub2) ParseHairBone(string boneName)
     {
         var groups = Regex.Match(boneName.ToLower(), @"j_ex_h(\d\d\d\d)_ke_([abcdeflrsu])(?:_([abcdeflrsu]))?")
@@ -687,7 +894,7 @@ public static class BoneData //todo: DI, do not show IVCS unless IVCS is install
 
         var idNo = int.Parse(groups[1].Value);
         var subFirst = groups[2].Value;
-        var subSecond = groups[3].Value.IsNullOrWhitespace() ? null : groups[3].Value;
+        var subSecond = string.IsNullOrWhiteSpace(groups[3].Value) ? null : groups[3].Value;
 
         return (boneName, idNo, subFirst, subSecond);
     }

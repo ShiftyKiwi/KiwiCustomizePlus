@@ -90,6 +90,19 @@ public sealed class AdvancedBodyScalingOverrides
     public float? FullBodyIkMaxCorrectionClamp { get; set; }
     public float? SurfaceBalancingStrength { get; set; }
     public float? MassRedistributionStrength { get; set; }
+    public bool? BilateralConsistencyEnabled { get; set; }
+    public bool? ProportionalBalanceEnabled { get; set; }
+    public float? ProportionalBalanceStrength { get; set; }
+    public bool? SurfaceSmoothnessEnabled { get; set; }
+    public float? SurfaceSmoothnessStrength { get; set; }
+    public bool? CrossSectionConditioningEnabled { get; set; }
+    public float? CrossSectionConditioningStrength { get; set; }
+    public bool? ShapeFairnessEnabled { get; set; }
+    public float? ShapeFairnessStrength { get; set; }
+    public bool? LocalVolumeIntentEnabled { get; set; }
+    public float? LocalVolumeIntentStrength { get; set; }
+    public bool? PoseAwareJointCorrectivesEnabled { get; set; }
+    public float? PoseAwareJointCorrectivesStrength { get; set; }
     public AdvancedBodyScalingGuardrailMode? GuardrailMode { get; set; }
     public float? NaturalizationStrength { get; set; }
     public AdvancedBodyScalingPoseValidationMode? PoseValidationMode { get; set; }
@@ -248,6 +261,45 @@ public sealed class AdvancedBodyScalingOverrides
         if (MassRedistributionStrength.HasValue)
             merged.MassRedistributionStrength = MassRedistributionStrength.Value;
 
+        if (BilateralConsistencyEnabled.HasValue)
+            merged.BilateralConsistencyEnabled = BilateralConsistencyEnabled.Value;
+
+        if (ProportionalBalanceEnabled.HasValue)
+            merged.ProportionalBalanceEnabled = ProportionalBalanceEnabled.Value;
+
+        if (ProportionalBalanceStrength.HasValue)
+            merged.ProportionalBalanceStrength = ProportionalBalanceStrength.Value;
+
+        if (SurfaceSmoothnessEnabled.HasValue)
+            merged.SurfaceSmoothnessEnabled = SurfaceSmoothnessEnabled.Value;
+
+        if (SurfaceSmoothnessStrength.HasValue)
+            merged.SurfaceSmoothnessStrength = SurfaceSmoothnessStrength.Value;
+
+        if (CrossSectionConditioningEnabled.HasValue)
+            merged.CrossSectionConditioningEnabled = CrossSectionConditioningEnabled.Value;
+
+        if (CrossSectionConditioningStrength.HasValue)
+            merged.CrossSectionConditioningStrength = CrossSectionConditioningStrength.Value;
+
+        if (ShapeFairnessEnabled.HasValue)
+            merged.ShapeFairnessEnabled = ShapeFairnessEnabled.Value;
+
+        if (ShapeFairnessStrength.HasValue)
+            merged.ShapeFairnessStrength = ShapeFairnessStrength.Value;
+
+        if (LocalVolumeIntentEnabled.HasValue)
+            merged.LocalVolumeIntentEnabled = LocalVolumeIntentEnabled.Value;
+
+        if (LocalVolumeIntentStrength.HasValue)
+            merged.LocalVolumeIntentStrength = LocalVolumeIntentStrength.Value;
+
+        if (PoseAwareJointCorrectivesEnabled.HasValue)
+            merged.PoseAwareJointCorrectivesEnabled = PoseAwareJointCorrectivesEnabled.Value;
+
+        if (PoseAwareJointCorrectivesStrength.HasValue)
+            merged.PoseAwareJointCorrectivesStrength = PoseAwareJointCorrectivesStrength.Value;
+
         if (GuardrailMode.HasValue)
             merged.GuardrailMode = GuardrailMode.Value;
 
@@ -394,6 +446,19 @@ public sealed class AdvancedBodyScalingOverrides
             FullBodyIkMaxCorrectionClamp = FullBodyIkMaxCorrectionClamp,
             SurfaceBalancingStrength = SurfaceBalancingStrength,
             MassRedistributionStrength = MassRedistributionStrength,
+            BilateralConsistencyEnabled = BilateralConsistencyEnabled,
+            ProportionalBalanceEnabled = ProportionalBalanceEnabled,
+            ProportionalBalanceStrength = ProportionalBalanceStrength,
+            SurfaceSmoothnessEnabled = SurfaceSmoothnessEnabled,
+            SurfaceSmoothnessStrength = SurfaceSmoothnessStrength,
+            CrossSectionConditioningEnabled = CrossSectionConditioningEnabled,
+            CrossSectionConditioningStrength = CrossSectionConditioningStrength,
+            ShapeFairnessEnabled = ShapeFairnessEnabled,
+            ShapeFairnessStrength = ShapeFairnessStrength,
+            LocalVolumeIntentEnabled = LocalVolumeIntentEnabled,
+            LocalVolumeIntentStrength = LocalVolumeIntentStrength,
+            PoseAwareJointCorrectivesEnabled = PoseAwareJointCorrectivesEnabled,
+            PoseAwareJointCorrectivesStrength = PoseAwareJointCorrectivesStrength,
             GuardrailMode = GuardrailMode,
             NaturalizationStrength = NaturalizationStrength,
             PoseValidationMode = PoseValidationMode,

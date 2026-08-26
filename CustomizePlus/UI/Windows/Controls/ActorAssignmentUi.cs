@@ -84,6 +84,12 @@ public class ActorAssignmentUi
             return;
 
         var combo = GetNpcCombo(_newKind);
+        if (combo == null)
+        {
+            ImGui.TextDisabled("The selected object kind is not supported for NPC assignment.");
+            return;
+        }
+
         if (combo.Draw(width))
             UpdateIdentifiersInternal();
     }
@@ -97,7 +103,7 @@ public class ActorAssignmentUi
         ObjectKind.Ornament,
     };
 
-    private Penumbra.GameData.Gui.NpcCombo GetNpcCombo(ObjectKind kind)
+    private Penumbra.GameData.Gui.NpcCombo? GetNpcCombo(ObjectKind kind)
         => kind switch
         {
             ObjectKind.BattleNpc => _bnpcCombo,
@@ -105,7 +111,7 @@ public class ActorAssignmentUi
             ObjectKind.Mount => _mountCombo,
             ObjectKind.Companion => _companionCombo,
             ObjectKind.Ornament => _ornamentCombo,
-            _ => throw new NotImplementedException(),
+            _ => null,
         };
 
 
@@ -131,7 +137,7 @@ public class ActorAssignmentUi
 
         var npcCombo = GetNpcCombo(_newKind);
 
-        if (npcCombo.Selected.Ids == null || npcCombo.Selected.Ids.Length == 0)
+        if (npcCombo == null || npcCombo.Selected.Ids == null || npcCombo.Selected.Ids.Length == 0)
             NpcIdentifier = ActorIdentifier.Invalid;
         else
         {
@@ -148,7 +154,8 @@ public class ActorAssignmentUi
                     NpcIdentifier = _actorManager.CreateOwned(currentPlayer.PlayerName, currentPlayer.HomeWorld, _newKind, npcCombo.Selected.Ids[0]);
                     break;
                 default:
-                    throw new NotImplementedException();
+                    NpcIdentifier = ActorIdentifier.Invalid;
+                    break;
             }
         }
     }

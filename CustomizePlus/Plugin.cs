@@ -42,6 +42,10 @@ public sealed class Plugin : IDalamudPlugin
             _services.GetService<CPlusWindowSystem>();
             _services.GetService<CommandService>();
 
+#if DEBUG
+            _services.GetService<CustomizePlusAgentBridgeService>();
+#endif
+
             Logger.Information($"Customize+ {VersionHelper.Version} ({ThisAssembly.Git.Commit}+{ThisAssembly.Git.Sha}) [FantasiaPlus] started");
         }
         catch (Exception ex)

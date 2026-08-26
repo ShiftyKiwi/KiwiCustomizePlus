@@ -17,6 +17,7 @@ using Dalamud.Plugin;
 using OtterGui;
 using OtterGui.Classes;
 using OtterGui.Raii;
+using OtterGui.Text;
 using OtterGui.Widgets;
 using System;
 using System.Collections.Generic;
@@ -57,6 +58,11 @@ public class SettingsTab
     private readonly ActivityLogService _activityLogService;
     private readonly PcpService _pcpService;
     private readonly GameObjectService _gameObjectService;
+#if DEBUG
+    private readonly RuntimeEvidenceService _runtimeEvidenceService;
+    private string _runtimeEvidenceLabel = "capture";
+    private string? _selectedRuntimeEvidencePath;
+#endif
     private Race _neckPresetRace = Race.Elezen;
     private Race _lastDetectedNeckPresetRace = Race.Unknown;
     private bool _followDetectedNeckPresetRace;
@@ -74,7 +80,11 @@ public class SettingsTab
         SupportLogBuilderService supportLogBuilderService,
         ActivityLogService activityLogService,
         PcpService pcpService,
-        GameObjectService gameObjectService)
+        GameObjectService gameObjectService
+#if DEBUG
+        , RuntimeEvidenceService runtimeEvidenceService
+#endif
+        )
     {
         _pluginInterface = pluginInterface;
         _configuration = configuration;
@@ -87,6 +97,9 @@ public class SettingsTab
         _activityLogService = activityLogService;
         _pcpService = pcpService;
         _gameObjectService = gameObjectService;
+#if DEBUG
+        _runtimeEvidenceService = runtimeEvidenceService;
+#endif
         _followDetectedNeckPresetRace = configuration.UISettings.FollowDetectedNeckPresetRace;
     }
 
@@ -406,6 +419,7 @@ public class SettingsTab
         DrawAdvancedBodyScalingSettings();
         ImGui.Spacing();
         DrawDebugModeCheckbox();
+        DrawSkeletonCapabilityManifestDebug();
     }
 
     private void DrawActivityLog()
@@ -549,6 +563,195 @@ public class SettingsTab
         }
     }
 
+    private void DrawSkeletonCapabilityManifestDebug()
+    {
+        if (!_configuration.DebuggingModeEnabled || !ImGui.CollapsingHeader("Skeleton Capability Manifest (Debug)"))
+            return;
+
+        Armature? armature = null;
+        if ((_templateEditorManager.IsEditorActive || _templateEditorManager.IsEditorPaused)
+            && TryGetArmatureForCharacter(_templateEditorManager.Character, out var previewArmature))
+            armature = previewArmature;
+        else if (TryGetArmatureForCharacter(_gameObjectService.GetCurrentPlayerActorIdentifier(), out var selfArmature))
+            armature = selfArmature;
+        else
+            armature = _armatureManager.Armatures.Values.FirstOrDefault(static candidate => candidate.IsBuilt);
+        if (armature == null)
+        {
+            ImGui.TextDisabled("No published live armature is available yet.");
+            return;
+        }
+
+        var manifest = armature.GetCapabilityManifestSnapshot();
+        ImGui.TextDisabled("Diagnostic only. This never changes transform behavior, bone trust, or profile resolution.");
+        DrawWrappedDisabledValue("Revision", $"{manifest.Revision}; native binding generation: {armature.NativeBindingGeneration}; binding current: {manifest.BindingCurrent}; stable observations: {manifest.StableObservations}");
+        DrawWrappedDisabledValue("Profile binding", $"{armature.Profile}; template binding revision: {armature.TemplateBindingRevision}; resolved transforms: {armature.ResolvedBoneTransforms.Count}; active ModelBones: {armature.ActiveBones.Count}; pending rebind: {armature.IsPendingProfileRebind}");
+        DrawWrappedDisabledValue("Revisions", $"armature {armature.ArmatureRevision}; native {armature.NativeBindingGeneration}; actor lifetime {armature.ActorLifetimeGeneration}; manifest {manifest.Revision}; profile resolution {armature.ProfileResolutionRevision}; deformation {armature.DeformationRevision}; diagnostics {armature.DiagnosticsRevision}; reacquisition pending {armature.IsAwaitingActorReacquisitionPublication}");
+        DrawWrappedDisabledValue("Structural fingerprint", string.IsNullOrEmpty(manifest.StructuralFingerprint) ? "Unavailable" : manifest.StructuralFingerprint);
+        DrawWrappedDisabledValue("Topology", $"{manifest.Topology.TotalBoneCount} bones, {manifest.Topology.PartialBoneCounts.Count} partials, {manifest.Topology.EmptyPartialIndices.Count} optional empty, roots {manifest.Topology.RootCount}, max depth {manifest.Topology.MaxDepth}, valid {manifest.Topology.IsValid}");
+        DrawWrappedDisabledValue("Animation compatibility", manifest.AnimationCompatibility.ToString());
+        DrawWrappedDisabledValue("Unknown custom bones", manifest.UnknownCustomBoneCount.ToString());
+
+        foreach (var capability in new[]
+                 {
+                     SkeletonCapability.VanillaCore, SkeletonCapability.IVCS1, SkeletonCapability.IVCS2,
+                     SkeletonCapability.YAS, SkeletonCapability.NFLB, SkeletonCapability.Skelomae,
+                 })
+        {
+            var evidence = manifest.CapabilityEvidence.TryGetValue(capability, out var value)
+                ? value
+                : new SkeletonCapabilityEvidence(SkeletonCapabilityState.Absent, Array.Empty<string>(), Array.Empty<string>());
+            ImGui.TextDisabled($"{capability}: {evidence.State}");
+        }
+
+        var quality = armature.DeformationQualityDiagnostics;
+        var solver = quality.Solver;
+        DrawWrappedDisabledValue("Automatic body support", solver.ActiveRegions.Count == 0
+            ? "Inactive (no automatic region contribution for the current resolved transforms)."
+            : $"regions {string.Join(", ", solver.ActiveRegions)}; primary/support/transition/secondary {solver.PrimaryContributionCount}/{solver.SupportContributionCount}/{solver.TransitionContributionCount}/{solver.SecondaryContributionCount}; bilateral normalizations {solver.BilateralNormalizationCount}; duplicate suppression {solver.DoubleContributionPreventionCount}; clamps {solver.ClampedContributionCount}; fallbacks {solver.FallbackCount}");
+        DrawWrappedDisabledValue("Body-shaping quality", $"max bilateral {quality.MaxBilateralDifference:0.000} ({quality.MaxBilateralPair}); max continuity {quality.MaxContinuityDifference:0.000} ({quality.MaxContinuityBoundary}); secondary magnitude {solver.SecondaryContributionMagnitude:0.000}");
+        DrawWrappedDisabledValue("Proportional balance", $"enabled {solver.ProportionalBalanceEnabled}; strength {solver.ProportionalBalanceStrength:0.00}; relationships {(solver.CorrectedRelationships.Count == 0 ? "none" : string.Join(", ", solver.CorrectedRelationships))}; max correction {solver.MaximumProportionalCorrection:0.000}; imbalance {solver.MaximumProportionalImbalanceBefore:0.000}->{solver.MaximumProportionalImbalanceAfter:0.000}; skipped explicit/locked {solver.ProportionalSkippedExplicitOrLockedCount}");
+        DrawWrappedDisabledValue("Surface smoothness", $"enabled {solver.SurfaceSmoothnessEnabled}; strength {solver.SurfaceSmoothnessStrength:0.00}; affected bones {solver.SurfaceSmoothnessAffectedBoneCount}; regions {(solver.SurfaceSmoothnessRegions.Count == 0 ? "none" : string.Join(", ", solver.SurfaceSmoothnessRegions))}; gradient {solver.MaximumPreSmoothingGradient:0.000}->{solver.MaximumPostSmoothingGradient:0.000}; boundary skips {solver.SurfaceSmoothnessSkippedBoundaryCount}; magnitude error {solver.SurfaceMagnitudePreservationError:0.000}");
+        DrawWrappedDisabledValue("Cross-section conditioning", $"enabled {solver.CrossSectionConditioningEnabled}; strength {solver.CrossSectionConditioningStrength:0.00}; affected bones {solver.CrossSectionAffectedBoneCount}; anisotropy {solver.MaximumCrossSectionAnisotropyBefore:0.000}->{solver.MaximumCrossSectionAnisotropyAfter:0.000}; max correction {solver.MaximumCrossSectionCorrection:0.000}; constrained/untrusted skips {solver.CrossSectionSkippedUntrustedOrConstrainedCount}");
+        DrawWrappedDisabledValue("Shape fairness", $"enabled {solver.ShapeFairnessEnabled}; strength {solver.ShapeFairnessStrength:0.00}; chains {(solver.ShapeFairnessChains.Count == 0 ? "none" : string.Join(", ", solver.ShapeFairnessChains))}; affected bones {solver.ShapeFairnessAffectedBoneCount}; curvature {solver.MaximumFairnessSecondDifferenceBefore:0.000}->{solver.MaximumFairnessSecondDifferenceAfter:0.000}; max correction {solver.MaximumFairnessCorrection:0.000}; magnitude error {solver.FairnessMagnitudePreservationError:0.000}");
+        DrawWrappedDisabledValue("Local volume intent", $"enabled {solver.LocalVolumeIntentEnabled}; strength {solver.LocalVolumeIntentStrength:0.00}; regions {(solver.LocalVolumeIntentRegions.Count == 0 ? "none" : string.Join(", ", solver.LocalVolumeIntentRegions))}; log-volume error {solver.MaximumVolumeErrorBefore:0.000}->{solver.MaximumVolumeErrorAfter:0.000}; max correction {solver.MaximumVolumeAxisCorrection:0.000}; constrained/untrusted skips {solver.LocalVolumeIntentSkippedUntrustedOrConstrainedCount}");
+        var jointCorrectives = armature.PoseAwareJointCorrectiveDebugState;
+        DrawWrappedDisabledValue("Pose-aware joint correctives", $"enabled {jointCorrectives.Enabled}; active {jointCorrectives.Active}; strength {jointCorrectives.Strength:0.00}; categories {(jointCorrectives.ActiveCategories.Count == 0 ? "none" : string.Join(", ", jointCorrectives.ActiveCategories))}; eligible/corrected joints {jointCorrectives.EligibleJointCount}/{jointCorrectives.CorrectedJointCount}; max weight/correction {jointCorrectives.MaximumPoseWeight:0.000}/{jointCorrectives.MaximumCorrection:0.000}; writes {jointCorrectives.WriteCount}; safety skips {jointCorrectives.SafetySkipCount}; {jointCorrectives.EvaluationMilliseconds:0.000} ms");
+        DrawWrappedDisabledValue("Extension automation", $"IVCS2 {solver.AutomatedIvcs2Controls}; YAS {solver.AutomatedYasControls}; NFLB body {solver.AutomatedNflbBodyControls}; Skelomae body {solver.AutomatedSkelomaeBodyControls}; clothing 0; props 0; tongue 0; wings 0");
+
+#if DEBUG
+        DrawRuntimeEvidenceDebug(armature);
+#endif
+
+        if (ImGui.SmallButton("Copy manifest JSON"))
+        {
+            try
+            {
+                ImUtf8.SetClipboardText(manifest.ToDebugJson());
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger.Debug($"Could not copy skeleton capability manifest: {ex.GetType().Name}.");
+            }
+        }
+        CtrlHelper.AddHoverText("Copies the current read-only capability manifest for support diagnostics.");
+
+        if (ImGui.TreeNode("Capability evidence and warnings"))
+        {
+            foreach (var capability in manifest.CapabilityEvidence.OrderBy(static pair => pair.Key))
+            {
+                ImGui.TextDisabled($"{capability.Key}: {capability.Value.State}");
+                if (capability.Value.Evidence.Count > 0)
+                    DrawWrappedDisabledValue("Observed", string.Join(", ", capability.Value.Evidence));
+                if (capability.Value.MissingExpected.Count > 0)
+                    DrawWrappedDisabledValue("Missing / advisory", string.Join(", ", capability.Value.MissingExpected));
+            }
+
+            if (manifest.FamilyCounts.Count > 0)
+                DrawWrappedDisabledValue("Family counts", string.Join(", ", manifest.FamilyCounts.OrderBy(static pair => pair.Key).Select(static pair => $"{pair.Key}: {pair.Value}")));
+            if (manifest.UnknownCustomBoneNames.Count > 0)
+                DrawWrappedDisabledValue("Unknown names", string.Join(", ", manifest.UnknownCustomBoneNames));
+            if (manifest.Warnings.Count > 0)
+                DrawWrappedDisabledValue("Warnings", string.Join(" | ", manifest.Warnings));
+            ImGui.TreePop();
+        }
+
+        DrawSelfArmatureLifecycleTraceDebug();
+    }
+
+#if DEBUG
+    private void DrawRuntimeEvidenceDebug(Armature armature)
+    {
+        if (!ImGui.TreeNode("Development evidence capture"))
+            return;
+
+        ImGui.TextDisabled("Local debug evidence only. Captures never affect profile resolution, transforms, or native writes.");
+        ImGui.SetNextItemWidth(Math.Min(260f * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
+        ImGui.InputText("Label", ref _runtimeEvidenceLabel, 64);
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Capture current"))
+            _runtimeEvidenceService.Capture(armature, _runtimeEvidenceLabel);
+        CtrlHelper.AddHoverText("Writes a versioned JSON snapshot under the local plugin configuration development-evidence directory.");
+
+        var captures = _runtimeEvidenceService.List();
+        ImGui.TextDisabled($"Stored captures: {captures.Count}. Folder: {_runtimeEvidenceService.DirectoryPath}");
+        if (captures.Count > 0 && ImGui.BeginTable("runtime-evidence", 3, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("Capture");
+            ImGui.TableSetupColumn("Compare", ImGuiTableColumnFlags.WidthFixed, 110 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn("Delete", ImGuiTableColumnFlags.WidthFixed, 60 * ImGuiHelpers.GlobalScale);
+            ImGui.TableHeadersRow();
+            foreach (var capture in captures.Take(12))
+            {
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted($"{capture.Record.Label} ({capture.Record.CapturedAtUtc:yyyy-MM-dd HH:mm:ss} UTC)");
+                ImGui.TableSetColumnIndex(1);
+                if (ImGui.SmallButton($"Compare##{capture.Path}"))
+                    _selectedRuntimeEvidencePath = capture.Path;
+                ImGui.TableSetColumnIndex(2);
+                if (ImGui.SmallButton($"Delete##{capture.Path}"))
+                    _runtimeEvidenceService.Delete(capture.Path);
+            }
+            ImGui.EndTable();
+        }
+
+        var selected = captures.FirstOrDefault(capture => string.Equals(capture.Path, _selectedRuntimeEvidencePath, StringComparison.Ordinal));
+        if (selected != null)
+        {
+            var comparison = _runtimeEvidenceService.Compare(armature, selected);
+            DrawWrappedDisabledValue("Latest comparison", comparison.Summary + (comparison.Differences.Count == 0 ? string.Empty : " " + string.Join(" | ", comparison.Differences)));
+        }
+
+        ImGui.TreePop();
+    }
+#endif
+
+    private void DrawSelfArmatureLifecycleTraceDebug()
+    {
+        if (!ImGui.TreeNode("Self lifecycle trace (Debug)"))
+            return;
+
+        ImGui.TextDisabled("Bounded transition-only diagnostics for the local player. Capture a manual snapshot before Glamourer, after the broken state, and after toggling the profile.");
+        if (ImGui.SmallButton("Capture self snapshot"))
+            _armatureManager.CaptureDebugSelfLifecycleSnapshot();
+        CtrlHelper.AddHoverText("Adds one diagnostic snapshot without changing profiles, templates, or transform behavior.");
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Copy lifecycle trace"))
+        {
+            try
+            {
+                ImUtf8.SetClipboardText(_armatureManager.GetDebugSelfLifecycleTraceClipboardText());
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger.Debug($"Could not copy self lifecycle trace: {ex.GetType().Name}.");
+            }
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Clear lifecycle trace"))
+            _armatureManager.ClearDebugSelfLifecycleTrace();
+
+        var entries = _armatureManager.GetDebugSelfLifecycleTrace();
+        ImGui.TextDisabled($"Recent entries: {entries.Count} / 96");
+        if (entries.Count == 0)
+        {
+            ImGui.TextDisabled("No self lifecycle transitions captured yet. Enable Debug mode, then wait for a self armature or capture a snapshot.");
+            ImGui.TreePop();
+            return;
+        }
+
+        using (var child = ImRaii.Child("SelfLifecycleTraceEntries", new Vector2(0, 230 * ImGuiHelpers.GlobalScale), true))
+        {
+            foreach (var entry in entries.Reverse())
+                ImGui.TextWrapped(entry.ToDisplayLine());
+        }
+
+        ImGui.TreePop();
+    }
+
     private void DrawTransitionSpeedSlider()
     {
         var value = _configuration.RuntimeBehaviorSettings.TransformTransitionSharpness;
@@ -665,6 +868,107 @@ public class SettingsTab
                 RecordGlobalAdvancedScalingChange("Mass redistribution strength", previousMassRedistribution, massRedistribution, "mass-redistribution");
             }
             CtrlHelper.AddHoverText("Scales how much scale deltas are redistributed across neighboring bones. 0 disables, 1 uses the mode default.");
+
+            var bilateralConsistencyEnabled = settings.BilateralConsistencyEnabled;
+            if (ImGui.Checkbox("Enable bilateral consistency", ref bilateralConsistencyEnabled))
+            {
+                var previous = settings.BilateralConsistencyEnabled;
+                settings.BilateralConsistencyEnabled = bilateralConsistencyEnabled;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+                RecordGlobalAdvancedScalingChange("Bilateral consistency", GetEnabledStateLabel(previous), GetEnabledStateLabel(bilateralConsistencyEnabled), "bilateral-consistency");
+            }
+            CtrlHelper.AddHoverText("Keeps corresponding left/right automatic shaping adjustments consistent when their authored inputs are equivalent. Intentionally asymmetric template edits are preserved.");
+
+            var proportionalBalanceEnabled = settings.ProportionalBalanceEnabled;
+            if (ImGui.Checkbox("Enable proportional balance", ref proportionalBalanceEnabled))
+            {
+                var previous = settings.ProportionalBalanceEnabled;
+                settings.ProportionalBalanceEnabled = proportionalBalanceEnabled;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+                RecordGlobalAdvancedScalingChange("Proportional balance", GetEnabledStateLabel(previous), GetEnabledStateLabel(proportionalBalanceEnabled), "proportional-balance");
+            }
+            CtrlHelper.AddHoverText("Adds a small, bounded automatic support adjustment between related body regions. Explicit rows, locks, pinned axes, and deliberate contrasts remain authoritative.");
+
+            using (ImRaii.Disabled(!settings.ProportionalBalanceEnabled))
+            {
+                var proportionalBalanceStrength = settings.ProportionalBalanceStrength;
+                if (ImGui.SliderFloat("Proportional balance strength", ref proportionalBalanceStrength, 0f, 1f, "%.2f"))
+                {
+                    var previous = settings.ProportionalBalanceStrength;
+                    settings.ProportionalBalanceStrength = proportionalBalanceStrength;
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                    RecordGlobalAdvancedScalingChange("Proportional balance strength", previous, proportionalBalanceStrength, "proportional-balance-strength");
+                }
+            }
+            CtrlHelper.AddHoverText("Limits how strongly the automatic support field follows an explicitly requested neighboring region. This is not an ideal-proportions solver.");
+
+            var surfaceSmoothnessEnabled = settings.SurfaceSmoothnessEnabled;
+            if (ImGui.Checkbox("Enable surface smoothness", ref surfaceSmoothnessEnabled))
+            {
+                var previous = settings.SurfaceSmoothnessEnabled;
+                settings.SurfaceSmoothnessEnabled = surfaceSmoothnessEnabled;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+                RecordGlobalAdvancedScalingChange("Surface smoothness", GetEnabledStateLabel(previous), GetEnabledStateLabel(surfaceSmoothnessEnabled), "surface-smoothness");
+            }
+            CtrlHelper.AddHoverText("Uses one lightweight bone-space smoothing pass over automatically generated body-support transforms. It never writes to explicit, locked, pinned, unknown, clothing, prop, wing, or tongue bones.");
+
+            using (ImRaii.Disabled(!settings.SurfaceSmoothnessEnabled))
+            {
+                var surfaceSmoothnessStrength = settings.SurfaceSmoothnessStrength;
+                if (ImGui.SliderFloat("Surface smoothness strength", ref surfaceSmoothnessStrength, 0f, 1f, "%.2f"))
+                {
+                    var previous = settings.SurfaceSmoothnessStrength;
+                    settings.SurfaceSmoothnessStrength = surfaceSmoothnessStrength;
+                    _configuration.Save();
+                    _armatureManager.RebindAllArmatures();
+                    RecordGlobalAdvancedScalingChange("Surface smoothness strength", previous, surfaceSmoothnessStrength, "surface-smoothness-strength");
+                }
+            }
+            CtrlHelper.AddHoverText("Smooths abrupt automatic deformation gradients across curated body-region edges while preserving each region's automatic deformation magnitude.");
+
+            DrawAdvancedShapeConditioningControl(
+                settings,
+                "Cross-section conditioning",
+                "CrossSectionConditioning",
+                "Conditions only automatic scale-axis distortion in log space. Explicit axes, locks, pins, unknown bones, clothing, props, wings, and tongue controls remain unchanged.",
+                static value => value.CrossSectionConditioningEnabled,
+                static (value, enabled) => value.CrossSectionConditioningEnabled = enabled,
+                static value => value.CrossSectionConditioningStrength,
+                static (value, strength) => value.CrossSectionConditioningStrength = strength);
+
+            DrawAdvancedShapeConditioningControl(
+                settings,
+                "Shape fairness",
+                "ShapeFairness",
+                "Uses one bounded second-difference pass over curated automatic body chains. It reduces accidental kinks without flattening explicit anchors or intentional proportions.",
+                static value => value.ShapeFairnessEnabled,
+                static (value, enabled) => value.ShapeFairnessEnabled = enabled,
+                static value => value.ShapeFairnessStrength,
+                static (value, strength) => value.ShapeFairnessStrength = strength);
+
+            DrawAdvancedShapeConditioningControl(
+                settings,
+                "Local volume intent",
+                "LocalVolumeIntent",
+                "Preserves requested local enlargement or reduction as a log-volume proxy. It does not force constant volume and only adjusts trusted automatic axes.",
+                static value => value.LocalVolumeIntentEnabled,
+                static (value, enabled) => value.LocalVolumeIntentEnabled = enabled,
+                static value => value.LocalVolumeIntentStrength,
+                static (value, strength) => value.LocalVolumeIntentStrength = strength);
+
+            DrawAdvancedShapeConditioningControl(
+                settings,
+                "Pose-aware joint correctives",
+                "PoseAwareJointCorrectives",
+                "Adds lightweight, runtime-only scale support around trusted automatic elbow, knee, shoulder, and hip transitions. It never rebuilds static deformation state for animation changes.",
+                static value => value.PoseAwareJointCorrectivesEnabled,
+                static (value, enabled) => value.PoseAwareJointCorrectivesEnabled = enabled,
+                static value => value.PoseAwareJointCorrectivesStrength,
+                static (value, strength) => value.PoseAwareJointCorrectivesStrength = strength);
 
             var naturalization = settings.NaturalizationStrength;
             if (ImGui.SliderFloat("Naturalization strength", ref naturalization, 0f, 1f, "%.2f"))
@@ -2433,6 +2737,41 @@ public class SettingsTab
             _ => "RBF transform corrective path",
         };
 
+    private void DrawAdvancedShapeConditioningControl(
+        AdvancedBodyScalingSettings settings,
+        string label,
+        string id,
+        string help,
+        Func<AdvancedBodyScalingSettings, bool> getEnabled,
+        Action<AdvancedBodyScalingSettings, bool> setEnabled,
+        Func<AdvancedBodyScalingSettings, float> getStrength,
+        Action<AdvancedBodyScalingSettings, float> setStrength)
+    {
+        var enabled = getEnabled(settings);
+        if (ImGui.Checkbox($"Enable {label}##{id}", ref enabled))
+        {
+            var previous = getEnabled(settings);
+            setEnabled(settings, enabled);
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+            RecordGlobalAdvancedScalingChange(label, GetEnabledStateLabel(previous), GetEnabledStateLabel(enabled), id);
+        }
+        CtrlHelper.AddHoverText(help);
+
+        using (ImRaii.Disabled(!getEnabled(settings)))
+        {
+            var strength = getStrength(settings);
+            if (ImGui.SliderFloat($"{label} strength##{id}Strength", ref strength, 0f, 1f, "%.2f"))
+            {
+                var previous = getStrength(settings);
+                setStrength(settings, strength);
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+                RecordGlobalAdvancedScalingChange($"{label} strength", previous, strength, $"{id}-strength");
+            }
+        }
+    }
+
     private void DrawAdvancedBodyScalingResets(AdvancedBodyScalingSettings settings)
     {
         if (!ImGui.CollapsingHeader("Quick resets"))
@@ -2451,11 +2790,24 @@ public class SettingsTab
         DrawAdvancedResetRow(
             "Balancing & naturalization",
             "Reset Balancing & Naturalization",
-            "Restores surface balancing, mass redistribution, and naturalization to shipped defaults. Does not touch guardrail modes, pose-aware validation, BIW, region tuning, neck presets, IK, motion warping, or pose-space correctives.",
+            "Restores surface balancing, mass redistribution, bilateral consistency, proportional balance, surface smoothness, shape-conditioning passes, pose-aware joint correctives, and naturalization to shipped defaults. Does not touch guardrail modes, pose-aware validation, BIW, region tuning, neck presets, IK, motion warping, or RBF pose-space correctives.",
             () =>
             {
                 settings.SurfaceBalancingStrength = defaults.SurfaceBalancingStrength;
                 settings.MassRedistributionStrength = defaults.MassRedistributionStrength;
+                settings.BilateralConsistencyEnabled = defaults.BilateralConsistencyEnabled;
+                settings.ProportionalBalanceEnabled = defaults.ProportionalBalanceEnabled;
+                settings.ProportionalBalanceStrength = defaults.ProportionalBalanceStrength;
+                settings.SurfaceSmoothnessEnabled = defaults.SurfaceSmoothnessEnabled;
+                settings.SurfaceSmoothnessStrength = defaults.SurfaceSmoothnessStrength;
+                settings.CrossSectionConditioningEnabled = defaults.CrossSectionConditioningEnabled;
+                settings.CrossSectionConditioningStrength = defaults.CrossSectionConditioningStrength;
+                settings.ShapeFairnessEnabled = defaults.ShapeFairnessEnabled;
+                settings.ShapeFairnessStrength = defaults.ShapeFairnessStrength;
+                settings.LocalVolumeIntentEnabled = defaults.LocalVolumeIntentEnabled;
+                settings.LocalVolumeIntentStrength = defaults.LocalVolumeIntentStrength;
+                settings.PoseAwareJointCorrectivesEnabled = defaults.PoseAwareJointCorrectivesEnabled;
+                settings.PoseAwareJointCorrectivesStrength = defaults.PoseAwareJointCorrectivesStrength;
                 settings.NaturalizationStrength = defaults.NaturalizationStrength;
             });
 

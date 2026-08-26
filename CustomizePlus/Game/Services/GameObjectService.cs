@@ -52,8 +52,12 @@ public class GameObjectService
         if (!actor.Identifier(_actorManager, out var identifier))
             return false;
 
+        // The object-table pointer can lag a redraw/reload. The actor manager's Player entry is
+        // the live self identity used by the rest of the profile path, so accept it directly.
+        var isLiveLocalPlayer = _objectManager.Player.Valid && actor == _objectManager.Player;
         return !Constants.IsInObjectTableBusyNPCRange(actor.Index.Index)
             && (identifier.IsAllowedForProfiles()
+                || isLiveLocalPlayer
                 || actor == _objectTable.GetObjectAddress(0));
     }
 

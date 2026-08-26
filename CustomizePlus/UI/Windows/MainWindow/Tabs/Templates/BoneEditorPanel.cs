@@ -44,7 +44,9 @@ public class BoneEditorPanel
     private readonly ActorAssignmentUi _actorAssignmentUi;
     private readonly PopupSystem _popupSystem;
     private readonly LocalBoneMetadataService _boneMetadataService;
+    private readonly BoneExplainabilityService _boneExplainabilityService;
     private readonly SemanticBodyGoalService _semanticBodyGoalService;
+    private readonly TemplateManager _templateManager;
     private readonly ActivityLogService _activityLogService;
     private readonly Logger _logger;
 
@@ -62,10 +64,9 @@ public class BoneEditorPanel
 
     private string _boneSearch = string.Empty;
 
-    // all the stuff to handle undo/redo
-    private readonly Stack<Dictionary<string, BoneTransform>> _undoStack = new();
-    private readonly Stack<Dictionary<string, BoneTransform>> _redoStack = new();
+    // A slider transaction retains only the pre-drag managed template snapshot.
     private Dictionary<string, BoneTransform>? _pendingUndoSnapshot = null;
+    private bool _commitHistoryAfterWrite;
     private float _initialX, _initialY, _initialZ;
     private Vector3 _initialScale;
     private float _initialChildX, _initialChildY, _initialChildZ;
@@ -99,9 +100,19 @@ public class BoneEditorPanel
     private bool _templateHealthPropagatedOnly;
     private Dictionary<string, float> _semanticGoalValues = new(StringComparer.Ordinal);
     private SemanticBodyGoalPreview? _semanticGoalPreview;
+    private TemplateAuthoringOperation? _lastSemanticGoalOperation;
+    private Guid _lastSemanticGoalSessionId;
     private string _selectedShapeRecipeId = string.Empty;
     private string? _loadedShapeRecipeName;
     private string? _semanticGoalStatus;
+    private string _inspectedBoneName = string.Empty;
+    private Guid _compareTemplateId;
+    private Guid _compareProfileId;
+    private TemplateDiffReport? _templateDiffReport;
+    private ProfileDiffReport? _profileDiffReport;
+    private SolverPreviewResult? _solverPreview;
+    private int _selectedAuthoringRegion;
+    private AuthoringRegionScope _selectedAuthoringScope = AuthoringRegionScope.Primary;
     public bool HasChanges => _editorManager.HasChanges;
     public bool IsEditorActive => _editorManager.IsEditorActive;
     public bool IsEditorPaused => _editorManager.IsEditorPaused;
@@ -116,7 +127,9 @@ public class BoneEditorPanel
         ActorAssignmentUi actorAssignmentUi,
         PopupSystem popupSystem,
         LocalBoneMetadataService boneMetadataService,
+        BoneExplainabilityService boneExplainabilityService,
         SemanticBodyGoalService semanticBodyGoalService,
+        TemplateManager templateManager,
         ActivityLogService activityLogService,
         Logger logger)
     {
@@ -128,7 +141,9 @@ public class BoneEditorPanel
         _actorAssignmentUi = actorAssignmentUi;
         _popupSystem = popupSystem;
         _boneMetadataService = boneMetadataService;
+        _boneExplainabilityService = boneExplainabilityService;
         _semanticBodyGoalService = semanticBodyGoalService;
+        _templateManager = templateManager;
         _activityLogService = activityLogService;
         _logger = logger;
 
@@ -146,8 +161,6 @@ public class BoneEditorPanel
         if (_editorManager.EnableEditor(template))
         {
             //_editorManager.SetLimitLookupToOwned(_configuration.EditorConfiguration.LimitLookupToOwnedObjects);
-            _undoStack.Clear();
-            _redoStack.Clear();
             return true;
         }
 
@@ -248,6 +261,11 @@ public class BoneEditorPanel
             DrawProfileContextPreviewControl();
             DrawGroupImportStatus();
             DrawTroubleshootingHelper();
+            DrawActorHealth();
+            DrawBoneExplainabilityInspector();
+            DrawCompareAndCompatibilityTools();
+            DrawSolverAbPreview();
+            DrawRegionBatchTools();
             DrawTemplateHealth();
             DrawSemanticBodyGoals();
             DrawUnknownBoneWorkbench();
@@ -609,8 +627,6 @@ public class BoneEditorPanel
 
         if (ExitedEditor)
         {
-            _undoStack.Clear();
-            _redoStack.Clear();
         }
     }
 
@@ -680,32 +696,24 @@ public class BoneEditorPanel
         ImGui.AlignTextToFramePadding();
         ImGui.TextDisabled("History:");
         ImGui.SameLine();
-        ImGui.BeginDisabled(_undoStack.Count == 0);
+        ImGui.BeginDisabled(_editorManager.EditHistory.UndoCount == 0);
         if (ImGuiComponents.IconButton("##UndoBone", FontAwesomeIcon.Undo))
-        {
-            var state = _undoStack.Pop();
-            _redoStack.Push(_editorManager.EditorProfile.Armatures[0]
-                .GetAllBones()
-                .DistinctBy(b => b.BoneName)
-                .ToDictionary(b => b.BoneName, b => new BoneTransform(b.CustomizedTransform ?? new BoneTransform())));
-            RestoreState(state);
-        }
+            _editorManager.TryUndoEdit();
         ImGui.EndDisabled();
         CtrlHelper.AddHoverText("Undo");
 
         ImGui.SameLine();
-        ImGui.BeginDisabled(_redoStack.Count == 0);
+        ImGui.BeginDisabled(_editorManager.EditHistory.RedoCount == 0);
         if (ImGuiComponents.IconButton("##RedoBone", FontAwesomeIcon.Redo))
-        {
-            var state = _redoStack.Pop();
-            _undoStack.Push(_editorManager.EditorProfile.Armatures[0]
-                .GetAllBones()
-                .DistinctBy(b => b.BoneName)
-                .ToDictionary(b => b.BoneName, b => new BoneTransform(b.CustomizedTransform ?? new BoneTransform())));
-            RestoreState(state);
-        }
+            _editorManager.TryRedoEdit();
         ImGui.EndDisabled();
         CtrlHelper.AddHoverText("Redo");
+
+        ImGui.SameLine();
+        ImGui.TextDisabled($"{_editorManager.EditHistory.UndoCount}");
+        CtrlHelper.AddHoverText(_editorManager.EditHistory.RecentLabels.Count == 0
+            ? "No session-local edit history yet."
+            : string.Join(Environment.NewLine, _editorManager.EditHistory.RecentLabels));
 
         ImGui.TableNextRow();
 
@@ -991,6 +999,12 @@ public class BoneEditorPanel
             DrawWrappedBullet("No active preview actor was found. Pick a visible actor or apply the editor to your current character.");
         if (armature?.IsBuilt != true)
             DrawWrappedBullet("No live armature is ready yet. Redraw, change preview actor, or wait for the actor skeleton to finish loading.");
+        if (armature?.IsSkeletonBindingCurrent == false)
+            DrawWrappedBullet("The live skeleton binding is being refreshed. Native writes are safely paused until the current topology is validated.");
+        if (armature?.Profile.Enabled == false)
+            DrawWrappedBullet("The active profile is disabled, so its template transforms are dormant.");
+        if (armature?.GetCapabilityManifestSnapshot().CapabilityEvidence.Values.Any(static evidence => evidence.State is SkeletonCapabilityState.Partial or SkeletonCapabilityState.Ambiguous) == true)
+            DrawWrappedBullet("One or more skeleton capabilities are partial or ambiguous. Capability-gated template content and automatic support may remain dormant until the required live controls are present.");
         if (missingEditedBones > 0)
             DrawWrappedBullet($"{missingEditedBones} edited bone{(missingEditedBones == 1 ? " is" : "s are")} not present on the current live skeleton.");
         if (unknownBoneCount > 0)
@@ -1001,6 +1015,12 @@ public class BoneEditorPanel
             DrawWrappedBullet($"{lockedRows} row lock{(lockedRows == 1 ? " is" : "s are")} active. Locked rows block automation and analyzer fixes.");
         if (pinnedAxes > 0)
             DrawWrappedBullet($"{pinnedAxes} pinned axis value{(pinnedAxes == 1 ? " is" : "s are")} active. Pins protect individual scale axes from automation.");
+        if (armature?.DeformationQualityDiagnostics.Solver.FallbackCount > 0)
+            DrawWrappedBullet($"{armature.DeformationQualityDiagnostics.Solver.FallbackCount} automatic support contribution(s) were skipped because live capability, trust, or model-influence evidence was unavailable. Explicit template edits are not discarded for this reason.");
+        if (armature?.DeformationQualityDiagnostics.Solver.DoubleContributionPreventionCount > 0)
+            DrawWrappedBullet("Automatic support at a shared region boundary was blended to prevent duplicate structural and secondary contributions from over-amplifying the same area.");
+        if (armature?.DeformationQualityDiagnostics.Solver.ClampedContributionCount > 0)
+            DrawWrappedBullet("An automatic contribution was rejected by finite-value/clamp safety. This does not change the saved template row.");
         if (editedBones.Count == 0)
             DrawWrappedBullet("This template has no effective bone edits yet. Identity/default transforms will not visibly move anything.");
 
@@ -1008,6 +1028,302 @@ public class BoneEditorPanel
         DrawWrappedBullet("Some helper, face, or GPose-oriented bones may be unreliable outside supported contexts. The plugin can expose them, but it cannot remove game-engine limits.");
         DrawWrappedBullet("Propagation only affects child bones when the propagation icon is enabled for the current edit mode.");
     }
+
+    private void DrawActorHealth()
+    {
+        if (!ImGui.CollapsingHeader("Actor Health"))
+            return;
+
+        var armature = GetPrimaryEditorArmature();
+        if (armature == null)
+        {
+            ImGui.TextDisabled("Waiting for a preview armature before actor health can be evaluated.");
+            return;
+        }
+
+        var profile = armature.Profile;
+        if (profile == null)
+        {
+            ImGui.TextDisabled("Waiting for an active profile before actor health can be evaluated.");
+            return;
+        }
+
+        var applicability = ProfileTransformResolver.Resolve(profile, armature.GetCapabilityManifestSnapshot()).TemplateApplicability;
+        var native = armature.GetDebugNativeWriteDiagnostics();
+        var report = ActorHealthReport.Evaluate(new ActorHealthInput(
+            HasProfile: true,
+            ProfileEnabled: profile.Enabled,
+            BindingCurrent: armature.IsSkeletonBindingCurrent,
+            AppearanceTransitionPending: armature.IsAwaitingAppearanceContextRebind,
+            NativeReacquisitionPending: armature.AppearanceEpochState.Contains("reacquisition", StringComparison.OrdinalIgnoreCase),
+            DormantTemplateCount: applicability.Count(static item => item.Enabled && !item.Active),
+            StaleWrites: native.SkippedStaleBinding,
+            UnsafeWrites: native.SkippedUnsafeTransform,
+            BindingIssue: armature.LastSkeletonBindingIssue));
+        var color = report.State switch
+        {
+            ActorHealthState.Healthy => Constants.Colors.Active,
+            ActorHealthState.TemporarilyWaiting => Constants.Colors.Warning,
+            ActorHealthState.LimitedCompatibility => Constants.Colors.Warning,
+            _ => Constants.Colors.Error,
+        };
+        ImGui.PushStyleColor(ImGuiCol.Text, color);
+        ImGui.TextUnformatted(report.State.ToString());
+        ImGui.PopStyleColor();
+        ImGuiUtil.TextWrapped(report.Summary);
+        foreach (var detail in report.Details)
+            DrawWrappedBullet(detail);
+        foreach (var layer in armature.GetOptionalLayerHealthSnapshot().Where(static item => item.HasFailure))
+        {
+            var recovery = layer.Recovered ? "recovered; informational" : "currently being contained";
+            DrawWrappedBullet($"Optional layer {layer.Layer}: last failure {layer.MostRecentFailureType}; {layer.RepeatedFailureCount} occurrence(s) in the recent window; {recovery}.");
+        }
+        ImGui.TextDisabled($"Binding: {(armature.IsSkeletonBindingCurrent ? "current" : "waiting")}; body-shaping revision {armature.DeformationRevision}; BIW: {armature.ActiveBoneImportanceResult.SourceLabel}.");
+    }
+
+    private void DrawBoneExplainabilityInspector()
+    {
+        if (!ImGui.CollapsingHeader("Bone Explainability"))
+            return;
+
+        ImGuiUtil.TextWrapped("Explain a published bone transform or why an automatic layer intentionally did not change it. Inspection is read-only and never traces every frame.");
+        ImGui.SetNextItemWidth(MathF.Min(340 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
+        ImGui.InputTextWithHint("##BoneExplainName", "Bone code name, for example j_ude_a_l", ref _inspectedBoneName, 96);
+        if (string.IsNullOrWhiteSpace(_inspectedBoneName) && !string.IsNullOrWhiteSpace(_boneSearch))
+            ImGui.TextDisabled("Tip: enter a bone code, or use the row/Unknown Workbench Inspect action.");
+        if (string.IsNullOrWhiteSpace(_inspectedBoneName))
+            return;
+
+        var report = _boneExplainabilityService.Explain(GetPrimaryEditorArmature(), _editorManager.CurrentlyEditedTemplate, _inspectedBoneName.Trim());
+        ImGui.TextUnformatted($"{report.DisplayName} ({report.CanonicalName})");
+        ImGui.TextDisabled($"Origin: {report.Metadata.Origin}; Role: {report.Metadata.Role}; Trust: {report.Metadata.Trust}; Live: {(report.IsLive ? "yes" : "no")}");
+        ImGuiUtil.TextWrapped(report.Summary);
+        if (report.Reasons.Count > 0)
+        {
+            ImGui.TextDisabled("Why it may not move automatically:");
+            foreach (var reason in report.Reasons)
+                DrawWrappedBullet(DescribeReason(reason));
+        }
+        if (ImGui.TreeNode("Detailed transform stages"))
+        {
+            foreach (var stage in report.Stages.Where(static stage => stage.IsActive))
+            {
+                var value = stage.Kind == BoneTransformStageKind.Factor
+                    ? $"{stage.Value.X:0.000}"
+                    : $"{stage.Value.X:0.000}, {stage.Value.Y:0.000}, {stage.Value.Z:0.000}";
+                ImGui.TextUnformatted($"{stage.Name}: {value} - {stage.Detail}");
+            }
+            ImGui.TextDisabled($"Parent live/curated: {report.LiveParent ?? "none"} / {report.CuratedParent ?? "none"}; Mirror: {report.Mirror ?? "none"}; BIW: {(report.BoneImportance?.ToString("0.00") ?? "n/a")}");
+            ImGui.TreePop();
+        }
+    }
+
+    private void DrawCompareAndCompatibilityTools()
+    {
+        if (!ImGui.CollapsingHeader("Compare / Compatibility Preview"))
+            return;
+
+        var edited = _editorManager.CurrentlyEditedTemplate;
+        if (edited == null)
+        {
+            ImGui.TextDisabled("Start bone editing to compare the temporary editable template.");
+            return;
+        }
+
+        var candidates = _templateManager.Templates.Where(template => template.UniqueId != _editorManager.CurrentlyEditedTemplateId).OrderBy(template => template.Name.Text, StringComparer.Ordinal).ToArray();
+        if (candidates.Length > 0)
+        {
+            var selected = candidates.FirstOrDefault(template => template.UniqueId == _compareTemplateId) ?? candidates[0];
+            _compareTemplateId = selected.UniqueId;
+            ImGui.SetNextItemWidth(MathF.Min(360 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
+            if (ImGui.BeginCombo("Compare template", selected.Name.Text))
+            {
+                foreach (var template in candidates)
+                {
+                    if (ImGui.Selectable(template.Name.Text, template.UniqueId == _compareTemplateId))
+                        _compareTemplateId = template.UniqueId;
+                }
+                ImGui.EndCombo();
+            }
+            if (ImGui.Button("Build template diff"))
+                _templateDiffReport = TemplateDiffService.Compare(selected, edited);
+            ImGui.SameLine();
+            if (ImGui.Button("Copy changed source -> edited") && _templateDiffReport != null)
+            {
+                var state = TemplateDiffService.CopyFrom(_editorManager.CaptureCurrentTemplateState(),
+                    _templateDiffReport.Rows.Where(static row => row.Kind is TemplateDiffKind.Changed or TemplateDiffKind.OnlyLeft), true, true, true, true, true);
+                _editorManager.BeginEditTransaction("Apply template diff selection");
+                _editorManager.ReplaceEditedTemplateState(state);
+                _editorManager.CommitEditTransaction();
+            }
+            CtrlHelper.AddHoverText("Copies changed source rows into the currently edited temporary template. The change is undoable and does not modify the source template.");
+            if (_templateDiffReport != null)
+            {
+                ImGui.TextDisabled($"Shared {_templateDiffReport.SharedCount}; changed {_templateDiffReport.ChangedCount}; source-only {_templateDiffReport.OnlyLeftCount}; edited-only {_templateDiffReport.OnlyRightCount}.");
+                foreach (var (family, delta) in _templateDiffReport.RegionScaleDeltas.OrderBy(static item => item.Key.ToString(), StringComparer.Ordinal))
+                    ImGui.TextDisabled($"{family}: transform scale delta {delta.X:0.000}, {delta.Y:0.000}, {delta.Z:0.000}");
+            }
+        }
+        else
+            ImGui.TextDisabled("Create another saved template to enable template-to-template comparison.");
+
+        var armature = GetPrimaryEditorArmature();
+        if (armature != null && ImGui.TreeNode("Compatibility preview"))
+        {
+            var report = CompatibilityPreviewService.Preview(armature.Profile, armature.GetCapabilityManifestSnapshot());
+            ImGui.TextUnformatted(report.IsSafePartialCompatibility ? "Safe Partial Compatibility" : "Compatibility preview");
+            ImGui.TextDisabled($"Authored {report.TotalAuthoredEntries}; directly present {report.DirectlyPresentEntries}; dormant {report.DormantEntries}; known but absent {report.KnownButAbsentEntries}; manual {report.ManualOnlyEntries}; excluded {report.ExcludedEntries}; unknown {report.UnknownEntries}; unavailable {report.UnavailableEntries}.");
+            foreach (var row in report.Rows)
+                ImGui.TextUnformatted($"{row.TemplateName}: {(row.Active ? "active" : "dormant")} - {row.Reason}; present {row.DirectlyPresent}, absent {row.KnownButAbsent}, manual {row.ManualOnly}, excluded {row.ExcludedFromAutomation}, unknown {row.Unknown}.");
+            ImGui.TreePop();
+        }
+
+        if (armature != null && ImGui.TreeNode("Profile-to-profile diff"))
+        {
+            var profiles = _profileManager.Profiles
+                .Where(profile => profile.UniqueId != armature.Profile?.UniqueId)
+                .OrderBy(profile => profile.Name.Text, StringComparer.Ordinal)
+                .ToArray();
+            if (profiles.Length == 0 || armature.Profile == null)
+                ImGui.TextDisabled("Assign another profile to enable a semantic profile comparison.");
+            else
+            {
+                var selected = profiles.FirstOrDefault(profile => profile.UniqueId == _compareProfileId) ?? profiles[0];
+                _compareProfileId = selected.UniqueId;
+                ImGui.SetNextItemWidth(MathF.Min(360 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
+                if (ImGui.BeginCombo("Compare profile", selected.Name.Text))
+                {
+                    foreach (var profile in profiles)
+                    {
+                        if (ImGui.Selectable(profile.Name.Text, profile.UniqueId == _compareProfileId))
+                            _compareProfileId = profile.UniqueId;
+                    }
+                    ImGui.EndCombo();
+                }
+
+                if (ImGui.Button("Build profile diff"))
+                    _profileDiffReport = ProfileDiffService.Compare(selected, armature.Profile);
+                if (_profileDiffReport != null)
+                {
+                    ImGui.TextDisabled($"Assignments {_profileDiffReport.Templates.Count}; priority changed: {_profileDiffReport.PriorityChanged}; advanced overrides changed: {_profileDiffReport.AdvancedOverridesChanged}.");
+                    foreach (var row in _profileDiffReport.Templates.Where(static row => !row.ExistsLeft || !row.ExistsRight || row.EnabledLeft != row.EnabledRight || MathF.Abs(row.WeightLeft - row.WeightRight) > 0.0001f || row.RequirementLeft != row.RequirementRight).Take(12))
+                        ImGui.TextUnformatted($"{row.TemplateName}: source {(row.EnabledLeft ? "on" : "off")} {row.WeightLeft:0.00} / active {(row.EnabledRight ? "on" : "off")} {row.WeightRight:0.00}");
+                }
+            }
+            ImGui.TreePop();
+        }
+    }
+
+    private void DrawSolverAbPreview()
+    {
+        if (!ImGui.CollapsingHeader("Solver A/B Preview"))
+            return;
+
+        var armature = GetPrimaryEditorArmature();
+        ImGuiUtil.TextWrapped("Runs the current resolver and Advanced Body Shaping conditioning stack on copied managed transforms. It does not install a live override, save settings, replace a profile, or write native transforms.");
+        using (ImRaii.Disabled(armature == null))
+        {
+            if (ImGui.Button("Compare current vs Naturalization Off"))
+            {
+                _solverPreview = armature == null
+                    ? SolverPreviewResult.Unavailable("Waiting for a preview armature.")
+                    : SolverPreviewService.CompareCurrentToNaturalizationOff(armature.Profile, armature.GetCapabilityManifestSnapshot(), armature.ActiveAdvancedBodyScalingSettings, armature.ActiveBoneImportanceResult, armature.GetAllBones().Select(static bone => bone.BoneName));
+            }
+        }
+        if (_solverPreview == null)
+            return;
+        ImGui.TextDisabled($"{_solverPreview.Mode}; changed automatic targets {_solverPreview.ChangedBoneCount}; saved state mutated: no.");
+        foreach (var row in _solverPreview.Rows.Take(12))
+            ImGui.TextUnformatted($"{row.BoneName}: current {row.CurrentScale.X:0.000} / baseline {row.BaselineScale.X:0.000} / delta {row.Delta.X:0.000}");
+    }
+
+    private void DrawRegionBatchTools()
+    {
+        if (!ImGui.CollapsingHeader("Region / Batch Editing"))
+            return;
+
+        var template = _editorManager.CurrentlyEditedTemplate;
+        if (template == null)
+        {
+            ImGui.TextDisabled("Start bone editing to use region tools.");
+            return;
+        }
+
+        _selectedAuthoringRegion = Math.Clamp(_selectedAuthoringRegion, 0, RegionBatchEditService.Regions.Count - 1);
+        var region = RegionBatchEditService.Regions[_selectedAuthoringRegion];
+        if (ImGui.BeginCombo("Region", region.Name))
+        {
+            for (var index = 0; index < RegionBatchEditService.Regions.Count; index++)
+            {
+                if (ImGui.Selectable(RegionBatchEditService.Regions[index].Name, index == _selectedAuthoringRegion))
+                    _selectedAuthoringRegion = index;
+            }
+            ImGui.EndCombo();
+        }
+        if (ImGui.BeginCombo("Scope", _selectedAuthoringScope.ToString()))
+        {
+            foreach (var scope in Enum.GetValues<AuthoringRegionScope>())
+            {
+                if (ImGui.Selectable(scope.ToString(), scope == _selectedAuthoringScope))
+                    _selectedAuthoringScope = scope;
+            }
+            ImGui.EndCombo();
+        }
+        var live = GetPrimaryEditorArmature()?.GetAllBones().Select(static bone => bone.BoneName);
+        var bones = RegionBatchEditService.GetEligibleBones(region, _selectedAuthoringScope, live);
+        ImGui.TextDisabled($"{bones.Count} eligible curated body bone(s); clothing, props, appendages, and unknown/manual bones are excluded.");
+        var multiplier = 1.05f;
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ImGui.DragFloat("Uniform scale", ref multiplier, 0.005f, 0.5f, 1.5f, "%.3f");
+        if (ImGui.Button("Scale region"))
+        {
+            var state = RegionBatchEditService.Scale(_editorManager.CaptureCurrentTemplateState(), bones, new Vector3(multiplier), out var skipped);
+            _editorManager.BeginEditTransaction($"Scale {region.Name}");
+            _editorManager.ReplaceEditedTemplateState(state);
+            _editorManager.CommitEditTransaction();
+            _semanticGoalStatus = $"Scaled {bones.Count - skipped} {region.Name} bone(s); skipped {skipped} locked row(s).";
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Mirror Left -> Right"))
+        {
+            var state = RegionBatchEditService.Mirror(_editorManager.CaptureCurrentTemplateState(), bones, true, true, true, true, true, out var skipped);
+            _editorManager.BeginEditTransaction($"Mirror {region.Name} left to right");
+            _editorManager.ReplaceEditedTemplateState(state);
+            _editorManager.CommitEditTransaction();
+            _semanticGoalStatus = $"Mirrored trusted {region.Name} rows; skipped {skipped} row(s) without curated mirror metadata.";
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Reset region"))
+        {
+            var state = _editorManager.CaptureCurrentTemplateState();
+            foreach (var bone in bones)
+                state.Remove(bone);
+            _editorManager.BeginEditTransaction($"Reset {region.Name}");
+            _editorManager.ReplaceEditedTemplateState(state);
+            _editorManager.CommitEditTransaction();
+        }
+    }
+
+    private static string DescribeReason(BoneExplainabilityReasonCode reason)
+        => reason switch
+        {
+            BoneExplainabilityReasonCode.ClothingExcluded => "Role: Clothing rig. Automatic body deformation deliberately stops before clothing controls.",
+            BoneExplainabilityReasonCode.PropExcluded => "Role: prop/gear rig. Automatic body deformation deliberately stops before prop controls.",
+            BoneExplainabilityReasonCode.UnknownCustom => "Origin: unknown/custom. The control remains manual/experimental until curated support exists.",
+            BoneExplainabilityReasonCode.ManualOnly => "Automation: manual-only. No automatic propagation or deformation is granted.",
+            BoneExplainabilityReasonCode.AxisLocked => "The active template locks this bone, so automatic changes are blocked.",
+            BoneExplainabilityReasonCode.AxisPinned => "One or more scale axes are pinned by the active template.",
+            BoneExplainabilityReasonCode.BindingNotCurrent => "The live skeleton binding is not yet validated; safety blocks native writes until it is current.",
+            BoneExplainabilityReasonCode.AppearanceTransitionPending => "Appearance transition is still settling. The active profile remains intact while safe reacquisition completes.",
+            BoneExplainabilityReasonCode.CapabilityMissing => "The required skeleton capability is not present on this live target, so this compatibility-dependent control stays dormant.",
+            BoneExplainabilityReasonCode.CompatibilityDormant => "The assigned template is stored safely but dormant until its profile compatibility requirement is met.",
+            BoneExplainabilityReasonCode.NativeSafetyBlocked => "A current native-safety check blocked a write while the live binding is invalid. The transform was not applied unsafely.",
+            BoneExplainabilityReasonCode.BIWAttenuated => "Model influence is low, so optional automatic correction is conservatively attenuated.",
+            BoneExplainabilityReasonCode.NoModelInfluence => "No meaningful model influence was available for this bone.",
+            BoneExplainabilityReasonCode.SolverDisabled => "Advanced Body Scaling is disabled or in Manual mode for this actor.",
+            BoneExplainabilityReasonCode.ExplicitAuthority => "An explicit template row is authoritative; automatic receivers do not overwrite it.",
+            _ => reason.ToString(),
+        };
 
     private void DrawTemplateHealth()
     {
@@ -1265,6 +1581,15 @@ public class BoneEditorPanel
         }
         CtrlHelper.AddHoverText("Writes the previewed final scales as ordinary BoneTransform edits through the existing editor path. This is the only semantic action that changes the template.");
 
+        ImGui.SameLine();
+        var canRevert = CanRevertSemanticGoals();
+        using (ImRaii.Disabled(!canRevert))
+        {
+            if (ImGui.Button("Revert Goals"))
+                RevertSemanticGoals();
+        }
+        CtrlHelper.AddHoverText("Reverts only the last applied Goals rows if they are unchanged. Otherwise use Undo/Redo.");
+
         if (!IsEditorActive || IsEditorPaused)
             ImGui.TextDisabled("Start bone editing and wait for the editor to be active before previewing or applying semantic goals.");
         else if (previewIsStale)
@@ -1297,29 +1622,71 @@ public class BoneEditorPanel
             return;
         }
 
-        var snapshot = CaptureCurrentState();
-        var changed = false;
-        using (_activityLogService.SuppressTemplateBoneEditEvents())
+        var operation = TemplateAuthoringOperation.Create(
+            "Apply Semantic Body Goals",
+            _editorManager.CaptureCurrentTemplateState(),
+            preview.FinalTransforms);
+        if (operation == null)
         {
-            foreach (var (boneName, transform) in preview.FinalTransforms)
-                changed |= _editorManager.ModifyBoneTransform(boneName, transform);
-        }
-
-        if (!changed)
-        {
-            _semanticGoalStatus = "Apply did not change any template rows. The editor may be paused or the preview may be stale.";
+            _semanticGoalStatus = "Apply did not change any template rows. Rebuild the preview if the template changed.";
             return;
         }
 
-        SaveStateForUndo(snapshot);
+        using (_activityLogService.SuppressTemplateBoneEditEvents())
+        {
+            if (!_editorManager.TryApplyAuthoringOperation(operation))
+            {
+                _semanticGoalStatus = "Apply did not change any template rows. Rebuild the preview if the template changed.";
+                return;
+            }
+        }
+
+        _lastSemanticGoalOperation = operation;
+        _lastSemanticGoalSessionId = _editorManager.EditorSessionId;
+        _commitHistoryAfterWrite = false;
         _templateHealthReport = null;
         _semanticGoalPreview = null;
-        _semanticGoalStatus = $"Applied semantic goals to {preview.FinalTransforms.Count} bone row{(preview.FinalTransforms.Count == 1 ? string.Empty : "s")}. Undo is available from the bone editor toolbar.";
+        _semanticGoalStatus = $"Applied semantic goals to {preview.FinalTransforms.Count} bone row{(preview.FinalTransforms.Count == 1 ? string.Empty : "s")}. Undo/Revert Goals is available; rebuild the preview before intentionally applying another relative adjustment.";
         var recipeSuffix = string.IsNullOrWhiteSpace(_loadedShapeRecipeName) ? string.Empty : $" from '{_loadedShapeRecipeName}'";
         _activityLogService.Record(
             ActivityLogCategory.SemanticGoals,
             "Applied goals",
             $"Applied semantic goals{recipeSuffix} to {preview.FinalTransforms.Count} bone row{(preview.FinalTransforms.Count == 1 ? string.Empty : "s")}.");
+    }
+
+    private bool CanRevertSemanticGoals()
+        => IsEditorActive
+            && !IsEditorPaused
+            && _lastSemanticGoalOperation != null
+            && _lastSemanticGoalSessionId == _editorManager.EditorSessionId
+            && _lastSemanticGoalOperation.TryCreateRevert(
+                _editorManager.CaptureCurrentTemplateState(),
+                "Revert Semantic Body Goals",
+                out _);
+
+    private void RevertSemanticGoals()
+    {
+        if (_lastSemanticGoalOperation == null)
+            return;
+
+        using (_activityLogService.SuppressTemplateBoneEditEvents())
+        {
+            if (!_editorManager.TryRevertAuthoringOperation(_lastSemanticGoalOperation, "Revert Semantic Body Goals"))
+            {
+                _semanticGoalStatus = "Revert Goals is unavailable because an affected row changed. Use the Bone Editor Undo/Redo history instead.";
+                return;
+            }
+        }
+
+        _lastSemanticGoalOperation = null;
+        _lastSemanticGoalSessionId = Guid.Empty;
+        _commitHistoryAfterWrite = false;
+        _templateHealthReport = null;
+        _semanticGoalStatus = "Reverted the last applied semantic goals without changing unrelated rows.";
+        _activityLogService.Record(
+            ActivityLogCategory.SemanticGoals,
+            "Reverted goals",
+            "Reverted the last applied semantic goals without changing unrelated rows.");
     }
 
     private bool IsSemanticGoalPreviewStale()
@@ -2045,6 +2412,19 @@ public class BoneEditorPanel
         CtrlHelper.AddHoverText("Copies the currently detected unknown/custom live bone code names to the clipboard.");
 
         ImGui.SameLine();
+        using (ImRaii.Disabled(unknownBones.Length == 0 || armature == null))
+        {
+            if (ImGui.Button("Copy evidence JSON") && armature != null)
+            {
+                var evidence = unknownBones.Select(name => BuildUnknownBoneEvidence(armature, name));
+                TryCopyUnknownWorkbenchText(
+                    _boneMetadataService.CreateEvidenceExport(armature.GetCapabilityManifestSnapshot(), evidence),
+                    "Copied compact unknown-bone evidence JSON to clipboard.");
+            }
+        }
+        CtrlHelper.AddHoverText("Exports observed topology facts and clearly labelled candidate metadata. Exported data remains advisory and manual-only by default.");
+
+        ImGui.SameLine();
         using (ImRaii.Disabled(unknownBones.Length == 0))
         {
             if (ImGui.Button("Copy starter metadata draft"))
@@ -2129,7 +2509,7 @@ public class BoneEditorPanel
         }
 
         var tableHeight = GetHelperScrollHeight(rows.Count, 260, 140);
-        using var table = ImRaii.Table("UnknownBoneWorkbenchTable", 5, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.ScrollY, new Vector2(0, tableHeight));
+        using var table = ImRaii.Table("UnknownBoneWorkbenchTable", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.ScrollY, new Vector2(0, tableHeight));
         if (!table)
             return;
 
@@ -2138,6 +2518,7 @@ public class BoneEditorPanel
         ImGui.TableSetupColumn("Support", ImGuiTableColumnFlags.WidthFixed, 180 * ImGuiHelpers.GlobalScale);
         ImGui.TableSetupColumn("Template", ImGuiTableColumnFlags.WidthFixed, 120 * ImGuiHelpers.GlobalScale);
         ImGui.TableSetupColumn("Notes", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed, 60 * ImGuiHelpers.GlobalScale);
         ImGui.TableHeadersRow();
 
         foreach (var row in rows)
@@ -2163,8 +2544,44 @@ public class BoneEditorPanel
             ImGuiUtil.TextWrapped(string.IsNullOrWhiteSpace(row.PackName)
                 ? row.RiskNote
                 : $"{row.RiskNote} Pack: {row.PackName}.");
+
+            ImGui.TableNextColumn();
+            using (var id = ImRaii.PushId($"UnknownInspect{row.BoneName}"))
+            {
+                if (ImGui.SmallButton("Inspect"))
+                    _inspectedBoneName = row.BoneName;
+            }
         }
 
+    }
+
+    private UnknownBoneEvidenceRecord BuildUnknownBoneEvidence(Armature armature, string boneName)
+    {
+        armature.TryGetPublishedBone(boneName, out var bone);
+        _boneMetadataService.TryGetEntry(boneName, out var entry);
+        var depth = 0;
+        for (var parent = bone?.ParentBone; parent != null && depth < 128; parent = parent.ParentBone)
+            depth++;
+        var mirrorCandidate = BoneData.GetBoneMirror(boneName);
+        if (mirrorCandidate == null && boneName.EndsWith("_l", StringComparison.Ordinal))
+            mirrorCandidate = boneName[..^2] + "_r";
+        else if (mirrorCandidate == null && boneName.EndsWith("_r", StringComparison.Ordinal))
+            mirrorCandidate = boneName[..^2] + "_l";
+        var metadata = BoneData.GetMetadata(boneName);
+        float? importance = armature.ActiveBoneImportanceResult.Scores.TryGetValue(boneName, out var score) ? score : null;
+        return new UnknownBoneEvidenceRecord(
+            boneName,
+            bone?.ParentBone?.BoneName,
+            bone?.ChildBones.Select(static child => child.BoneName).OrderBy(static name => name, StringComparer.Ordinal).ToArray() ?? Array.Empty<string>(),
+            depth,
+            mirrorCandidate,
+            importance,
+            ObservationCount: armature.GetCapabilityManifestSnapshot().StableObservations,
+            ParentageStable: armature.IsSkeletonBindingCurrent,
+            metadata.Origin,
+            metadata.Role,
+            metadata.Trust,
+            entry?.RiskNotes);
     }
 
     private void DrawMetadataPackStatus()
@@ -2357,9 +2774,11 @@ public class BoneEditorPanel
 
         if (output)
         {
+            _editorManager.BeginEditTransaction($"Reset {BoneData.GetBoneDisplayName(bone.BoneCodeName)}");
             _editorManager.ResetBoneAttributeChanges(bone.BoneCodeName, _editingAttribute);
             if (_isMirrorModeEnabled && bone.Basis?.TwinBone != null) //todo: put it inside manager
                 _editorManager.ResetBoneAttributeChanges(bone.Basis.TwinBone.BoneName, _editingAttribute);
+            _editorManager.CommitEditTransaction();
         }
 
         return output;
@@ -2373,9 +2792,11 @@ public class BoneEditorPanel
 
         if (output)
         {
+            _editorManager.BeginEditTransaction($"Revert {BoneData.GetBoneDisplayName(bone.BoneCodeName)}");
             _editorManager.RevertBoneAttributeChanges(bone.BoneCodeName, _editingAttribute);
             if (_isMirrorModeEnabled && bone.Basis?.TwinBone != null) //todo: put it inside manager
                 _editorManager.RevertBoneAttributeChanges(bone.Basis.TwinBone.BoneName, _editingAttribute);
+            _editorManager.CommitEditTransaction();
         }
 
         return output;
@@ -2643,11 +3064,7 @@ public class BoneEditorPanel
             }
             if (ImGui.IsItemDeactivatedAfterEdit())
             {
-                if (_pendingUndoSnapshot != null && _initialX != newVector.X)
-                {
-                    SaveStateForUndo(_pendingUndoSnapshot);
-                    _pendingUndoSnapshot = null;
-                }
+                FinalizePendingEditTransaction(_initialX != newVector.X);
             }
 
             // change da Y
@@ -2666,11 +3083,7 @@ public class BoneEditorPanel
             }
             if (ImGui.IsItemDeactivatedAfterEdit())
             {
-                if (_pendingUndoSnapshot != null && _initialY != newVector.Y)
-                {
-                    SaveStateForUndo(_pendingUndoSnapshot);
-                    _pendingUndoSnapshot = null;
-                }
+                FinalizePendingEditTransaction(_initialY != newVector.Y);
             }
 
             // change da Z
@@ -2689,11 +3102,7 @@ public class BoneEditorPanel
             }
             if (ImGui.IsItemDeactivatedAfterEdit())
             {
-                if (_pendingUndoSnapshot != null && _initialZ != newVector.Z)
-                {
-                    SaveStateForUndo(_pendingUndoSnapshot);
-                    _pendingUndoSnapshot = null;
-                }
+                FinalizePendingEditTransaction(_initialZ != newVector.Z);
             }
 
             // scale
@@ -2715,11 +3124,7 @@ public class BoneEditorPanel
             }
             if (ImGui.IsItemDeactivatedAfterEdit())
             {
-                if (_pendingUndoSnapshot != null && _initialScale != newVector)
-                {
-                    SaveStateForUndo(_pendingUndoSnapshot);
-                    _pendingUndoSnapshot = null;
-                }
+                FinalizePendingEditTransaction(_initialScale != newVector);
             }
 
             if (_editingAttribute != BoneAttribute.Scale)
@@ -2742,13 +3147,17 @@ public class BoneEditorPanel
 
         CtrlHelper.StaticLabel(!isFavorite ? displayName : $"{displayName} ({boneFamily})", CtrlHelper.TextAlignment.Left,
             isKnownModdedBone ? $"(IVCS Compatible) {codename}" : codename);
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Why?"))
+            _inspectedBoneName = codename;
+        CtrlHelper.AddHoverText("Inspect why this bone moved, or why automatic shaping was safely skipped.");
 
         if (valueChanged)
         {
             transform.UpdateAttribute(_editingAttribute, newVector, propagationEnabled);
             _editorManager.ModifyBoneTransform(codename, transform);
 
-            if (_isMirrorModeEnabled && bone.Basis?.TwinBone != null)
+            if (_isMirrorModeEnabled && BoneData.HasAutomationTrust(codename, BoneAutomationTrust.MirrorSafe) && bone.Basis?.TwinBone != null)
             {
                 _editorManager.ModifyBoneTransform(
                     bone.Basis.TwinBone.BoneName,
@@ -2756,6 +3165,12 @@ public class BoneEditorPanel
                         ? transform.GetSpecialReflection()
                         : transform.GetStandardReflection()
                 );
+            }
+
+            if (_commitHistoryAfterWrite)
+            {
+                _editorManager.CommitEditTransaction();
+                _commitHistoryAfterWrite = false;
             }
         }
 
@@ -2876,11 +3291,7 @@ public class BoneEditorPanel
             }
             if (ImGui.IsItemDeactivatedAfterEdit())
             {
-                if (_pendingUndoSnapshot != null && _initialChildX != childScale.X)
-                {
-                    SaveStateForUndo(_pendingUndoSnapshot);
-                    _pendingUndoSnapshot = null;
-                }
+                FinalizePendingEditTransaction(_initialChildX != childScale.X);
             }
 
             ImGui.TableNextColumn();
@@ -2898,11 +3309,7 @@ public class BoneEditorPanel
             }
             if (ImGui.IsItemDeactivatedAfterEdit())
             {
-                if (_pendingUndoSnapshot != null && _initialChildY != childScale.Y)
-                {
-                    SaveStateForUndo(_pendingUndoSnapshot);
-                    _pendingUndoSnapshot = null;
-                }
+                FinalizePendingEditTransaction(_initialChildY != childScale.Y);
             }
 
             ImGui.TableNextColumn();
@@ -2920,11 +3327,7 @@ public class BoneEditorPanel
             }
             if (ImGui.IsItemDeactivatedAfterEdit())
             {
-                if (_pendingUndoSnapshot != null && _initialChildZ != childScale.Z)
-                {
-                    SaveStateForUndo(_pendingUndoSnapshot);
-                    _pendingUndoSnapshot = null;
-                }
+                FinalizePendingEditTransaction(_initialChildZ != childScale.Z);
             }
 
             ImGui.TableNextColumn();
@@ -2938,11 +3341,7 @@ public class BoneEditorPanel
                 childScaleChanged = true;
             if (ImGui.IsItemDeactivatedAfterEdit())
             {
-                if (_pendingUndoSnapshot != null && _initialChildScale != childScale)
-                {
-                    SaveStateForUndo(_pendingUndoSnapshot);
-                    _pendingUndoSnapshot = null;
-                }
+                FinalizePendingEditTransaction(_initialChildScale != childScale);
             }
         }
 
@@ -2954,7 +3353,7 @@ public class BoneEditorPanel
             transform.ChildScaling = childScale;
             _editorManager.ModifyBoneTransform(codename, transform);
 
-            if (_isMirrorModeEnabled && bone.Basis?.TwinBone != null)
+            if (_isMirrorModeEnabled && BoneData.HasAutomationTrust(codename, BoneAutomationTrust.MirrorSafe) && bone.Basis?.TwinBone != null)
             {
                 _editorManager.ModifyBoneTransform(
                     bone.Basis.TwinBone.BoneName,
@@ -2962,6 +3361,12 @@ public class BoneEditorPanel
                         ? transform.GetSpecialReflection()
                         : transform.GetStandardReflection()
                 );
+            }
+
+            if (_commitHistoryAfterWrite)
+            {
+                _editorManager.CommitEditTransaction();
+                _commitHistoryAfterWrite = false;
             }
         }
 
@@ -2994,11 +3399,8 @@ public class BoneEditorPanel
             if (ImGui.IsItemActivated() && _pendingUndoSnapshot == null)
                 _pendingUndoSnapshot = CaptureCurrentState();
 
-            if (ImGui.IsItemDeactivatedAfterEdit() && _pendingUndoSnapshot != null)
-            {
-                SaveStateForUndo(_pendingUndoSnapshot);
-                _pendingUndoSnapshot = null;
-            }
+            if (ImGui.IsItemDeactivatedAfterEdit())
+                FinalizePendingEditTransaction(falloffChanged);
 
             ImGui.TableNextColumn();
             ImGui.TableNextColumn();
@@ -3014,7 +3416,7 @@ public class BoneEditorPanel
             transform.PropagationFalloff = propagationFalloff;
             _editorManager.ModifyBoneTransform(codename, transform);
 
-            if (_isMirrorModeEnabled && bone.Basis?.TwinBone != null)
+            if (_isMirrorModeEnabled && BoneData.HasAutomationTrust(codename, BoneAutomationTrust.MirrorSafe) && bone.Basis?.TwinBone != null)
             {
                 _editorManager.ModifyBoneTransform(
                     bone.Basis.TwinBone.BoneName,
@@ -3023,6 +3425,12 @@ public class BoneEditorPanel
                         : transform.GetStandardReflection()
                 );
             }
+
+            if (_commitHistoryAfterWrite)
+            {
+                _editorManager.CommitEditTransaction();
+                _commitHistoryAfterWrite = false;
+            }
         }
 
         ImGui.TableNextRow();
@@ -3030,32 +3438,34 @@ public class BoneEditorPanel
 
     private Dictionary<string, BoneTransform> CaptureCurrentState()
     {
-        return _editorManager.EditorProfile?.Armatures.Count > 0
-            ? _editorManager.EditorProfile.Armatures[0]
-                .GetAllBones()
-                .DistinctBy(b => b.BoneName)
-                .ToDictionary(
-                    b => b.BoneName,
-                    b => new BoneTransform(b.CustomizedTransform ?? new BoneTransform())
-                )
-            : new Dictionary<string, BoneTransform>();
+        _editorManager.BeginEditTransaction("Edit bone transform");
+        return _editorManager.CaptureCurrentTemplateState();
     }
 
     private void SaveStateForUndo(Dictionary<string, BoneTransform> snapshot)
     {
-        if (_undoStack.Count == 0 || !_undoStack.Peek().SequenceEqual(snapshot))
-        {
-            _undoStack.Push(snapshot);
-            _redoStack.Clear();
-        }
+        // The snapshot begins a named editor transaction. The matching commit occurs
+        // after the normal TemplateManager mutation, so slider drags remain one entry.
+        _editorManager.BeginEditTransaction("Edit bone transform");
+        _commitHistoryAfterWrite = true;
+    }
+
+    private void FinalizePendingEditTransaction(bool changed)
+    {
+        if (_pendingUndoSnapshot == null)
+            return;
+
+        if (changed)
+            SaveStateForUndo(_pendingUndoSnapshot);
+        else
+            _editorManager.CancelEditTransaction();
+
+        _pendingUndoSnapshot = null;
     }
 
     private void RestoreState(Dictionary<string, BoneTransform> state)
     {
-        foreach (var kvp in state.DistinctBy(x => x.Key))
-        {
-            _editorManager.ModifyBoneTransform(kvp.Key, kvp.Value);
-        }
+        _editorManager.ReplaceEditedTemplateState(state);
     }
 
     private float GetControlColumnWidth()

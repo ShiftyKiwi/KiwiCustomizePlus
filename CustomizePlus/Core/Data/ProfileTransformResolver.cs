@@ -16,25 +16,93 @@ internal static class ProfileTransformResolver
     {
         public Dictionary<string, Template> BoneOwners { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, BoneTransform> EffectiveTransforms { get; } = new(StringComparer.Ordinal);
+        public List<TemplateApplicability> TemplateApplicability { get; } = new();
     }
 
-    public static Resolution Resolve(Profile profile)
+    internal readonly record struct TemplateContribution(
+        Guid TemplateId,
+        IReadOnlyDictionary<string, BoneTransform> Bones,
+        bool Enabled,
+        float Weight);
+
+    internal readonly record struct TemplateApplicability(
+        Guid TemplateId,
+        string TemplateName,
+        bool Enabled,
+        TemplateCompatibilityRequirement Requirement,
+        bool Active,
+        string Reason,
+        int SavedTransformCount);
+
+    internal sealed class ContributionResolution
+    {
+        public Dictionary<string, Guid> BoneOwnerIds { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, BoneTransform> EffectiveTransforms { get; } = new(StringComparer.Ordinal);
+    }
+
+    public static Resolution Resolve(Profile profile, SkeletonCapabilityManifest? manifest = null)
     {
         var resolution = new Resolution();
-        var accumulators = new Dictionary<string, WeightedBoneAccumulator>(StringComparer.Ordinal);
+        var templatesById = new Dictionary<Guid, Template>();
+        var contributions = new List<TemplateContribution>(profile.Templates.Count);
+        manifest ??= SkeletonCapabilityManifest.Unavailable;
 
         foreach (var template in profile.Templates)
         {
-            if (profile.DisabledTemplates.Contains(template.UniqueId))
+            templatesById[template.UniqueId] = template;
+            var enabled = !profile.DisabledTemplates.Contains(template.UniqueId);
+            var requirement = profile.GetTemplateCompatibilityRequirement(template.UniqueId);
+            var applicability = requirement.Evaluate(manifest);
+            resolution.TemplateApplicability.Add(new TemplateApplicability(
+                template.UniqueId,
+                template.Name.Text,
+                enabled,
+                requirement,
+                enabled && applicability.IsActive,
+                applicability.Reason,
+                template.Bones.Count));
+            contributions.Add(new TemplateContribution(
+                template.UniqueId,
+                template.Bones,
+                enabled && applicability.IsActive,
+                profile.GetTemplateWeight(template.UniqueId)));
+        }
+
+        var contributionResolution = ResolveContributions(contributions);
+        foreach (var (boneName, templateId) in contributionResolution.BoneOwnerIds)
+        {
+            if (templatesById.TryGetValue(templateId, out var template))
+                resolution.BoneOwners[boneName] = template;
+        }
+
+        foreach (var (boneName, transform) in contributionResolution.EffectiveTransforms)
+            resolution.EffectiveTransforms[boneName] = transform;
+
+        return resolution;
+    }
+
+    /// <summary>
+    /// Resolves an already-selected template stack without consulting profile ownership.
+    /// This keeps the weighting/composition policy testable while callers retain their
+    /// normal profile selection and invalidation responsibilities.
+    /// </summary>
+    internal static ContributionResolution ResolveContributions(IEnumerable<TemplateContribution> contributions)
+    {
+        var resolution = new ContributionResolution();
+        var accumulators = new Dictionary<string, WeightedBoneAccumulator>(StringComparer.Ordinal);
+
+        foreach (var template in contributions)
+        {
+            if (!template.Enabled)
                 continue;
 
-            var templateWeight = profile.GetTemplateWeight(template.UniqueId);
-            if (templateWeight <= 0f)
+            var templateWeight = template.Weight;
+            if (!TransformSafety.IsFinite(templateWeight) || templateWeight <= 0f)
                 continue;
 
             foreach (var (boneName, transform) in template.Bones)
             {
-                resolution.BoneOwners[boneName] = template;
+                resolution.BoneOwnerIds[boneName] = template.TemplateId;
 
                 if (!accumulators.TryGetValue(boneName, out var accumulator))
                 {
@@ -79,7 +147,7 @@ internal static class ProfileTransformResolver
 
         public void Add(BoneTransform transform, float weight)
         {
-            if (weight <= 0f)
+            if (!TransformSafety.IsFinite(weight) || weight <= 0f || !TransformSafety.IsFinite(_totalWeight + weight))
                 return;
 
             _contributionCount++;
@@ -93,6 +161,9 @@ internal static class ProfileTransformResolver
             _childScalingIndependent |= transform.ChildScalingIndependent;
 
             var rotation = transform.Rotation.ToQuaternion();
+            if (!TransformSafety.TryNormalize(rotation, out rotation))
+                rotation = Quaternion.Identity;
+
             var rotationVector = rotation.GetAsNumericsVector();
 
             if (!_hasRotation)
@@ -129,20 +200,24 @@ internal static class ProfileTransformResolver
 
         public BoneTransform ToBoneTransform()
         {
-            if (_totalWeight <= 0f)
+            if (!TransformSafety.IsFinite(_totalWeight) || _totalWeight <= 0f)
                 return new BoneTransform();
 
             if (_contributionCount == 1 && _singleTransform != null)
                 return _singleTransform.DeepCopy();
 
             var inverseWeight = 1f / _totalWeight;
+            if (!TransformSafety.IsFinite(inverseWeight))
+                return new BoneTransform();
+
             var rotation = Quaternion.Identity;
 
             if (_hasRotation)
             {
                 var averaged = _rotationSum * inverseWeight;
-                if (averaged.LengthSquared() > 0f)
-                    rotation = Quaternion.Normalize(new Quaternion(averaged.X, averaged.Y, averaged.Z, averaged.W));
+                var rotationCandidate = new Quaternion(averaged.X, averaged.Y, averaged.Z, averaged.W);
+                if (TransformSafety.TryNormalize(rotationCandidate, out var normalizedRotation))
+                    rotation = normalizedRotation;
             }
 
             var childScaling = Vector3.One + (_childScaleOffsetSum * inverseWeight);

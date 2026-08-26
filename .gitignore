@@ -13,6 +13,7 @@ Setup/Debug/
 *.filters
 *.pdb
 *.log
+CustomizePlus.Tests/TestResults/
 *.obj
 *.idb
 *.recipe

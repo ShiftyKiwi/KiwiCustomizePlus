@@ -130,7 +130,19 @@ public class HookingService : IDisposable
             _renderManagerHook?.Disable();
         }
 
-        return _renderManagerHook!.Original(a1, a2, a3, a4);
+        var result = _renderManagerHook!.Original(a1, a2, a3, a4);
+
+        try
+        {
+            _armatureManager.OnPostRender();
+        }
+        catch (Exception e)
+        {
+            // This is a bounded root-scale finalization pass; do not disable the main hook if it fails.
+            _logger.Error($"Error finalizing root draw scale after rendering: {e}");
+        }
+
+        return result;
     }
 
     private unsafe void OnGameObjectMove(nint gameObjectPtr)

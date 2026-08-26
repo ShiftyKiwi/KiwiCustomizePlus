@@ -13,7 +13,6 @@ public class EmoteService
 {
     private const long StateSweepIntervalMs = 10000;
     private const long StateExpiryMs = 30000;
-    private const long VerboseLogIntervalMs = 5000;
 
     private readonly Logger _logger;
     private readonly object _stateLock = new();
@@ -25,7 +24,6 @@ public class EmoteService
         public ushort EmoteId { get; set; }
         public bool Sitting { get; set; }
         public long LastSeenAt { get; set; }
-        public long LastVerboseLogAt { get; set; }
         public bool Initialized { get; set; }
     }
 
@@ -45,8 +43,6 @@ public class EmoteService
         var actorIndex = actor.Index.Index;
         var emoteId = actor.AsCharacter->EmoteController.EmoteId;
         var isSitting = ChairSitEmotes.Contains(emoteId);
-        var actorName = actor.Utf8Name.ToString();
-
         lock (_stateLock)
         {
             SweepStaleStates(now);
@@ -61,13 +57,9 @@ public class EmoteService
             {
                 if (state.EmoteId != emoteId || state.Sitting != isSitting)
                 {
+                    var actorName = actor.Utf8Name.ToString();
                     _logger.Debug(
                         $"Actor {actorName} emote state changed: EmoteId {state.EmoteId} -> {emoteId}, Sitting {state.Sitting} -> {isSitting}");
-                }
-                else if (now - state.LastVerboseLogAt >= VerboseLogIntervalMs)
-                {
-                    _logger.Verbose($"Actor {actorName} emote state unchanged: EmoteId {emoteId}, Sitting {isSitting}");
-                    state.LastVerboseLogAt = now;
                 }
             }
 

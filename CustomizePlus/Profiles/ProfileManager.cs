@@ -305,6 +305,7 @@ public partial class ProfileManager : IDisposable
         var template = profile.Templates[templateIndex];
         profile.Templates.RemoveAt(templateIndex);
         profile.TemplateWeights.Remove(template.UniqueId);
+        profile.TemplateCompatibilityRequirements.Remove(template.UniqueId);
 
         SaveProfile(profile);
 
@@ -318,6 +319,7 @@ public partial class ProfileManager : IDisposable
 
         profile.Templates.Add(template);
         profile.SetTemplateWeight(template.UniqueId, 1f);
+        profile.SetTemplateCompatibilityRequirement(template.UniqueId, TemplateCompatibilityRequirement.Always);
 
         SaveProfile(profile);
 
@@ -338,6 +340,7 @@ public partial class ProfileManager : IDisposable
         profile.Templates[index] = newTemplate;
         var weight = profile.GetTemplateWeight(oldTemplate.UniqueId);
         profile.TemplateWeights.Remove(oldTemplate.UniqueId);
+        profile.TemplateCompatibilityRequirements.Remove(oldTemplate.UniqueId);
         profile.SetTemplateWeight(newTemplate.UniqueId, weight);
 
         SaveProfile(profile);
@@ -393,6 +396,20 @@ public partial class ProfileManager : IDisposable
 
         _logger.Debug($"Changed template weight for {template.UniqueId} on profile {profile.UniqueId} to {clampedWeight:0.###}");
         _event.Invoke(ProfileChanged.Type.TemplateWeightChanged, profile, (template, clampedWeight));
+    }
+
+    public void SetTemplateCompatibilityRequirement(Profile profile, int index, TemplateCompatibilityRequirement requirement)
+    {
+        if (index < 0 || index >= profile.Templates.Count)
+            return;
+
+        var template = profile.Templates[index];
+        if (profile.GetTemplateCompatibilityRequirement(template.UniqueId) == requirement)
+            return;
+
+        profile.SetTemplateCompatibilityRequirement(template.UniqueId, requirement);
+        SaveProfile(profile);
+        _event.Invoke(ProfileChanged.Type.TemplateCompatibilityChanged, profile, (template, requirement));
     }
 
     public bool EnableTemplate(Profile profile, Guid templateId)

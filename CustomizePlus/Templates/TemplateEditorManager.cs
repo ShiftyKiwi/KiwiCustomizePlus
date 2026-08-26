@@ -84,8 +84,17 @@ public class TemplateEditorManager : IDisposable
     public bool ProfileContextPreviewActive { get; private set; }
     public string ProfileContextPreviewStatus { get; private set; } = "Off";
     public int ProfileContextTemplateCount { get; private set; }
+    /// <summary>Monotonically changes while the current temporary editor session is modified.</summary>
+    internal long EditorRevision { get; private set; }
+    /// <summary>Changes for every temporary editor lifetime so transient UI state cannot cross sessions.</summary>
+    internal Guid EditorSessionId { get; private set; }
     private int _editorTemplateStackSignature;
     private int _requestedEditorContextSignature;
+    private Dictionary<string, BoneTransform>? _transactionBefore;
+    private string? _transactionLabel;
+
+    /// <summary>Session-only bounded authoring history for the temporary editor template.</summary>
+    internal TemplateEditHistory EditHistory { get; } = new();
 
     public TemplateEditorManager(
         TemplateChanged @event,
@@ -146,6 +155,11 @@ public class TemplateEditorManager : IDisposable
         RebuildEditorProfileTemplateStack(false, null, "Off", notify: false);
         EditorProfile.Enabled = true;
         HasChanges = false;
+        EditorRevision = 0;
+        EditorSessionId = Guid.NewGuid();
+        EditHistory.Clear();
+        _transactionBefore = null;
+        _transactionLabel = null;
         IsEditorActive = true;
 
         _event.Invoke(TemplateChanged.Type.EditorEnabled, template, Character);
@@ -180,6 +194,11 @@ public class TemplateEditorManager : IDisposable
         _requestedEditorContextSignature = 0;
         IsEditorActive = false;
         HasChanges = false;
+        EditorRevision = 0;
+        EditorSessionId = Guid.Empty;
+        EditHistory.Clear();
+        _transactionBefore = null;
+        _transactionLabel = null;
 
         _event.Invoke(TemplateChanged.Type.EditorDisabled, template, (Character, hasChanges));
 
@@ -440,14 +459,122 @@ public class TemplateEditorManager : IDisposable
         if (!IsEditorActive || IsEditorPaused)
             return false;
 
+        var implicitTransaction = _transactionBefore == null;
+        var before = implicitTransaction ? CaptureCurrentTemplateState() : null;
         if (!_templateManager.ModifyBoneTransform(CurrentlyEditedTemplate!, boneName, transform))
             return false;
 
         if (!HasChanges)
             HasChanges = true;
 
+        if (implicitTransaction && before != null)
+            EditHistory.Record($"Edit {BoneData.GetBoneDisplayName(boneName)}", before, CaptureCurrentTemplateState());
+
+        EditorRevision++;
+
         return true;
     }
+
+    internal void BeginEditTransaction(string label)
+    {
+        if (!IsEditorActive || IsEditorPaused || _transactionBefore != null)
+            return;
+
+        _transactionBefore = CaptureCurrentTemplateState();
+        _transactionLabel = string.IsNullOrWhiteSpace(label) ? "Edit template" : label;
+    }
+
+    internal void CommitEditTransaction()
+    {
+        if (_transactionBefore == null)
+            return;
+
+        EditHistory.Record(_transactionLabel ?? "Edit template", _transactionBefore, CaptureCurrentTemplateState());
+        _transactionBefore = null;
+        _transactionLabel = null;
+    }
+
+    internal void CancelEditTransaction()
+    {
+        _transactionBefore = null;
+        _transactionLabel = null;
+    }
+
+    internal bool TryUndoEdit()
+    {
+        if (!EditHistory.TryUndo(out var state))
+            return false;
+        return ReplaceEditedTemplateState(state);
+    }
+
+    internal bool TryRedoEdit()
+    {
+        if (!EditHistory.TryRedo(out var state))
+            return false;
+        return ReplaceEditedTemplateState(state);
+    }
+
+    internal Dictionary<string, BoneTransform> CaptureCurrentTemplateState()
+        => CurrentlyEditedTemplate == null
+            ? new Dictionary<string, BoneTransform>(StringComparer.Ordinal)
+            : AuthoringTooling.CloneTransforms(CurrentlyEditedTemplate.Bones);
+
+    /// <summary>
+    /// Restores an ordinary editor-template state using the normal TemplateManager mutation/event path.
+    /// It never touches saved templates until the user chooses the existing Save action.
+    /// </summary>
+    internal bool ReplaceEditedTemplateState(IReadOnlyDictionary<string, BoneTransform> state)
+    {
+        if (!IsEditorActive || IsEditorPaused || CurrentlyEditedTemplate == null)
+            return false;
+
+        var existing = CurrentlyEditedTemplate.Bones.Keys.ToArray();
+        var changed = false;
+        foreach (var (bone, transform) in state)
+            changed |= _templateManager.ModifyBoneTransform(CurrentlyEditedTemplate, bone, transform.DeepCopy());
+        foreach (var bone in existing.Where(bone => !state.ContainsKey(bone)))
+            changed |= _templateManager.ModifyBoneTransform(CurrentlyEditedTemplate, bone, new BoneTransform());
+
+        if (changed)
+        {
+            HasChanges = true;
+            EditorRevision++;
+        }
+        return changed;
+    }
+
+    /// <summary>
+    /// Applies one on-demand authoring delta to the temporary editor template.
+    /// The operation must still describe the current working state.
+    /// </summary>
+    internal bool TryApplyAuthoringOperation(TemplateAuthoringOperation operation)
+    {
+        if (!IsEditorActive || IsEditorPaused || !operation.CanApply(CaptureCurrentTemplateState()))
+            return false;
+
+        BeginEditTransaction(operation.Label);
+        var changed = false;
+        foreach (var (boneName, transform) in operation.After)
+            changed |= ModifyBoneTransform(boneName, transform.DeepCopy());
+
+        if (!changed)
+        {
+            CancelEditTransaction();
+            return false;
+        }
+
+        CommitEditTransaction();
+        return true;
+    }
+
+    /// <summary>
+    /// Reverses only a still-current tool operation.  If one of its affected
+    /// rows changed later, callers must fall back to normal Undo/Redo.
+    /// </summary>
+    internal bool TryRevertAuthoringOperation(TemplateAuthoringOperation operation, string label)
+        => operation.TryCreateRevert(CaptureCurrentTemplateState(), label, out var revert)
+            && revert != null
+            && TryApplyAuthoringOperation(revert);
 
     private void OnLogin()
     {

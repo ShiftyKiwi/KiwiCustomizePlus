@@ -1305,14 +1305,17 @@ public sealed class AdvancedBodyScalingBoneImportanceService
         if (!IsRelevantBodyBone(boneName))
             return BoneImportanceClassification.Ignored;
 
+        var metadata = BoneData.GetMetadata(boneName);
+        if (metadata.Origin == BoneOrigin.UnknownCustom)
+            return BoneImportanceClassification.Ignored;
+
         var family = BoneData.GetBoneFamily(boneName);
         if (IsFingerBone(boneName) || IsToeBone(boneName))
             return BoneImportanceClassification.DeemphasizedLocal;
 
-        if (boneName.StartsWith("iv_", StringComparison.Ordinal) ||
-            boneName.StartsWith("ya_", StringComparison.Ordinal))
+        if (metadata.Origin is BoneOrigin.IVCS1 or BoneOrigin.IVCS2 or BoneOrigin.YAS or BoneOrigin.NFLB or BoneOrigin.Skelomae)
         {
-            return family is BoneData.BoneFamily.Spine or BoneData.BoneFamily.Chest or BoneData.BoneFamily.Groin or BoneData.BoneFamily.Legs or BoneData.BoneFamily.Hands or BoneData.BoneFamily.Feet
+            return metadata.Role is BoneFunctionalRole.BodyExtension or BoneFunctionalRole.PhysicsSimulation or BoneFunctionalRole.PhysicsControlOverride
                 ? BoneImportanceClassification.DeemphasizedLocal
                 : BoneImportanceClassification.Ignored;
         }
@@ -1322,24 +1325,24 @@ public sealed class AdvancedBodyScalingBoneImportanceService
             BoneData.BoneFamily.Root => BoneImportanceClassification.CoreStructural,
             BoneData.BoneFamily.Spine => boneName is "n_root" or "n_hara" or "j_kosi" or "j_sebo_a" or "j_sebo_b" or "j_sebo_c" or "j_kubi"
                 ? BoneImportanceClassification.CoreStructural
-                : BoneData.IsDefaultBone(boneName)
+                : metadata.HasTrust(BoneAutomationTrust.AdvancedCorrectiveSafe)
                     ? BoneImportanceClassification.SecondaryLocal
                     : BoneImportanceClassification.DeemphasizedLocal,
             BoneData.BoneFamily.Chest => boneName.StartsWith("j_sako_", StringComparison.Ordinal)
                 ? BoneImportanceClassification.CoreStructural
-                : BoneData.IsDefaultBone(boneName)
+                : metadata.HasTrust(BoneAutomationTrust.AdvancedCorrectiveSafe)
                     ? BoneImportanceClassification.SecondaryLocal
                     : BoneImportanceClassification.DeemphasizedLocal,
             BoneData.BoneFamily.Groin => boneName == "j_kosi"
                 ? BoneImportanceClassification.CoreStructural
-                : BoneData.IsDefaultBone(boneName)
+                : metadata.HasTrust(BoneAutomationTrust.AdvancedCorrectiveSafe)
                     ? BoneImportanceClassification.SecondaryLocal
                     : BoneImportanceClassification.DeemphasizedLocal,
             BoneData.BoneFamily.Arms => boneName.StartsWith("n_hkata_", StringComparison.Ordinal) ||
                                          boneName.StartsWith("j_ude_a_", StringComparison.Ordinal) ||
                                          boneName.StartsWith("j_ude_b_", StringComparison.Ordinal)
                 ? BoneImportanceClassification.CoreStructural
-                : BoneData.IsDefaultBone(boneName)
+                : metadata.HasTrust(BoneAutomationTrust.AdvancedCorrectiveSafe)
                     ? BoneImportanceClassification.SecondaryLocal
                     : BoneImportanceClassification.DeemphasizedLocal,
             BoneData.BoneFamily.Hands => boneName.StartsWith("n_hte_", StringComparison.Ordinal) || boneName.StartsWith("j_te_", StringComparison.Ordinal)
@@ -1349,14 +1352,14 @@ public sealed class AdvancedBodyScalingBoneImportanceService
                                          boneName.StartsWith("j_asi_b_", StringComparison.Ordinal) ||
                                          boneName.StartsWith("j_asi_c_", StringComparison.Ordinal)
                 ? BoneImportanceClassification.CoreStructural
-                : BoneData.IsDefaultBone(boneName)
+                : metadata.HasTrust(BoneAutomationTrust.AdvancedCorrectiveSafe)
                     ? BoneImportanceClassification.SecondaryLocal
                     : BoneImportanceClassification.DeemphasizedLocal,
             BoneData.BoneFamily.Feet => boneName.StartsWith("j_asi_d_", StringComparison.Ordinal)
                 ? BoneImportanceClassification.SecondaryLocal
                 : BoneImportanceClassification.DeemphasizedLocal,
             BoneData.BoneFamily.Tail => BoneImportanceClassification.DeemphasizedLocal,
-            _ => BoneData.IsDefaultBone(boneName)
+            _ => metadata.HasTrust(BoneAutomationTrust.AdvancedCorrectiveSafe)
                 ? BoneImportanceClassification.SecondaryLocal
                 : BoneImportanceClassification.DeemphasizedLocal,
         };

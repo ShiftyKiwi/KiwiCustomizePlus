@@ -1,15 +1,15 @@
 # KiwiCustomizePlus Product Innovation Notes
 
-These notes intentionally follow the 2.1.10.2 hardening release. They are design TODOs, not implemented systems.
+These notes track future ideas after the current hardening and authoring-tooling releases. They are design TODOs, not implemented systems unless a section explicitly says otherwise.
 
 ## Local Skeleton Metadata Packs
 
 - Load optional local JSON or compressed JSON metadata packs from a known plugin folder.
 - Metadata should describe bone code name, display name, family, aliases, support class, risk notes, and safety flags.
 - Use per-bone aliases here to refine the current Phase 1 family-level alias search, so terms like "wrist" can narrow to specific bones instead of the broader arms family.
-- Optional mirror partners and parent overrides should be accepted only from trusted/explicit metadata.
-- Unknown/custom bones must remain manual and experimental unless a metadata pack explicitly classifies them later.
-- Conflicts should be deterministic: built-in safe data wins by default, user-local overrides can opt in to taking precedence.
+- Local metadata packs are implemented as advisory labels, aliases, and notes for unknown/custom bones only.
+- Metadata does not grant runtime trust for mirroring, parentage, propagation, guardrails, BIW, automation, or native transform writes.
+- Future metadata enhancements must preserve that advisory/manual boundary; built-in safe data remains authoritative for known bones.
 
 ## Unknown Bone Workbench
 

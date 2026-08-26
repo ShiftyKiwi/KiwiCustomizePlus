@@ -73,6 +73,8 @@ public class SupportLogBuilderService
         sb.Append($"> **`Enabled:                        `** {advanced.Enabled}\n");
         sb.Append($"> **`Automation mode:                `** {advanced.Mode}\n");
         sb.Append($"> **`Animation-safe mode:            `** {advanced.AnimationSafeModeEnabled}\n");
+        sb.Append($"> **`Proportional balance:           `** {advanced.ProportionalBalanceEnabled} (strength {advanced.ProportionalBalanceStrength:0.00})\n");
+        sb.Append($"> **`Surface smoothness:            `** {advanced.SurfaceSmoothnessEnabled} (strength {advanced.SurfaceSmoothnessStrength:0.00})\n");
         sb.Append($"> **`Model-derived bone importance:  `** {advanced.ModelDerivedBoneImportanceEnabled} (prefer skin weights {advanced.PreferTrueSkinWeightImportance}, blend {advanced.BoneImportanceHeuristicBlend:0.00})\n");
         sb.Append($"> **`BIW full-quality actors:        `** self {advanced.FullBoneImportanceOnSelf}, profiled {advanced.FullBoneImportanceOnProfiledActors}; target/focus and nearby non-profiled actors use heuristic/cached fallback unless explicitly profiled\n");
         sb.Append($"> **`RBF pose-space correctives:     `** {advanced.PoseCorrectives.Enabled} (strength {advanced.PoseCorrectives.Strength:0.00}, sharpness {advanced.PoseCorrectives.PoseMapSharpness:0.00})\n");
@@ -113,6 +115,9 @@ public class SupportLogBuilderService
             {
                 sb.Append($">   >   > **`{template.ToString(),-32}`**\n");
 
+                var requirement = profile.GetTemplateCompatibilityRequirement(template.UniqueId);
+                sb.Append($">   >   >   > **`Compatibility:              `** {requirement.ToDisplayString()}\n");
+
                 if (profile.DisabledTemplates.Contains(template.UniqueId))
                     sb.Append($">   >   >   >  **`Disabled`**\n");
             }
@@ -134,10 +139,34 @@ public class SupportLogBuilderService
             sb.Append($">   > **`{armature.ToString(),-32}`**\n");
             sb.Append($">   > **`Actor:                      `** {armature.ActorIdentifier.Incognito(null) ?? "None"}\n");
             sb.Append($">   > **`Built:                      `** {armature.IsBuilt}\n");
+            sb.Append($">   > **`Armature revision:          `** {armature.SkeletonRevision}\n");
+            sb.Append($">   > **`Native binding generation:  `** {armature.NativeBindingGeneration}\n");
+            sb.Append($">   > **`Actor lifetime generation: `** {armature.ActorLifetimeGeneration}; reacquisition pending={armature.IsAwaitingActorReacquisitionPublication}\n");
+            sb.Append($">   > **`Template binding revision: `** {armature.TemplateBindingRevision}\n");
+            sb.Append($">   > **`Profile resolution revision:`** {armature.ProfileResolutionRevision}\n");
+            sb.Append($">   > **`Deformation revision:     `** {armature.DeformationRevision}\n");
+            sb.Append($">   > **`Diagnostics revision:     `** {armature.DiagnosticsRevision}\n");
+            sb.Append($">   > **`Skeleton binding current:   `** {armature.IsSkeletonBindingCurrent}\n");
             sb.Append($">   > **`Visible:                    `** {armature.IsVisible}\n");
             sb.Append($">   > **`Pending rebind:             `** {armature.IsPendingProfileRebind}\n");
             sb.Append($">   > **`Last seen:                  `** {armature.LastSeen}\n");
             sb.Append($">   > **`Profile:                    `** {armature.Profile?.ToString() ?? "None"}\n");
+            sb.Append($">   > **`Resolved transforms:        `** {armature.ResolvedBoneTransforms.Count}\n");
+            sb.Append($">   > **`Active ModelBones:          `** {armature.ActiveBones.Count}\n");
+            var manifest = armature.GetCapabilityManifestSnapshot();
+            sb.Append($">   > **`Manifest revision:           `** {manifest.Revision}\n");
+            sb.Append($">   > **`Manifest fingerprint:        `** {(string.IsNullOrWhiteSpace(manifest.StructuralFingerprint) ? "Unavailable" : manifest.StructuralFingerprint)}\n");
+            sb.Append($">   > **`Capabilities:               `** {string.Join(", ", manifest.CapabilityEvidence.OrderBy(static pair => pair.Key).Select(static pair => $"{pair.Key}={pair.Value.State}"))}\n");
+            if (armature.Profile is { } profile)
+            {
+                var applicability = ProfileTransformResolver.Resolve(profile, manifest).TemplateApplicability;
+                foreach (var item in applicability)
+                    sb.Append($">   > **`Template applicability:      `** {item.TemplateName}: {(item.Active ? "Active" : "Dormant")} ({item.Requirement.ToDisplayString()}; {item.Reason})\n");
+            }
+            else
+            {
+                sb.Append($">   > **`Template applicability:      `** none (no resolved profile)\n");
+            }
             sb.Append($">   > **`Bone importance source:     `** {armature.ActiveBoneImportanceResult.SourceLabel} ({armature.ActiveBoneImportanceResult.StageLabel})\n");
             sb.Append($">   > **`Bone importance resolve:    `** {armature.ActiveBoneImportanceResult.ResolutionLabel}\n");
             sb.Append($">   > **`Bone importance mode:       `** {armature.ActiveBoneImportanceResult.AggregateModeLabel} ({armature.ActiveBoneImportanceResult.ContributingPartCount} contributing part{(armature.ActiveBoneImportanceResult.ContributingPartCount == 1 ? string.Empty : "s")})\n");
@@ -151,6 +180,18 @@ public class SupportLogBuilderService
             if (!string.IsNullOrWhiteSpace(armature.ActiveBoneImportanceResult.VisibleRuntimeSummary))
                 sb.Append($">   > **`Bone importance runtime dt: `** {armature.ActiveBoneImportanceResult.VisibleRuntimeSummary}\n");
             sb.Append($">   > **`Bone importance applied:    `** {armature.BoneImportanceAppliedToPipeline}\n");
+            var quality = armature.DeformationQualityDiagnostics;
+            var solver = quality.Solver;
+            sb.Append($">   > **`Body-support regions:      `** {(solver.ActiveRegions.Count == 0 ? "none" : string.Join(", ", solver.ActiveRegions))}\n");
+            sb.Append($">   > **`Automatic support:         `** primary={solver.PrimaryContributionCount}; support={solver.SupportContributionCount}; transition={solver.TransitionContributionCount}; secondary={solver.SecondaryContributionCount}; secondary-magnitude={solver.SecondaryContributionMagnitude:0.000}\n");
+            sb.Append($">   > **`Body-support safeguards:   `** bilateral-normalized={solver.BilateralNormalizationCount}; duplicate-suppressed={solver.DoubleContributionPreventionCount}; clamped={solver.ClampedContributionCount}; fallback={solver.FallbackCount}\n");
+            sb.Append($">   > **`Proportional balance:      `** enabled={solver.ProportionalBalanceEnabled}; strength={solver.ProportionalBalanceStrength:0.00}; relationships={(solver.CorrectedRelationships.Count == 0 ? "none" : string.Join(", ", solver.CorrectedRelationships))}; max-correction={solver.MaximumProportionalCorrection:0.000}; skipped-explicit={solver.ProportionalSkippedExplicitOrLockedCount}\n");
+            sb.Append($">   > **`Surface smoothness:        `** enabled={solver.SurfaceSmoothnessEnabled}; strength={solver.SurfaceSmoothnessStrength:0.00}; affected={solver.SurfaceSmoothnessAffectedBoneCount}; regions={(solver.SurfaceSmoothnessRegions.Count == 0 ? "none" : string.Join(", ", solver.SurfaceSmoothnessRegions))}; gradient={solver.MaximumPreSmoothingGradient:0.000}->{solver.MaximumPostSmoothingGradient:0.000}; boundary-skips={solver.SurfaceSmoothnessSkippedBoundaryCount}; magnitude-error={solver.SurfaceMagnitudePreservationError:0.000}\n");
+            sb.Append($">   > **`Body-shaping quality:     `** bilateral={quality.MaxBilateralDifference:0.000} ({quality.MaxBilateralPair}); continuity={quality.MaxContinuityDifference:0.000} ({quality.MaxContinuityBoundary}); proportional={quality.ProportionalImbalanceScore:0.000}; gradient={quality.SurfaceGradientScore:0.000}\n");
+            sb.Append($">   > **`M6 NFLB:                   `** automated-body={solver.AutomatedNflbBodyControls}; automated-clothing=0; automated-props=0\n");
+            sb.Append($">   > **`M7 Skelomae:               `** automated-body={solver.AutomatedSkelomaeBodyControls}; automated-tongue=0; automated-wings=0\n");
+            foreach (var timing in armature.PerformanceMetrics.Snapshot())
+                sb.Append($">   > **`Timing {timing.Stage,-22}`** latest={timing.LatestMilliseconds:0.000}ms; avg={timing.AverageMilliseconds:0.000}ms; max={timing.MaxMilliseconds:0.000}ms; samples={timing.Samples}\n");
             if (!string.IsNullOrWhiteSpace(armature.ActiveBoneImportanceResult.ModelIdentity))
                 sb.Append($">   > **`Bone importance model:      `** {armature.ActiveBoneImportanceResult.ModelIdentity}\n");
             if (!string.IsNullOrWhiteSpace(armature.ActiveBoneImportanceResult.ModelSignature))
@@ -180,6 +221,15 @@ public class SupportLogBuilderService
             }
             sb.Append($">   > =====\n");
         }
+
+        var lifecycleTrace = _armatureManager.GetDebugSelfLifecycleTrace();
+        if (lifecycleTrace.Count > 0)
+        {
+            sb.AppendLine("**Self Armature Lifecycle Trace (Debug)**");
+            foreach (var entry in lifecycleTrace)
+                sb.Append($"> **`{entry.ToSupportLine()}`**\n");
+        }
+
         return sb.ToString();
     }
 

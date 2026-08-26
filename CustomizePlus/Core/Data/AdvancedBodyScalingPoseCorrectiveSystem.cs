@@ -402,6 +402,11 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
 
         foreach (var definition in Definitions)
         {
+#if DEBUG
+            if (armature.HasDebugPoseCorrectiveValidation
+                && armature.IsDebugPoseCorrectiveValidationRegion(definition.Region) == false)
+                continue;
+#endif
             var regionSettings = poseSettings.GetRegionSettings(definition.Region);
             if (!regionSettings.Enabled || regionSettings.Strength <= 0f || !HasUsableScaleData(armature.GetAppliedBoneTransform, definition))
                 continue;
@@ -415,6 +420,14 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
 
             var signals = BuildSignals(armature.GetAppliedBoneTransform, definition);
             var driverSamples = BuildLiveDriverSamples(armature, cBase, definition, signals);
+#if DEBUG
+            if (armature.TryGetDebugPoseCorrectiveDriverOverride(definition.Region, definition.Drivers.Count, out var debugDrivers))
+            {
+                driverSamples = definition.Drivers
+                    .Select((driver, index) => new DriverSample(driver.Type, debugDrivers[index]))
+                    .ToArray();
+            }
+#endif
             var driverVector = driverSamples.Select(sample => sample.Strength).ToArray();
             var history = ApplyPoseHistorySmoothing(definition, driverVector, regionState);
             var driverStrength = WeightedAverage(driverSamples, definition.Drivers);
@@ -434,6 +447,13 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
 
             var metrics = ApplyDefinitionCorrection(scaleMultipliers, armature, definition, signals, poseSettings, regionSettings, correctionStrength, rbf.Output);
             ApplySpecialBias(scaleMultipliers, armature, definition.Region, poseSettings, regionSettings, correctionStrength, rbf.Output, metrics);
+#if DEBUG
+            if (armature.IsDebugPoseCorrectiveValidationRegion(definition.Region))
+            {
+                armature.FilterDebugPoseCorrectiveValidationMultipliers(scaleMultipliers);
+                metrics.AnyApplied = scaleMultipliers.Count > 0;
+            }
+#endif
 
             anyActive |= metrics.AnyApplied;
             anySafetyLimited |= rbf.SafetyLimited || metrics.Clamped;
@@ -490,6 +510,91 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
             .ToList();
     }
 
+#if DEBUG
+    /// <summary>
+    /// Deterministically drives the same Neck / Shoulder RBF evaluator used at runtime. This is
+    /// test-only coverage for activation, release, and repeated-cycle stability; native-write
+    /// evidence is captured separately by the bounded AgentBridge fixture.
+    /// </summary>
+    internal static PoseCorrectiveValidationFixtureResult RunDeterministicValidationFixture(int cycles = 25)
+    {
+        if (cycles is < 1 or > 50)
+            throw new ArgumentOutOfRangeException(nameof(cycles), "The deterministic fixture supports one through fifty cycles.");
+
+        var definition = Definitions.Single(static item => item.Region == AdvancedBodyScalingCorrectiveRegion.NeckShoulder);
+        var settings = new AdvancedBodyScalingSettings
+        {
+            Enabled = true,
+            Mode = AdvancedBodyScalingMode.Strong,
+            PoseCorrectives = { Enabled = true, Strength = 1f },
+        };
+        var poseSettings = settings.PoseCorrectives;
+        var regionSettings = poseSettings.GetRegionSettings(definition.Region);
+        var runtimeState = new AdvancedBodyScalingCorrectiveRuntimeState();
+        var maxActiveDelta = 0f;
+        var maxPostCycleNeutralDelta = 0f;
+        var finalNeutralDelta = 0f;
+        var activeFrames = 0;
+        var activeCorrectiveFrames = 0;
+        var neutralFrames = 0;
+
+        void EvaluateFixtureFrame(IReadOnlyList<float> vector, bool activePhase)
+        {
+            var history = ApplyPoseHistorySmoothing(definition, vector, runtimeState);
+            var rbf = SolveRbf(definition, poseSettings, regionSettings, history, runtimeState);
+            var activation = ComputeActivation(rbf.RawActivation, runtimeState, poseSettings, regionSettings, rbf.Tuning);
+            runtimeState.Activation = activation.Activation;
+            runtimeState.RawActivation = rbf.RawActivation;
+            runtimeState.IsActive = activation.IsActive;
+            var strength = ComputeCorrectionStrength(settings, poseSettings, regionSettings, activation.Activation, GetRegionTuningFactor(settings, definition.RelatedRegions));
+            var multiplier = BuildNeckAxisMultiplier(strength * rbf.Output.AxisBias, MathF.Min(regionSettings.MaxCorrection, poseSettings.MaxCorrectionClamp));
+            var scaleDelta = MathF.Max(MathF.Abs(multiplier.X - 1f), MathF.Max(MathF.Abs(multiplier.Y - 1f), MathF.Abs(multiplier.Z - 1f)));
+            if (activePhase)
+            {
+                activeFrames++;
+                maxActiveDelta = Math.Max(maxActiveDelta, scaleDelta);
+                if (scaleDelta > 0.0005f)
+                    activeCorrectiveFrames++;
+            }
+            else
+            {
+                neutralFrames++;
+                finalNeutralDelta = scaleDelta;
+            }
+        }
+
+        var neutral = new[] { 0f, 0f, 0f, 0f, 0f };
+        var intermediate = new[] { 0.06f, 0.39f, 0.07f, 0.05f, 0.18f };
+        var active = new[] { 0.12f, 0.78f, 0.14f, 0.10f, 0.36f };
+        for (var cycle = 0; cycle < cycles; ++cycle)
+        {
+            for (var frame = 0; frame < 8; ++frame)
+                EvaluateFixtureFrame(neutral, activePhase: false);
+            for (var frame = 0; frame < 8; ++frame)
+                EvaluateFixtureFrame(intermediate, activePhase: false);
+            for (var frame = 0; frame < 8; ++frame)
+                EvaluateFixtureFrame(active, activePhase: true);
+            for (var frame = 0; frame < 8; ++frame)
+                EvaluateFixtureFrame(intermediate, activePhase: false);
+            for (var frame = 0; frame < 16; ++frame)
+                EvaluateFixtureFrame(neutral, activePhase: false);
+
+            maxPostCycleNeutralDelta = Math.Max(maxPostCycleNeutralDelta, finalNeutralDelta);
+        }
+
+        return new PoseCorrectiveValidationFixtureResult(
+            cycles,
+            activeFrames,
+            activeCorrectiveFrames,
+            neutralFrames,
+            maxActiveDelta,
+            maxPostCycleNeutralDelta,
+            finalNeutralDelta);
+    }
+#endif
+
+    // The current product path is intentionally transform/RBF-only. No verified morph backend is
+    // available in Customize+ or the supported runtime, so this remains an explicit false path.
     private static bool HasSupportedMorphPath()
         => false;
 
@@ -611,6 +716,7 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
 
         var broadInterpolation = DetermineBroadInterpolation(influences, tuning, runtimeState, out var broadModeMemoryUsed);
         var blendedOutput = BlendSampleOutput(influences);
+        blendedOutput = ApplyNeutralAnchor(definition, driverVector, blendedOutput);
         var minDistance = influences.Min(entry => entry.Distance);
         var strongestRawWeight = influences.Max(entry => entry.RawWeight);
         var strongestNormalizedWeight = influences.Max(entry => entry.Weight);
@@ -1158,6 +1264,37 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
             Math.Clamp(axisBias, 0f, 1f));
     }
 
+    private static PoseSampleOutput ApplyNeutralAnchor(
+        CorrectiveDefinition definition,
+        IReadOnlyList<float> driverVector,
+        PoseSampleOutput blendedOutput)
+    {
+        // Gaussian sample blending is intentionally broad around transitions. Preserve the
+        // library's explicit neutral sample as an anchor so nearby samples cannot leave a
+        // corrective residual when the live pose has returned to rest.
+        var neutral = definition.Samples.FirstOrDefault(sample =>
+            sample.Enabled &&
+            sample.Key.Count == driverVector.Count &&
+            sample.Key.All(value => MathF.Abs(value) <= 0.0001f));
+        if (neutral == null)
+            return blendedOutput;
+
+        var distance = ComputeWeightedDriverDistance(driverVector, neutral.Key, definition);
+        var releaseDistance = MathF.Max(0.03f, neutral.Radius * 0.16f);
+        var blend = SmoothStep(0.006f, releaseDistance, distance);
+        return LerpPoseSampleOutput(neutral.Output, blendedOutput, blend);
+    }
+
+    private static PoseSampleOutput LerpPoseSampleOutput(PoseSampleOutput from, PoseSampleOutput to, float amount)
+        => new(
+            Lerp(from.Activation, to.Activation, amount),
+            Lerp(from.GroupABlend, to.GroupABlend, amount),
+            Lerp(from.GroupBBlend, to.GroupBBlend, amount),
+            Lerp(from.BridgeBlend, to.BridgeBlend, amount),
+            Lerp(from.TargetBias, to.TargetBias, amount),
+            Lerp(from.TaperBlend, to.TaperBlend, amount),
+            Lerp(from.AxisBias, to.AxisBias, amount));
+
     private static string BuildDriverSummary(IReadOnlyList<DriverSample> samples)
     {
         var topDrivers = samples
@@ -1432,11 +1569,7 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
             return;
         }
 
-        var axisFactor = Math.Clamp(correctionStrength * (0.44f + (maxCorrection * 5.5f)), 0f, 0.035f);
-        var multiplier = new Vector3(
-            1f + (axisFactor * 0.20f),
-            1f - axisFactor,
-            1f + (axisFactor * 0.20f));
+        var multiplier = BuildNeckAxisMultiplier(correctionStrength, maxCorrection);
         var desiredScale = neck.Scaling * multiplier;
         var targetScale = neck.ApplyScalePins(desiredScale);
         metrics.LocksOrPinsLimited |= !targetScale.IsApproximately(desiredScale, 0.0005f);
@@ -1446,6 +1579,15 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
             SafeDivide(targetScale.Y, neck.Scaling.Y),
             SafeDivide(targetScale.Z, neck.Scaling.Z)));
         metrics.AnyApplied = true;
+    }
+
+    private static Vector3 BuildNeckAxisMultiplier(float correctionStrength, float maxCorrection)
+    {
+        var axisFactor = Math.Clamp(correctionStrength * (0.44f + (maxCorrection * 5.5f)), 0f, 0.035f);
+        return new Vector3(
+            1f + (axisFactor * 0.20f),
+            1f - axisFactor,
+            1f + (axisFactor * 0.20f));
     }
 
     private static CorrectionApplicationMetrics ApplyUniformTargetCorrection(
@@ -1571,6 +1713,15 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
 
     private static float Lerp(float a, float b, float t)
         => a + ((b - a) * t);
+
+    private static float SmoothStep(float start, float end, float value)
+    {
+        if (end <= start)
+            return value >= end ? 1f : 0f;
+
+        var t = Math.Clamp((value - start) / (end - start), 0f, 1f);
+        return t * t * (3f - (2f * t));
+    }
 
     private static float SafeDivide(float numerator, float denominator)
         => MathF.Abs(denominator) <= 0.0001f ? 1f : numerator / denominator;
@@ -1851,3 +2002,14 @@ internal static unsafe class AdvancedBodyScalingPoseCorrectiveSystem
     private static PoseSample Sample(string name, string summary, float radius, PoseSampleOutput output, params float[] key)
         => new(name, key, output, radius, summary);
 }
+
+#if DEBUG
+internal sealed record PoseCorrectiveValidationFixtureResult(
+    int Cycles,
+    int ActiveFrames,
+    int ActiveCorrectiveFrames,
+    int NeutralFrames,
+    float MaximumActiveScaleDelta,
+    float MaximumPostCycleNeutralScaleDelta,
+    float FinalNeutralScaleDelta);
+#endif

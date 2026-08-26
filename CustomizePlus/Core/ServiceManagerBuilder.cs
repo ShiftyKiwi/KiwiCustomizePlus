@@ -159,12 +159,19 @@ public static class ServiceManagerBuilder
             .AddSingleton<FilenameService>()
             .AddSingleton<BackupService>()
             .AddSingleton<LocalBoneMetadataService>()
+            .AddSingleton<BoneExplainabilityService>()
             .AddSingleton<SemanticBodyGoalService>()
             .AddSingleton<ActivityLogService>()
             .AddSingleton<FrameworkManager>()
             .AddSingleton<AdvancedBodyScalingBoneImportanceService>()
             .AddSingleton<SupportLogBuilderService>()
             .AddSingleton<UserNotifierService>();
+
+#if DEBUG
+        services
+            .AddSingleton<RuntimeEvidenceService>()
+            .AddSingleton<CustomizePlusAgentBridgeService>();
+#endif
 
         return services;
     }

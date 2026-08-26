@@ -53,7 +53,7 @@ public class BoneTransform
     public Vector3 Translation
     {
         get => _translation;
-        set => _translation = ClampVector(value);
+        set => _translation = ClampVector(value, Vector3.Zero);
     }
 
     private Vector3 _rotation;
@@ -71,14 +71,14 @@ public class BoneTransform
     public Vector3 Scaling
     {
         get => _scaling;
-        set => _scaling = ClampVector(value);
+        set => _scaling = ClampVector(value, Vector3.One);
     }
 
     private Vector3 _childScaling;
     public Vector3 ChildScaling
     {
         get => _childScaling;
-        set => _childScaling = ClampVector(value);
+        set => _childScaling = ClampVector(value, Vector3.One);
     }
 
     public bool PropagateTranslation = false;
@@ -96,7 +96,7 @@ public class BoneTransform
     public float PropagationFalloff
     {
         get => _propagationFalloff;
-        set => _propagationFalloff = Math.Clamp(value, 0f, 1f);
+        set => _propagationFalloff = TransformSafety.ClampFinite(value, 0f, 1f, Constants.DefaultPropagationFalloff);
     }
 
     public bool ShouldSerializeChildScaling() => ChildScalingIndependent;
@@ -110,15 +110,15 @@ public class BoneTransform
     internal void OnDeserialized(StreamingContext context)
     {
         //Sanitize all values on deserialization
-        _translation = ClampToDefaultLimits(_translation);
+        _translation = ClampToDefaultLimits(_translation, Vector3.Zero);
         _rotation = ClampAngles(_rotation);
-        _scaling = ClampToDefaultLimits(_scaling);
-        _propagationFalloff = Math.Clamp(_propagationFalloff, 0f, 1f);
+        _scaling = ClampToDefaultLimits(_scaling, Vector3.One);
+        _propagationFalloff = TransformSafety.ClampFinite(_propagationFalloff, 0f, 1f, Constants.DefaultPropagationFalloff);
 
         if (_childScaling == Vector3.Zero && !ChildScalingIndependent)
             _childScaling = Vector3.One;
         else
-            _childScaling = ClampToDefaultLimits(_childScaling);
+            _childScaling = ClampToDefaultLimits(_childScaling, Vector3.One);
 
         if (!Enum.IsDefined(typeof(BoneLockState), LockState))
             LockState = BoneLockState.Unlocked;
@@ -159,7 +159,9 @@ public class BoneTransform
 
     public bool HasEffectiveRotation()
     {
-        var rotation = Quaternion.Normalize(GetEffectiveRotationQuaternion());
+        if (!TransformSafety.TryNormalize(GetEffectiveRotationQuaternion(), out var rotation))
+            return false;
+
         return 1f - MathF.Abs(Quaternion.Dot(rotation, Quaternion.Identity)) > 0.000001f;
     }
 
@@ -283,18 +285,19 @@ public class BoneTransform
     /// </summary>
     private void Sanitize()
     {
-        _translation = ClampVector(_translation);
+        _translation = ClampVector(_translation, Vector3.Zero);
         _rotation = ClampAngles(_rotation);
-        _scaling = ClampVector(_scaling);
-        _childScaling = _childScaling == Vector3.Zero ? Vector3.One : ClampVector(_childScaling);
-        _propagationFalloff = Math.Clamp(_propagationFalloff, 0f, 1f);
+        _scaling = ClampVector(_scaling, Vector3.One);
+        _childScaling = _childScaling == Vector3.Zero ? Vector3.One : ClampVector(_childScaling, Vector3.One);
+        _propagationFalloff = TransformSafety.ClampFinite(_propagationFalloff, 0f, 1f, Constants.DefaultPropagationFalloff);
     }
 
     /// <summary>
     /// Clamp all vector values to be within allowed limits.
     /// </summary>
-    private Vector3 ClampVector(Vector3 vector)
+    private static Vector3 ClampVector(Vector3 vector, Vector3 fallback)
     {
+        vector = TransformSafety.SanitizeVector(vector, fallback);
         return new Vector3
         {
             X = Math.Clamp(vector.X, Constants.MinVectorValueLimit, Constants.MaxVectorValueLimit),
@@ -307,12 +310,7 @@ public class BoneTransform
     {
         static float Clamp(float angle)
         {
-            if (angle > 180)
-                angle -= 360;
-            else if (angle < -180)
-                angle += 360;
-
-            return angle;
+            return TransformSafety.WrapDegrees(angle);
         }
 
         rotVec.X = Clamp(rotVec.X);
@@ -378,8 +376,9 @@ public class BoneTransform
     /// <summary>
     ///     Clamp all vector values to be within allowed limits.
     /// </summary>
-    private static Vector3 ClampToDefaultLimits(Vector3 vector)
+    private static Vector3 ClampToDefaultLimits(Vector3 vector, Vector3 fallback)
     {
+        vector = TransformSafety.SanitizeVector(vector, fallback);
         vector.X = Math.Clamp(vector.X, Constants.MinVectorValueLimit, Constants.MaxVectorValueLimit);
         vector.Y = Math.Clamp(vector.Y, Constants.MinVectorValueLimit, Constants.MaxVectorValueLimit);
         vector.Z = Math.Clamp(vector.Z, Constants.MinVectorValueLimit, Constants.MaxVectorValueLimit);
@@ -389,7 +388,8 @@ public class BoneTransform
 
     public static Vector3 FromQuaternionDegrees(Quaternion quaternion)
     {
-        quaternion = Quaternion.Normalize(quaternion);
+        if (!TransformSafety.TryNormalize(quaternion, out quaternion))
+            return Vector3.Zero;
 
         var sinrCosp = 2f * ((quaternion.W * quaternion.X) + (quaternion.Y * quaternion.Z));
         var cosrCosp = 1f - (2f * ((quaternion.X * quaternion.X) + (quaternion.Y * quaternion.Y)));
@@ -414,17 +414,18 @@ public class BoneTransform
 
     public bool SmoothTowards(BoneTransform target, float deltaSeconds, float sharpness = Constants.TransformTransitionSharpness)
     {
-        if (deltaSeconds <= 0f)
+        if (!TransformSafety.IsFinite(deltaSeconds) || deltaSeconds <= 0f)
         {
             UpdateToMatch(target);
             _runtimeRotationQuaternion = target.GetEffectiveRotationQuaternion();
             return true;
         }
 
-        sharpness = Math.Clamp(
+        sharpness = TransformSafety.ClampFinite(
             sharpness,
             Constants.MinTransformTransitionSharpness,
-            Constants.MaxTransformTransitionSharpness);
+            Constants.MaxTransformTransitionSharpness,
+            Constants.TransformTransitionSharpness);
 
         var alpha = 1f - MathF.Exp(-sharpness * deltaSeconds);
         Translation = Vector3.Lerp(Translation, target.Translation, alpha);
@@ -446,7 +447,10 @@ public class BoneTransform
             targetRotation = Quaternion.Negate(targetRotation);
 
         _rotation = target.Rotation;
-        _runtimeRotationQuaternion = Quaternion.Normalize(Quaternion.Slerp(currentRotation, targetRotation, alpha));
+        var smoothedRotation = Quaternion.Slerp(currentRotation, targetRotation, alpha);
+        _runtimeRotationQuaternion = TransformSafety.TryNormalize(smoothedRotation, out var normalizedRotation)
+            ? normalizedRotation
+            : targetRotation;
 
         return Translation.IsApproximately(target.Translation, 0.0001f)
             && (1f - MathF.Abs(Quaternion.Dot(_runtimeRotationQuaternion.Value, targetRotation))) < 0.0001f
@@ -457,5 +461,10 @@ public class BoneTransform
     }
 
     private Quaternion GetEffectiveRotationQuaternion()
-        => _runtimeRotationQuaternion ?? Rotation.ToQuaternion();
+    {
+        var candidate = _runtimeRotationQuaternion ?? Rotation.ToQuaternion();
+        return TransformSafety.TryNormalize(candidate, out var normalized)
+            ? normalized
+            : Quaternion.Identity;
+    }
 }

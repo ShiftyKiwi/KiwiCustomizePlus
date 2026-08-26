@@ -27,6 +27,7 @@ public sealed class ProfileChanged() : EventWrapper<ProfileChanged.Type, Profile
         MovedTemplate,
         ChangedTemplate,
         TemplateWeightChanged,
+        TemplateCompatibilityChanged,
         AdvancedBodyScalingSettingsChanged,
         ReloadedAll,
         WriteProtection,

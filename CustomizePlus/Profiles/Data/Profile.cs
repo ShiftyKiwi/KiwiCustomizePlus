@@ -45,6 +45,7 @@ public sealed class Profile : ISavable
     public List<Template> Templates { get; init; } = new();
     public HashSet<Guid> DisabledTemplates { get; init; } = new();
     public Dictionary<Guid, float> TemplateWeights { get; init; } = new();
+    public Dictionary<Guid, TemplateCompatibilityRequirement> TemplateCompatibilityRequirements { get; init; } = new();
 
     public bool IsWriteProtected { get; internal set; }
 
@@ -94,6 +95,11 @@ public sealed class Profile : ISavable
         {
             TemplateWeights[templateId] = weight;
         }
+
+        foreach (var (templateId, requirement) in original.TemplateCompatibilityRequirements)
+        {
+            TemplateCompatibilityRequirements[templateId] = requirement;
+        }
     }
 
     public override string ToString()
@@ -133,6 +139,7 @@ public sealed class Profile : ISavable
                 ["TemplateId"] = template.UniqueId,
                 ["Enabled"] = !DisabledTemplates.Contains(template.UniqueId),
                 ["Weight"] = GetTemplateWeight(template.UniqueId),
+                ["RequiredCapabilities"] = (int)GetTemplateCompatibilityRequirement(template.UniqueId).RequiredAll,
             });
         }
         return ret;
@@ -149,6 +156,19 @@ public sealed class Profile : ISavable
     public void SetTemplateWeight(Guid templateId, float weight)
     {
         TemplateWeights[templateId] = Math.Clamp(weight, 0f, 1f);
+    }
+
+    public TemplateCompatibilityRequirement GetTemplateCompatibilityRequirement(Guid templateId)
+        => TemplateCompatibilityRequirements.TryGetValue(templateId, out var requirement)
+            ? requirement
+            : TemplateCompatibilityRequirement.Always;
+
+    public void SetTemplateCompatibilityRequirement(Guid templateId, TemplateCompatibilityRequirement requirement)
+    {
+        if (requirement.IsAlways)
+            TemplateCompatibilityRequirements.Remove(templateId);
+        else
+            TemplateCompatibilityRequirements[templateId] = requirement;
     }
 
     private JArray SerializeCharacters()

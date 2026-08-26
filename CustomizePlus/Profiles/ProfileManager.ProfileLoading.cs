@@ -220,6 +220,9 @@ public partial class ProfileManager : IDisposable
 
             profile.Templates.Add(template);
             profile.SetTemplateWeight(template.UniqueId, templateObjCast["Weight"]?.ToObject<float>() ?? 1f);
+            var requiredCapabilities = templateObjCast["RequiredCapabilities"]?.ToObject<int>() ?? 0;
+            profile.SetTemplateCompatibilityRequirement(template.UniqueId,
+                new TemplateCompatibilityRequirement((SkeletonCapability)requiredCapabilities));
 
             var templateEnabled = templateObjCast["Enabled"]?.ToObject<bool>() ?? true;
             if (!templateEnabled)

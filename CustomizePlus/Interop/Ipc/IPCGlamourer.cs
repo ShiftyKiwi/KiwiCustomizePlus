@@ -42,11 +42,22 @@ internal enum GlamourerStateFinalizationType
     Gearset = 9,
 }
 
+internal enum GlamourerAppearanceTransitionPhase
+{
+    Idle,
+    AwaitingFinalization,
+    Settling,
+}
+
 internal readonly record struct GlamourerAppearanceTransitionSnapshot(
     bool Active,
     bool AwaitingFinalization,
     bool FinalizationSettling,
-    string Summary)
+    string Summary,
+    long AppearanceEpoch = 0,
+    GlamourerAppearanceTransitionPhase Phase = GlamourerAppearanceTransitionPhase.Idle,
+    string OperationType = "",
+    long FinalizedAtMs = 0)
 {
     public static GlamourerAppearanceTransitionSnapshot None
         => new(false, false, false, string.Empty);
@@ -63,6 +74,7 @@ public sealed class GlamourerIpcHandler : IIpcSubscriber
     private const int AppearanceChangeWindowMs = 3200;
     private const int DesignOrModelChangeWindowMs = 4800;
     private const int FinalizationSettleWindowMs = 1800;
+    private const int FinalizationRevertSettleWindowMs = 600;
     private const int FinalizationModelSettleWindowMs = 2600;
     private const int TransitionCleanupGraceMs = 12000;
 
@@ -75,6 +87,7 @@ public sealed class GlamourerIpcHandler : IIpcSubscriber
     private readonly ICallGateSubscriber<nint, int, object?>? _stateFinalized;
     private readonly object _transitionLock = new();
     private readonly Dictionary<GlamourerActorKey, ActorAppearanceTransitionState> _actorTransitions = new();
+    private long _nextAppearanceEpoch;
 
     private bool _available;
     private bool _stateSubscriptionsEnabled;
@@ -92,6 +105,7 @@ public sealed class GlamourerIpcHandler : IIpcSubscriber
 
     private sealed class ActorAppearanceTransitionState
     {
+        public long AppearanceEpoch { get; set; }
         public int ChangeSequence { get; set; }
         public int FinalizedSequence { get; set; }
         public long LastChangeAtMs { get; set; }
@@ -100,6 +114,9 @@ public sealed class GlamourerIpcHandler : IIpcSubscriber
         public long FinalizationSettleUntilMs { get; set; }
         public GlamourerStateChangeType LastChangeType { get; set; }
         public GlamourerStateFinalizationType LastFinalizationType { get; set; }
+
+        public bool IsFinalized
+            => ChangeSequence > 0 && FinalizedSequence >= ChangeSequence;
     }
 
     public GlamourerIpcHandler(IDalamudPluginInterface pi, IObjectTable objectTable, Logger log)
@@ -228,12 +245,19 @@ public sealed class GlamourerIpcHandler : IIpcSubscriber
                     true,
                     true,
                     false,
-                    BuildAwaitingFinalizationSummary(state, now))
+                    BuildAwaitingFinalizationSummary(state, now),
+                    state.AppearanceEpoch,
+                    GlamourerAppearanceTransitionPhase.AwaitingFinalization,
+                    GetChangeTypeLabel(state.LastChangeType))
                 : new GlamourerAppearanceTransitionSnapshot(
                     true,
                     false,
                     true,
-                    BuildFinalizationSettleSummary(state, now));
+                    BuildFinalizationSettleSummary(state, now),
+                    state.AppearanceEpoch,
+                    GlamourerAppearanceTransitionPhase.Settling,
+                    GetFinalizationTypeLabel(state.LastFinalizationType),
+                    state.LastFinalizedAtMs);
 
             return true;
         }
@@ -260,7 +284,16 @@ public sealed class GlamourerIpcHandler : IIpcSubscriber
             CleanupExpiredTransitions(now);
 
             var actorKey = ResolveActorKey(actorAddress);
-            var state = TryTakeTransitionState(actorKey, actorAddress) ?? new ActorAppearanceTransitionState();
+            var state = TryTakeTransitionState(actorKey, actorAddress);
+            // A new fixed design after a prior operation finalized is a new appearance operation,
+            // even while the previous operation is still inside our local settle window.
+            if (state == null || state.IsFinalized)
+            {
+                state = new ActorAppearanceTransitionState
+                {
+                    AppearanceEpoch = ++_nextAppearanceEpoch,
+                };
+            }
 
             state.ChangeSequence++;
             state.FinalizedSequence = Math.Min(state.FinalizedSequence, state.ChangeSequence - 1);
@@ -288,10 +321,15 @@ public sealed class GlamourerIpcHandler : IIpcSubscriber
             CleanupExpiredTransitions(now);
 
             var actorKey = ResolveActorKey(actorAddress);
-            var state = TryTakeTransitionState(actorKey, actorAddress) ?? new ActorAppearanceTransitionState
+            var state = TryTakeTransitionState(actorKey, actorAddress);
+            if (state == null || state.IsFinalized)
             {
-                ChangeSequence = 1,
-            };
+                state = new ActorAppearanceTransitionState
+                {
+                    AppearanceEpoch = ++_nextAppearanceEpoch,
+                    ChangeSequence = 1,
+                };
+            }
 
             state.FinalizedSequence = Math.Max(state.ChangeSequence, 1);
             state.LastFinalizedAtMs = now;
@@ -350,6 +388,10 @@ public sealed class GlamourerIpcHandler : IIpcSubscriber
             GlamourerStateFinalizationType.ModelChange => FinalizationModelSettleWindowMs,
             GlamourerStateFinalizationType.DesignApplied => FinalizationModelSettleWindowMs,
             GlamourerStateFinalizationType.Gearset => FinalizationModelSettleWindowMs,
+            // DAB timing shows the "Revert to game" path has already published two matching
+            // live snapshots well before the generic settle window elapses. Keep a small margin,
+            // while preserving the full safeguards for design/model and other revert variants.
+            GlamourerStateFinalizationType.Revert => FinalizationRevertSettleWindowMs,
             _ => FinalizationSettleWindowMs,
         };
 

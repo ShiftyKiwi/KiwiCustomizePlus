@@ -5,6 +5,7 @@ using System;
 using System.Numerics;
 using System.Runtime.InteropServices;
 
+using CustomizePlus.Core.Data;
 using FFXIVClientStructs.FFXIV.Client.System.Memory;
 using FFXIVClientStructs.Havok.Common.Base.Math.Matrix;
 using FFXIVClientStructs.Havok.Common.Base.Math.QsTransform;
@@ -17,15 +18,25 @@ internal static class InteropAlloc
 
     // Access
     internal unsafe static Matrix4x4* Matrix; // Align to 16-byte boundary
-    internal unsafe static Matrix4x4 GetMatrix(hkQsTransformf* transform)
+    internal unsafe static bool TryGetMatrix(hkQsTransformf* transform, out Matrix4x4 matrix)
     {
+        matrix = Matrix4x4.Identity;
+        if (transform == null || Matrix == null)
+            return false;
+
         transform->get4x4ColumnMajor((float*)Matrix);
-        return *Matrix;
+        matrix = *Matrix;
+        return TransformSafety.IsFinite(matrix);
     }
-    internal unsafe static void SetMatrix(hkQsTransformf* transform, Matrix4x4 matrix)
+
+    internal unsafe static bool TrySetMatrix(hkQsTransformf* transform, Matrix4x4 matrix)
     {
+        if (transform == null || Matrix == null || !TransformSafety.IsFinite(matrix))
+            return false;
+
         *Matrix = matrix;
         transform->set((hkMatrix4f*)Matrix);
+        return true;
     }
 
     // Init & disspose

@@ -28,6 +28,7 @@ public class TemplatePanel : IDisposable
 {
     private readonly TemplateFileSystemSelector _selector;
     private readonly TemplateManager _manager;
+    private readonly TemplateEditorManager _editorManager;
     private readonly BoneEditorPanel _boneEditor;
     private readonly PluginConfiguration _configuration;
     private readonly MessageService _messageService;
@@ -39,11 +40,18 @@ public class TemplatePanel : IDisposable
     private string? _newName;
     private Template? _changedTemplate;
     private BodyAnalysisResult? _analysisResult;
+    private TemplateAuthoringOperation? _lastAnalyzerFixOperation;
+    private long _analysisSourceRevision;
+    private Guid _analysisSourceSessionId;
+    private Guid _lastAnalyzerFixSessionId;
+    private bool _analysisWasApplied;
+    private string? _analyzerStatus;
     private bool _showFixPreview;
-    private Guid _lastAnalyzerFixTemplateId = Guid.Empty;
-    private Dictionary<string, BoneTransform?>? _lastAnalyzerFixSnapshot;
-    private Guid _lastAppliedAdvancedPreviewTemplateId = Guid.Empty;
-    private Dictionary<string, BoneTransform?>? _lastAppliedAdvancedPreviewSnapshot;
+    private TemplateAuthoringOperation? _lastAppliedAdvancedPreviewOperation;
+    private long _advancedPreviewSourceRevision;
+    private Guid _advancedPreviewSourceSessionId;
+    private Guid _lastAdvancedPreviewSessionId;
+    private string? _advancedPreviewStatus;
     private IReadOnlyDictionary<string, BoneTransform>? _advancedPreview;
     private AdvancedBodyScalingDebugReport? _advancedDebug;
     private AdvancedBodyScalingStressTestReport? _stressTestReport;
@@ -61,6 +69,7 @@ public class TemplatePanel : IDisposable
     public TemplatePanel(
         TemplateFileSystemSelector selector,
         TemplateManager manager,
+        TemplateEditorManager editorManager,
         BoneEditorPanel boneEditor,
         PluginConfiguration configuration,
         MessageService messageService,
@@ -70,6 +79,7 @@ public class TemplatePanel : IDisposable
     {
         _selector = selector;
         _manager = manager;
+        _editorManager = editorManager;
         _boneEditor = boneEditor;
         _configuration = configuration;
         _messageService = messageService;
@@ -195,7 +205,8 @@ public class TemplatePanel : IDisposable
 
     private void DrawBodyAnalyzer()
     {
-        if (_selector.Selected == null)
+        var sourceTemplate = GetAuthoringTemplate();
+        if (sourceTemplate == null)
             return;
 
         var show = ImGui.CollapsingHeader("Body Analyzer");
@@ -203,11 +214,18 @@ public class TemplatePanel : IDisposable
             return;
 
         ImGui.TextDisabled("Analyzes the current template for smoothing, proportional balance, symmetry, and common transition issues. These scores are guidance, not hard quality rules.");
+        ImGui.TextDisabled(_editorManager.IsEditorActive
+            ? "Source: current unsaved Bone Editing working copy."
+            : "Source: saved template. Start Bone Editing to apply a fix through Undo/Redo.");
         ImGui.Spacing();
 
         if (ImGui.Button("Analyze Template"))
         {
-            _analysisResult = AdvancedBodyScalingPipeline.Analyze(_selector.Selected.Bones, _configuration.AdvancedBodyScalingSettings);
+            _analysisResult = AdvancedBodyScalingPipeline.Analyze(sourceTemplate.Bones, _configuration.AdvancedBodyScalingSettings);
+            _analysisSourceRevision = _editorManager.EditorRevision;
+            _analysisSourceSessionId = _editorManager.EditorSessionId;
+            _analysisWasApplied = false;
+            _analyzerStatus = null;
             _showFixPreview = false;
         }
         ImGuiUtil.HoverTooltip("Run a heuristic analysis of the current template and list suggested smoothing, balance, symmetry, and transition fixes.");
@@ -215,6 +233,14 @@ public class TemplatePanel : IDisposable
         var analysisResult = _analysisResult;
         if (analysisResult == null)
             return;
+
+        var analysisIsStale = IsEditorResultStale(_analysisSourceRevision, _analysisSourceSessionId);
+        if (analysisIsStale)
+            ImGui.TextDisabled(_analysisWasApplied
+                ? "Applied result shown for reference. Re-run analysis for current metrics."
+                : "Analysis is stale. Re-run analysis before applying its fixes.");
+        if (!string.IsNullOrWhiteSpace(_analyzerStatus))
+            ImGui.TextDisabled(_analyzerStatus);
 
         ImGui.Spacing();
         ImGui.Text($"Surface Smoothness: {analysisResult.SurfaceSmoothness}%");
@@ -280,7 +306,8 @@ public class TemplatePanel : IDisposable
 
         ImGui.Spacing();
         var hasFixes = analysisResult.SuggestedFixes.Count > 0;
-        using (var disabled = ImRaii.Disabled(!hasFixes))
+        var canShowFixPreview = hasFixes && !analysisIsStale && !_analysisWasApplied;
+        using (var disabled = ImRaii.Disabled(!canShowFixPreview))
         {
             if (ImGui.Button(_showFixPreview ? "Hide Fix Preview" : "Preview Fix"))
                 _showFixPreview = !_showFixPreview;
@@ -292,31 +319,32 @@ public class TemplatePanel : IDisposable
             ImGuiHoveredFlags.AllowWhenDisabled);
 
         ImGui.SameLine();
-        var canApplyFix = hasFixes && !_boneEditor.IsEditorActive && !(_selector.Selected?.IsWriteProtected ?? true);
+        var canApplyFix = hasFixes && _editorManager.IsEditorActive && !analysisIsStale && !_analysisWasApplied;
         using (var disabled = ImRaii.Disabled(!canApplyFix))
         {
             if (ImGui.Button("Apply Fix"))
-            {
-                ApplyAnalyzerFixes(_selector.Selected!, analysisResult.SuggestedFixes);
-                _analysisResult = null;
-                _showFixPreview = false;
-            }
+                ApplyAnalyzerFixes(analysisResult.SuggestedFixes);
         }
-        ImGuiUtil.HoverTooltip("Commit the suggested analyzer fixes into the template.", ImGuiHoveredFlags.AllowWhenDisabled);
+        ImGuiUtil.HoverTooltip(_editorManager.IsEditorActive
+            ? "Apply these fixes as one normal Bone Editing transaction."
+            : "Start Bone Editing to apply a fix through the normal Undo/Redo history.", ImGuiHoveredFlags.AllowWhenDisabled);
 
         ImGui.SameLine();
-        var canRevertFix = CanRevertAnalyzerFix(_selector.Selected!);
+        var canRevertFix = CanRevertAnalyzerFix();
         using (var disabled = ImRaii.Disabled(!canRevertFix))
         {
             if (ImGui.Button("Revert Fix"))
-                RevertAnalyzerFixes(_selector.Selected!);
+                RevertAnalyzerFixes();
         }
-        ImGuiUtil.HoverTooltip("Restore the last pre-fix template state, if available.", ImGuiHoveredFlags.AllowWhenDisabled);
+        ImGuiUtil.HoverTooltip("Revert only the last Analyzer rows if they have not changed since Apply. Otherwise use Undo/Redo.", ImGuiHoveredFlags.AllowWhenDisabled);
 
         ImGui.SameLine();
         if (ImGui.Button("Ignore"))
         {
             _analysisResult = null;
+            _lastAnalyzerFixOperation = null;
+            _analysisWasApplied = false;
+            _analyzerStatus = null;
             _showFixPreview = false;
         }
         ImGuiUtil.HoverTooltip("Dismiss this analysis result without applying its suggested fixes.");
@@ -336,7 +364,7 @@ public class TemplatePanel : IDisposable
                     break;
                 }
 
-                var fromScale = _selector.Selected!.Bones.TryGetValue(kvp.Key, out var existing)
+                var fromScale = sourceTemplate.Bones.TryGetValue(kvp.Key, out var existing)
                     ? existing.Scaling
                     : Vector3.One;
 
@@ -351,13 +379,17 @@ public class TemplatePanel : IDisposable
 
     private void DrawAdvancedScalingPreview()
     {
-        if (_selector.Selected == null)
+        var sourceTemplate = GetAuthoringTemplate();
+        if (sourceTemplate == null)
             return;
 
         if (!ImGui.CollapsingHeader("Advanced Scaling Preview"))
             return;
 
         ImGui.TextDisabled("Previews the current advanced-scaling result on this template without saving until Apply Preview is used.");
+        ImGui.TextDisabled(_editorManager.IsEditorActive
+            ? "Source: current unsaved Bone Editing working copy."
+            : "Source: saved template. Start Bone Editing to apply a preview through Undo/Redo.");
         ImGui.Spacing();
 
         var settings = _configuration.AdvancedBodyScalingSettings;
@@ -365,7 +397,7 @@ public class TemplatePanel : IDisposable
             ImGui.TextDisabled("Advanced scaling is disabled or in Manual mode, so previewing will not change this template.");
 
         if (ImGui.Button("Preview Advanced Scaling"))
-            BuildAdvancedScalingPreview(_selector.Selected);
+            BuildAdvancedScalingPreview(sourceTemplate);
         ImGuiUtil.HoverTooltip("Generate a temporary advanced-scaling preview for this template without saving it.");
 
         ImGui.SameLine();
@@ -377,22 +409,30 @@ public class TemplatePanel : IDisposable
         ImGuiUtil.HoverTooltip("Discard the current temporary preview.", ImGuiHoveredFlags.AllowWhenDisabled);
 
         ImGui.SameLine();
-        var canApplyPreview = _advancedPreview != null && !_boneEditor.IsEditorActive && !(_selector.Selected?.IsWriteProtected ?? true);
+        var previewIsStale = _advancedPreview != null && IsEditorResultStale(_advancedPreviewSourceRevision, _advancedPreviewSourceSessionId);
+        var canApplyPreview = _advancedPreview != null && _editorManager.IsEditorActive && !previewIsStale;
         using (ImRaii.Disabled(!canApplyPreview))
         {
             if (ImGui.Button("Apply Preview"))
-                ApplyAdvancedScalingPreview(_selector.Selected!);
+                ApplyAdvancedScalingPreview();
         }
-        ImGuiUtil.HoverTooltip("Commit the current preview result into the template.", ImGuiHoveredFlags.AllowWhenDisabled);
+        ImGuiUtil.HoverTooltip(_editorManager.IsEditorActive
+            ? "Apply this preview as one normal Bone Editing transaction."
+            : "Start Bone Editing to apply a preview through the normal Undo/Redo history.", ImGuiHoveredFlags.AllowWhenDisabled);
 
         ImGui.SameLine();
-        var canRevertAppliedPreview = CanRevertAppliedAdvancedPreview(_selector.Selected!);
+        var canRevertAppliedPreview = CanRevertAppliedAdvancedPreview();
         using (ImRaii.Disabled(!canRevertAppliedPreview))
         {
             if (ImGui.Button("Revert Applied Preview"))
-                RevertAppliedAdvancedScalingPreview(_selector.Selected!);
+                RevertAppliedAdvancedScalingPreview();
         }
-        ImGuiUtil.HoverTooltip("Restore the template to the last pre-apply state, if available.", ImGuiHoveredFlags.AllowWhenDisabled);
+        ImGuiUtil.HoverTooltip("Revert only the last preview rows if they have not changed since Apply. Otherwise use Undo/Redo.", ImGuiHoveredFlags.AllowWhenDisabled);
+
+        if (previewIsStale)
+            ImGui.TextDisabled("Preview is stale. Rebuild it before applying.");
+        if (!string.IsNullOrWhiteSpace(_advancedPreviewStatus))
+            ImGui.TextDisabled(_advancedPreviewStatus);
 
         if (_advancedPreview == null)
             return;
@@ -428,7 +468,7 @@ public class TemplatePanel : IDisposable
                     break;
                 }
 
-                var fromScale = _selector.Selected!.Bones.TryGetValue(kvp.Key, out var existing)
+                var fromScale = sourceTemplate.Bones.TryGetValue(kvp.Key, out var existing)
                     ? existing.Scaling
                     : Vector3.One;
 
@@ -666,6 +706,9 @@ public class TemplatePanel : IDisposable
         }
 
         _advancedPreview = changes;
+        _advancedPreviewSourceRevision = _editorManager.EditorRevision;
+        _advancedPreviewSourceSessionId = _editorManager.EditorSessionId;
+        _advancedPreviewStatus = null;
         _advancedDebug = debug;
         _showAdvancedPreview = true;
 
@@ -673,31 +716,25 @@ public class TemplatePanel : IDisposable
             _messageService.NotificationMessage("Advanced scaling preview produced no changes.", NotificationType.Info, false);
     }
 
-    private void ApplyAdvancedScalingPreview(Template template)
+    private void ApplyAdvancedScalingPreview()
     {
         if (_advancedPreview == null)
             return;
 
-        _lastAppliedAdvancedPreviewTemplateId = template.UniqueId;
-        _lastAppliedAdvancedPreviewSnapshot = _advancedPreview.ToDictionary(
-            kvp => kvp.Key,
-            kvp => template.Bones.TryGetValue(kvp.Key, out var existing)
-                ? existing.DeepCopy()
-                : null,
-            StringComparer.Ordinal);
-
-        foreach (var kvp in _advancedPreview)
+        var operation = TemplateAuthoringOperation.CreateScaleOperation(
+            "Apply Advanced Scaling Preview",
+            _editorManager.CaptureCurrentTemplateState(),
+            _advancedPreview);
+        if (operation == null || !_editorManager.TryApplyAuthoringOperation(operation))
         {
-            var transform = template.Bones.TryGetValue(kvp.Key, out var existing)
-                ? new BoneTransform(existing)
-                : new BoneTransform();
-
-            transform.Scaling = transform.ApplyScalePins(kvp.Value.Scaling);
-            _manager.ModifyBoneTransform(template, kvp.Key, transform);
+            _advancedPreviewStatus = "Preview did not change any editable rows. Rebuild it if the template changed.";
+            return;
         }
 
-        _manager.QueueSave(template);
-        _messageService.NotificationMessage("Applied advanced scaling preview to template.", NotificationType.Success, false);
+        _lastAppliedAdvancedPreviewOperation = operation;
+        _lastAdvancedPreviewSessionId = _editorManager.EditorSessionId;
+        _advancedPreviewStatus = "Applied as one Bone Editing transaction. Revert Applied Preview remains available while its rows are unchanged.";
+        _messageService.NotificationMessage("Applied advanced scaling preview to the Bone Editing working copy.", NotificationType.Success, false);
         ClearAdvancedScalingPreview();
     }
 
@@ -705,33 +742,37 @@ public class TemplatePanel : IDisposable
     {
         ClearPoseStressTest();
         _advancedPreview = null;
+        _advancedPreviewSourceRevision = 0;
+        _advancedPreviewSourceSessionId = Guid.Empty;
         _advancedDebug = null;
         _showAdvancedPreview = false;
         _showAdvancedDebug = false;
     }
 
-    private bool CanRevertAppliedAdvancedPreview(Template template)
-        => _lastAppliedAdvancedPreviewSnapshot != null
-            && _lastAppliedAdvancedPreviewTemplateId == template.UniqueId
-            && !_boneEditor.IsEditorActive
-            && !template.IsWriteProtected;
+    private bool CanRevertAppliedAdvancedPreview()
+        => _editorManager.IsEditorActive
+            && _lastAppliedAdvancedPreviewOperation != null
+            && _lastAdvancedPreviewSessionId == _editorManager.EditorSessionId
+            && _lastAppliedAdvancedPreviewOperation.TryCreateRevert(
+                _editorManager.CaptureCurrentTemplateState(),
+                "Revert Advanced Scaling Preview",
+                out _);
 
-    private void RevertAppliedAdvancedScalingPreview(Template template)
+    private void RevertAppliedAdvancedScalingPreview()
     {
-        if (_lastAppliedAdvancedPreviewSnapshot == null || _lastAppliedAdvancedPreviewTemplateId != template.UniqueId)
+        if (_lastAppliedAdvancedPreviewOperation == null)
             return;
 
-        ClearPoseStressTest();
-
-        foreach (var kvp in _lastAppliedAdvancedPreviewSnapshot)
+        if (!_editorManager.TryRevertAuthoringOperation(_lastAppliedAdvancedPreviewOperation, "Revert Advanced Scaling Preview"))
         {
-            var transform = kvp.Value?.DeepCopy() ?? new BoneTransform();
-            _manager.ModifyBoneTransform(template, kvp.Key, transform);
+            _advancedPreviewStatus = "Revert is unavailable because an affected preview row changed. Use the Bone Editor Undo/Redo history instead.";
+            return;
         }
 
-        _manager.QueueSave(template);
-        _lastAppliedAdvancedPreviewSnapshot = null;
-        _lastAppliedAdvancedPreviewTemplateId = Guid.Empty;
+        ClearPoseStressTest();
+        _lastAppliedAdvancedPreviewOperation = null;
+        _lastAdvancedPreviewSessionId = Guid.Empty;
+        _advancedPreviewStatus = "Reverted the last applied preview without changing unrelated rows.";
         _messageService.NotificationMessage("Reverted the last applied advanced scaling preview.", NotificationType.Success, false);
     }
 
@@ -1113,55 +1154,63 @@ public class TemplatePanel : IDisposable
         DrawRiskBadge(finalRisk, finalScore);
     }
 
-    private void ApplyAnalyzerFixes(Template template, IReadOnlyDictionary<string, BoneTransform> fixes)
+    private void ApplyAnalyzerFixes(IReadOnlyDictionary<string, BoneTransform> fixes)
     {
         ClearPoseStressTest();
-        _lastAnalyzerFixTemplateId = template.UniqueId;
-        _lastAnalyzerFixSnapshot = fixes.ToDictionary(
-            kvp => kvp.Key,
-            kvp => template.Bones.TryGetValue(kvp.Key, out var existing)
-                ? existing.DeepCopy()
-                : null,
-            StringComparer.Ordinal);
-
-        foreach (var kvp in fixes)
+        var operation = TemplateAuthoringOperation.CreateScaleOperation(
+            "Apply Body Analyzer Fix",
+            _editorManager.CaptureCurrentTemplateState(),
+            fixes);
+        if (operation == null || !_editorManager.TryApplyAuthoringOperation(operation))
         {
-            var transform = template.Bones.TryGetValue(kvp.Key, out var existing)
-                ? new BoneTransform(existing)
-                : new BoneTransform();
-
-            transform.Scaling = transform.ApplyScalePins(kvp.Value.Scaling);
-            _manager.ModifyBoneTransform(template, kvp.Key, transform);
+            _analyzerStatus = "Analyzer fixes did not change any editable rows. Re-run analysis if the template changed.";
+            return;
         }
 
-        _manager.QueueSave(template);
-        _messageService.NotificationMessage("Applied body analyzer fixes to template.", NotificationType.Success, false);
+        _lastAnalyzerFixOperation = operation;
+        _lastAnalyzerFixSessionId = _editorManager.EditorSessionId;
+        _analysisWasApplied = true;
+        _showFixPreview = false;
+        _analyzerStatus = "Applied as one Bone Editing transaction. Revert Fix remains available while its rows are unchanged.";
+        _messageService.NotificationMessage("Applied body analyzer fixes to the Bone Editing working copy.", NotificationType.Success, false);
     }
 
-    private bool CanRevertAnalyzerFix(Template template)
-        => _lastAnalyzerFixSnapshot != null
-            && _lastAnalyzerFixTemplateId == template.UniqueId
-            && !_boneEditor.IsEditorActive
-            && !template.IsWriteProtected;
+    private bool CanRevertAnalyzerFix()
+        => _editorManager.IsEditorActive
+            && _lastAnalyzerFixOperation != null
+            && _lastAnalyzerFixSessionId == _editorManager.EditorSessionId
+            && _lastAnalyzerFixOperation.TryCreateRevert(
+                _editorManager.CaptureCurrentTemplateState(),
+                "Revert Body Analyzer Fix",
+                out _);
 
-    private void RevertAnalyzerFixes(Template template)
+    private void RevertAnalyzerFixes()
     {
-        if (_lastAnalyzerFixSnapshot == null || _lastAnalyzerFixTemplateId != template.UniqueId)
+        if (_lastAnalyzerFixOperation == null)
             return;
 
-        ClearPoseStressTest();
-
-        foreach (var kvp in _lastAnalyzerFixSnapshot)
+        if (!_editorManager.TryRevertAuthoringOperation(_lastAnalyzerFixOperation, "Revert Body Analyzer Fix"))
         {
-            var transform = kvp.Value?.DeepCopy() ?? new BoneTransform();
-            _manager.ModifyBoneTransform(template, kvp.Key, transform);
+            _analyzerStatus = "Revert is unavailable because an affected Analyzer row changed. Use the Bone Editor Undo/Redo history instead.";
+            return;
         }
 
-        _manager.QueueSave(template);
-        _lastAnalyzerFixSnapshot = null;
-        _lastAnalyzerFixTemplateId = Guid.Empty;
+        ClearPoseStressTest();
+        _lastAnalyzerFixOperation = null;
+        _lastAnalyzerFixSessionId = Guid.Empty;
+        _analysisWasApplied = false;
+        _analyzerStatus = "Reverted the last Analyzer fix without changing unrelated rows. Re-run analysis for current metrics.";
         _messageService.NotificationMessage("Reverted the last body analyzer fix.", NotificationType.Success, false);
     }
+
+    private Template? GetAuthoringTemplate()
+        => _editorManager.IsEditorActive && _editorManager.CurrentlyEditedTemplate != null
+            ? _editorManager.CurrentlyEditedTemplate
+            : _selector.Selected;
+
+    private bool IsEditorResultStale(long sourceRevision, Guid sourceSessionId)
+        => TemplateAuthoringState.IsStale(sourceRevision, _editorManager.EditorRevision, _editorManager.IsEditorActive)
+            || (_editorManager.IsEditorActive && sourceSessionId != _editorManager.EditorSessionId);
 
     private static float GetUniformScale(Vector3 scale)
     {
@@ -1258,8 +1307,15 @@ public class TemplatePanel : IDisposable
     private void SelectorSelectionChanged(Template? oldSelection, Template? newSelection, in TemplateFileSystemSelector.TemplateState state)
     {
         _analysisResult = null;
+        _lastAnalyzerFixOperation = null;
+        _lastAnalyzerFixSessionId = Guid.Empty;
+        _analysisWasApplied = false;
+        _analyzerStatus = null;
         _showFixPreview = false;
         ClearAdvancedScalingPreview();
+        _lastAppliedAdvancedPreviewOperation = null;
+        _lastAdvancedPreviewSessionId = Guid.Empty;
+        _advancedPreviewStatus = null;
         ClearPoseStressTest();
 
         if (!_isEditorEnablePending)

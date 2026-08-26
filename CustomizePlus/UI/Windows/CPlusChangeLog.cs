@@ -54,6 +54,7 @@ public class CPlusChangeLog
         Add3_0_2(Changelog);
         Add3_0_3(Changelog);
         Add3_1_0(Changelog);
+        Add4_0_0(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -84,6 +85,17 @@ public class CPlusChangeLog
         .RegisterImportant("The Activity Log is local to the current session, capped at 50 entries, and is not saved, synced, telemetered, IPC-exposed, exported, or used for rollback.")
         .RegisterImportant("Semantic recipes only populate existing sliders; preview remains read-only and Apply remains the only semantic mutation path.")
         .RegisterImportant("No runtime transform, BIW, skeleton hardening, IPC/API, sync, metadata-trust, or Profile Context Preview behavior changed.");
+
+    private static void Add4_0_0(Changelog log)
+        => log.NextVersion("Version 4.0.0")
+        .RegisterHighlight("Hardened runtime armature handling, native-write safety, and recovery through redraw and appearance transitions.")
+        .RegisterEntry("Customize+ now validates live skeleton capabilities and keeps unknown or unsupported controls conservative by default.", 1)
+        .RegisterHighlight("Expanded Advanced Body Scaling with bounded support, shaping, smoothing, and pose-aware conditioning tools.")
+        .RegisterEntry("Explicit transforms, locks, pinned axes, and manual-only bones remain authoritative while automatic support stays capability-gated.", 1)
+        .RegisterHighlight("Expanded Template Editor diagnostics and authoring workflows.")
+        .RegisterEntry("Analysis and previews use safe working copies, and their changes can be applied or reverted through the shared editor history.", 1)
+        .RegisterImportant("Local metadata packs are advisory only. Unknown/custom bones do not gain automatic mirroring, propagation, guardrail, BIW, or write authority.")
+        .RegisterImportant("Customize+ remains the plugin name and CustomizePlus remains its internal, DLL, configuration, and IPC/API identity.");
 
     private static void Add3_0_2(Changelog log)
         => log.NextVersion("Version 3.0.2")

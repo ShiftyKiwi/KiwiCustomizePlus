@@ -73,10 +73,20 @@ public unsafe sealed class ArmatureManager : IDisposable
     /// </summary>
     private bool[] _objectMovementFlagsArr = new bool[1024];
     private DateTime _lastRenderAtUtc;
+    private readonly Dictionary<ActorIdentifier, ActorFailureState> _actorFailureStates = new();
+    private readonly ArmatureLifecycleTrace _selfLifecycleTrace = new();
+    private long _debugLifecycleFrame;
+
+    private sealed class ActorFailureState
+    {
+        public Dictionary<string, long> LastLoggedByStage { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> FailingStages { get; } = new(StringComparer.Ordinal);
+    }
 
     private sealed class BoneImportanceFrameBudgetState
     {
         private int _profiledFullRemaining;
+        private int _profiledProbeRemaining;
         private int _targetFullRemaining;
         private int _nearbyFullRemaining;
         private int _targetReducedRemaining;
@@ -89,6 +99,9 @@ public unsafe sealed class ArmatureManager : IDisposable
             ExtremeCrowdPressure = CrowdActorCount >= 14;
 
             _profiledFullRemaining = ExtremeCrowdPressure ? 1 : HighCrowdPressure ? 2 : 3;
+            // Stable signature probes can still resolve four slot paths. Spread profiled probes
+            // across frames in a crowd so a synchronized interval does not create a hitch.
+            _profiledProbeRemaining = HighCrowdPressure ? 1 : 2;
             _targetFullRemaining = 1;
             _nearbyFullRemaining = CrowdActorCount >= 8 ? 0 : 1;
             _targetReducedRemaining = 1;
@@ -106,6 +119,14 @@ public unsafe sealed class ArmatureManager : IDisposable
                 AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => Consume(ref _profiledFullRemaining),
                 AdvancedBodyScalingBoneImportanceActorTier.TargetOrFocus => Consume(ref _targetFullRemaining),
                 AdvancedBodyScalingBoneImportanceActorTier.NearbyNonProfiled => Consume(ref _nearbyFullRemaining),
+                _ => false,
+            };
+
+        public bool TryConsumeProbe(AdvancedBodyScalingBoneImportanceActorTier tier)
+            => tier switch
+            {
+                AdvancedBodyScalingBoneImportanceActorTier.Self => true,
+                AdvancedBodyScalingBoneImportanceActorTier.ProfiledActor => Consume(ref _profiledProbeRemaining),
                 _ => false,
             };
 
@@ -193,6 +214,10 @@ public unsafe sealed class ArmatureManager : IDisposable
     {
         try
         {
+#if DEBUG
+            if (_configuration.DebuggingModeEnabled)
+                _debugLifecycleFrame++;
+#endif
             var now = DateTime.UtcNow;
             var deltaSeconds = _lastRenderAtUtc == default
                 ? Constants.MaxTransitionDeltaSeconds
@@ -216,11 +241,75 @@ public unsafe sealed class ArmatureManager : IDisposable
         if (!actor.Identifier(_actorManager, out var identifier))
             return;
 
-        if (Armatures.TryGetValue(identifier, out var armature) && armature.IsBuilt && armature.IsVisible)
+        try
         {
-            EnsureObjectMovementFlagCapacity(actor.AsObject->ObjectIndex);
-            _objectMovementFlagsArr[actor.AsObject->ObjectIndex] = true;
-            ApplyRootTranslation(armature, actor);
+            if (Armatures.TryGetValue(identifier, out var armature)
+                && armature.IsBuilt
+                && armature.IsSkeletonBindingCurrent
+                && armature.IsVisible)
+            {
+                EnsureObjectMovementFlagCapacity(actor.AsObject->ObjectIndex);
+                _objectMovementFlagsArr[actor.AsObject->ObjectIndex] = true;
+                ApplyRootTranslation(armature, actor);
+            }
+            MarkActorStageHealthy(identifier, "movement");
+        }
+        catch (Exception ex)
+        {
+            RecordActorFailure(identifier, "movement", ex);
+        }
+    }
+
+    /// <summary>
+    /// Reasserts the root draw scale after the game has completed its own render-manager update.
+    /// The regular transform pass remains the authority for every bone; this only closes the
+    /// frame-order gap where the game resets the character draw object's root scale to one.
+    /// </summary>
+    public void OnPostRender()
+    {
+        foreach (var armature in Armatures.Values)
+        {
+            if (!armature.IsBuilt
+                || !armature.IsSkeletonBindingCurrent
+                || !armature.IsVisible
+                || !_objectManager.TryGetValue(armature.ActorIdentifier, out var actorData)
+                || actorData.Objects.Count == 0)
+                continue;
+
+            try
+            {
+                var rootBone = armature.MainRootBone;
+                var transform = rootBone.AppliedTransform;
+                if (transform == null || !rootBone.IsModifiedScale() || !TransformSafety.IsFinite(transform.Scaling))
+                    continue;
+
+                foreach (var actor in actorData.Objects)
+                {
+                    if (!actor || !_gameObjectService.IsActorHasScalableRoot(actor))
+                        continue;
+
+                    var cBase = actor.Model.AsCharacterBase;
+                    if (cBase == null)
+                        continue;
+
+                    var observedBefore = cBase->DrawObject.Object.Scale;
+                    cBase->DrawObject.Object.Scale = transform.Scaling;
+                    cBase->DrawObject.Object.IsTransformChanged = true;
+
+                    armature.RecordRootScaleApplication(
+                        rootScaleModified: true,
+                        actorEligible: true,
+                        observedBefore: new Vector3(observedBefore.X, observedBefore.Y, observedBefore.Z),
+                        requested: transform.Scaling,
+                        observedAfter: transform.Scaling,
+                        applied: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                // A late root correction is optional. Preserve the normal transform path if it fails.
+                RecordActorFailure(armature.ActorIdentifier, "late root scale", ex);
+            }
         }
     }
 
@@ -231,6 +320,53 @@ public unsafe sealed class ArmatureManager : IDisposable
     {
         foreach (var kvPair in Armatures)
             kvPair.Value.IsPendingProfileRebind = true;
+    }
+
+    internal IReadOnlyList<ArmatureLifecycleTraceEntry> GetDebugSelfLifecycleTrace()
+        => _selfLifecycleTrace.Snapshot();
+
+    internal string GetDebugSelfLifecycleTraceClipboardText()
+        => _selfLifecycleTrace.BuildClipboardText();
+
+    internal void ClearDebugSelfLifecycleTrace()
+        => _selfLifecycleTrace.Clear();
+
+#if DEBUG
+    internal bool TryStartDebugPoseCorrectiveValidation(out string reason)
+    {
+        foreach (var armature in Armatures.Values)
+        {
+            if (!_objectManager.TryGetValue(armature.ActorIdentifier, out var actorData)
+                || actorData.Objects.Count == 0
+                || !AreSameActor(actorData.Objects[0], _objectManager.Player))
+            {
+                continue;
+            }
+
+            return armature.TryStartDebugPoseCorrectiveValidation(out reason);
+        }
+
+        reason = "No current-player armature is available for a bounded RBF validation fixture.";
+        return false;
+    }
+#endif
+
+    internal void CaptureDebugSelfLifecycleSnapshot()
+    {
+#if DEBUG
+        if (!_configuration.DebuggingModeEnabled)
+            return;
+
+        foreach (var armature in Armatures.Values)
+        {
+            if (!_objectManager.TryGetValue(armature.ActorIdentifier, out var actorData) || actorData.Objects.Count == 0)
+                continue;
+
+            var actor = actorData.Objects[0];
+            if (AreSameActor(actor, _objectManager.Player))
+                RecordSelfLifecycleTrace(armature, actor, "manual capture", force: true, TryGetGlamourerAppearanceTransition(actor));
+        }
+#endif
     }
 
     private AdvancedBodyScalingSettings ResolveAdvancedBodyScaling(Profile profile, Actor actor)
@@ -258,6 +394,25 @@ public unsafe sealed class ArmatureManager : IDisposable
         return race != Race.Unknown;
     }
 
+    private static unsafe bool TryGetActorAppearanceContext(Actor actor, out int race, out int clan, out int gender)
+    {
+        race = 0;
+        clan = 0;
+        gender = 0;
+
+        if (!actor || !actor.IsCharacter)
+            return false;
+
+        var customize = actor.Customize;
+        if (customize == null || customize->Race == Race.Unknown)
+            return false;
+
+        race = (int)customize->Race;
+        clan = (int)customize->Clan;
+        gender = (int)customize->Gender;
+        return true;
+    }
+
     /// <summary>
     /// Deletes armatures which no longer have actor associated with them and creates armatures for new actors
     /// </summary>
@@ -268,19 +423,35 @@ public unsafe sealed class ArmatureManager : IDisposable
         foreach (var kvPair in Armatures.ToList())
         {
             var armature = kvPair.Value;
-            //Only remove armatures which haven't been seen for a while
-            //But remove armatures of special actors (like examine screen) right away
-            if (!_objectManager.ContainsKey(kvPair.Value.ActorIdentifier) &&
-                (armature.LastSeen <= armatureExpirationDateTime || armature.ActorIdentifier.Type == IdentifierType.Special))
+            try
             {
-                _logger.Debug($"Removing armature {armature} because {kvPair.Key.IncognitoDebug()} is gone");
-                RemoveArmature(armature, ArmatureChanged.DeletionReason.Gone);
+                //Only remove armatures which haven't been seen for a while
+                //But remove armatures of special actors (like examine screen) right away
+                if (!_objectManager.ContainsKey(kvPair.Value.ActorIdentifier))
+                {
+                    // Keep the persistent profile/armature association during the short zoning grace
+                    // period, but invalidate the old native ModelBone lifetime immediately. This
+                    // forces a validated publication when the actor returns even if addresses/topology
+                    // happen to be reused.
+                    armature.MarkNativeBindingUnavailable("actor was absent from the object manager");
 
-                continue;
+                    if (armature.LastSeen <= armatureExpirationDateTime || armature.ActorIdentifier.Type == IdentifierType.Special)
+                    {
+                        _logger.Debug($"Removing armature {armature} because {kvPair.Key.IncognitoDebug()} is gone");
+                        RemoveArmature(armature, ArmatureChanged.DeletionReason.Gone);
+                    }
+
+                    continue;
+                }
+
+                //armature is considered visible if 1 or less seconds passed since last time we've seen the actor
+                armature.IsVisible = armature.LastSeen.AddSeconds(1) >= currentTime;
+                MarkActorStageHealthy(armature.ActorIdentifier, "cleanup");
             }
-
-            //armature is considered visible if 1 or less seconds passed since last time we've seen the actor
-            armature.IsVisible = armature.LastSeen.AddSeconds(1) >= currentTime;
+            catch (Exception ex)
+            {
+                RecordActorFailure(armature.ActorIdentifier, "cleanup", ex);
+            }
         }
 
         var renderableEntries = _objectManager
@@ -292,33 +463,35 @@ public unsafe sealed class ArmatureManager : IDisposable
 
         foreach (var obj in renderableEntries)
         {
-            var objects = obj.Value.Objects;
-            if (objects == null || objects.Count == 0)
-                continue;
-
             var actorIdentifier = obj.Key.CreatePermanent();
-
-            if (!Armatures.ContainsKey(actorIdentifier))
+            try
             {
-                var activeProfile = _profileManager.GetEnabledProfilesByActor(actorIdentifier).FirstOrDefault();
-                if (activeProfile == null)
+                var objects = obj.Value.Objects;
+                if (objects == null || objects.Count == 0)
                     continue;
 
-                var newArm = new Armature(actorIdentifier, activeProfile);
-                TryLinkSkeleton(newArm, boneImportanceBudget);
-                Armatures.Add(actorIdentifier, newArm);
-                _logger.Debug($"Added '{newArm}' for {actorIdentifier.IncognitoDebug()} to cache");
-                _event.Invoke(ArmatureChanged.Type.Created, newArm, activeProfile);
+                if (!Armatures.ContainsKey(actorIdentifier))
+                {
+                    var activeProfile = _profileManager.GetEnabledProfilesByActor(actorIdentifier).FirstOrDefault();
+                    if (activeProfile == null)
+                        continue;
 
-                continue;
-            }
+                    var newArm = new Armature(actorIdentifier, activeProfile);
+                    TryLinkSkeleton(newArm, boneImportanceBudget);
+                    Armatures.Add(actorIdentifier, newArm);
+                    _logger.Debug($"Added '{newArm}' for {actorIdentifier.IncognitoDebug()} to cache");
+                    _event.Invoke(ArmatureChanged.Type.Created, newArm, activeProfile);
 
-            var armature = Armatures[actorIdentifier];
+                    MarkActorStageHealthy(actorIdentifier, "refresh");
+                    continue;
+                }
 
-            armature.UpdateLastSeen(currentTime);
+                var armature = Armatures[actorIdentifier];
 
-            if (armature.IsPendingProfileRebind)
-            {
+                armature.UpdateLastSeen(currentTime);
+
+                if (armature.IsPendingProfileRebind)
+                {
                 _logger.Debug($"Armature {armature} is pending profile/bone rebind, rebinding...");
                 armature.IsPendingProfileRebind = false;
 
@@ -354,7 +527,14 @@ public unsafe sealed class ArmatureManager : IDisposable
                 var advancedBodyScaling = ResolveAdvancedBodyScaling(armature.Profile, actorForSettings);
                 var actorSkeletonUpdated = actorForSettings && armature.IsSkeletonUpdated(actorForSettings.Model.AsCharacterBase);
                 var boneImportance = actorForSettings
-                    ? EvaluateBoneImportanceForArmature(armature, actorForSettings, advancedBodyScaling, boneImportanceBudget, actorSkeletonUpdated, forceRefresh: true)
+                    ? EvaluateBoneImportanceForArmature(
+                        armature,
+                        actorForSettings,
+                        advancedBodyScaling,
+                        boneImportanceBudget,
+                        actorSkeletonUpdated,
+                        TryGetGlamourerAppearanceTransition(actorForSettings),
+                        forceRefresh: true)
                     : AdvancedBodyScalingBoneImportanceResult.CreateFallback(
                         "No live actor was available during profile rebind.",
                         enabled: advancedBodyScaling.ModelDerivedBoneImportanceEnabled,
@@ -364,7 +544,8 @@ public unsafe sealed class ArmatureManager : IDisposable
                     _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
                     _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
                     advancedBodyScaling,
-                    boneImportance);
+                    boneImportance,
+                    "profile rebind");
 
                 //warn: might be a bit of a performance hit on profiles with a lot of templates/bones
                 //warn: this must be done after RebuildBoneTemplateBinding or it will not work
@@ -389,12 +570,19 @@ public unsafe sealed class ArmatureManager : IDisposable
                 }
 
                 _event.Invoke(ArmatureChanged.Type.Updated, armature, (activeProfile, oldProfile));
-            }
+                RecordSelfLifecycleTrace(armature, actorForSettings, "profile rebind", force: true, TryGetGlamourerAppearanceTransition(actorForSettings));
+                }
 
-            //Needed because:
-            //* Skeleton sometimes appears to be not ready when armature is created
-            //* We want to keep armature up to date with any character skeleton changes
-            TryLinkSkeleton(armature, boneImportanceBudget);
+                //Needed because:
+                //* Skeleton sometimes appears to be not ready when armature is created
+                //* We want to keep armature up to date with any character skeleton changes
+                TryLinkSkeleton(armature, boneImportanceBudget);
+                MarkActorStageHealthy(actorIdentifier, "refresh");
+            }
+            catch (Exception ex)
+            {
+                RecordActorFailure(actorIdentifier, "refresh", ex);
+            }
         }
     }
 
@@ -405,50 +593,72 @@ public unsafe sealed class ArmatureManager : IDisposable
         foreach (var kvPair in Armatures)
         {
             var armature = kvPair.Value;
-            armature.UpdateRuntimeTransforms(deltaSeconds, transitionSharpness);
-
-            if (armature.IsBuilt && armature.IsVisible && _objectManager.TryGetValue(armature.ActorIdentifier, out var actorData))
+            try
             {
-                if (actorData.Objects.Count > 0)
+                var applyFailed = false;
+                armature.UpdateRuntimeTransforms(deltaSeconds, transitionSharpness);
+
+                if (armature.IsBuilt
+                    && armature.IsSkeletonBindingCurrent
+                    && armature.IsVisible
+                    && _objectManager.TryGetValue(armature.ActorIdentifier, out var actorData))
                 {
-                    var motionActor = actorData.Objects[0];
-                    if (_emoteService.IsSitting(motionActor))
+                    if (actorData.Objects.Count > 0)
                     {
-                        armature.ResetMotionWarpingContext("Motion warping is suppressed while the actor is sitting.");
+                        var motionActor = actorData.Objects[0];
+                        if (_emoteService.IsSitting(motionActor))
+                        {
+                            armature.ResetMotionWarpingContext("Motion warping is suppressed while the actor is sitting.");
+                        }
+                        else
+                        {
+                            armature.UpdateMotionWarpingContext(
+                                new Vector3(
+                                    motionActor.AsObject->Position.X,
+                                    motionActor.AsObject->Position.Y,
+                                    motionActor.AsObject->Position.Z),
+                                motionActor.AsObject->Rotation,
+                                deltaSeconds);
+                        }
                     }
                     else
                     {
-                        armature.UpdateMotionWarpingContext(
-                            new Vector3(
-                                motionActor.AsObject->Position.X,
-                                motionActor.AsObject->Position.Y,
-                                motionActor.AsObject->Position.Z),
-                            motionActor.AsObject->Rotation,
-                            deltaSeconds);
+                        armature.ResetMotionWarpingContext();
                     }
-                }
-                else
-                {
-                    armature.ResetMotionWarpingContext();
-                }
 
-                foreach (var actor in actorData.Objects)
-                {
-                    EnsureObjectMovementFlagCapacity(actor.AsObject->ObjectIndex);
-                    ApplyPiecewiseTransformation(armature, actor, armature.ActorIdentifier, deltaSeconds);
-
-                    if (!_objectMovementFlagsArr[actor.AsObject->ObjectIndex])
+                    foreach (var actor in actorData.Objects)
                     {
-                        //todo: ApplyRootTranslation causes character flashing in gpose
-                        //research if this can be fixed without breaking this functionality
-                        if (_gposeService.IsInGPose)
-                            continue;
+                        try
+                        {
+                            EnsureObjectMovementFlagCapacity(actor.AsObject->ObjectIndex);
+                            ApplyPiecewiseTransformation(armature, actor, armature.ActorIdentifier, deltaSeconds);
 
-                        ApplyRootTranslation(armature, actor);
+                            if (!_objectMovementFlagsArr[actor.AsObject->ObjectIndex])
+                            {
+                                //todo: ApplyRootTranslation causes character flashing in gpose
+                                //research if this can be fixed without breaking this functionality
+                                if (_gposeService.IsInGPose)
+                                    continue;
+
+                                ApplyRootTranslation(armature, actor);
+                            }
+                            else
+                                _objectMovementFlagsArr[actor.AsObject->ObjectIndex] = false;
+                        }
+                        catch (Exception ex)
+                        {
+                            applyFailed = true;
+                            RecordActorFailure(armature.ActorIdentifier, "apply", ex);
+                        }
                     }
-                    else
-                        _objectMovementFlagsArr[actor.AsObject->ObjectIndex] = false;
                 }
+
+                if (!applyFailed)
+                    MarkActorStageHealthy(armature.ActorIdentifier, "apply");
+            }
+            catch (Exception ex)
+            {
+                RecordActorFailure(armature.ActorIdentifier, "apply", ex);
             }
         }
     }
@@ -465,14 +675,48 @@ public unsafe sealed class ArmatureManager : IDisposable
         Array.Resize(ref _objectMovementFlagsArr, newSize);
     }
 
+    private void RecordActorFailure(ActorIdentifier actorIdentifier, string stage, Exception exception)
+    {
+        const long logIntervalMs = 5000;
+        var now = Environment.TickCount64;
+        if (!_actorFailureStates.TryGetValue(actorIdentifier, out var state))
+        {
+            state = new ActorFailureState();
+            _actorFailureStates[actorIdentifier] = state;
+        }
+
+        state.FailingStages.Add(stage);
+        if (state.LastLoggedByStage.TryGetValue(stage, out var lastLogged)
+            && now - lastLogged < logIntervalMs)
+            return;
+
+        state.LastLoggedByStage[stage] = now;
+        _logger.Warning($"Skipped {stage} processing for {actorIdentifier.IncognitoDebug()} after {exception.GetType().Name}; other actors will continue.");
+    }
+
+    private void MarkActorStageHealthy(ActorIdentifier actorIdentifier, string stage)
+    {
+        if (!_actorFailureStates.TryGetValue(actorIdentifier, out var state))
+            return;
+
+        state.FailingStages.Remove(stage);
+        state.LastLoggedByStage.Remove(stage);
+        if (state.FailingStages.Count == 0)
+            _actorFailureStates.Remove(actorIdentifier);
+    }
+
     private AdvancedBodyScalingBoneImportanceResult EvaluateBoneImportanceForArmature(
         Armature armature,
         Actor actor,
         AdvancedBodyScalingSettings settings,
         BoneImportanceFrameBudgetState budget,
         bool skeletonUpdated,
+        GlamourerAppearanceTransitionSnapshot glamourerAppearanceTransition,
         bool forceRefresh = false)
     {
+        var boneImportanceStarted = armature.PerformanceMetrics.Start();
+        try
+        {
         var tier = ClassifyBoneImportanceTier(armature, actor);
         var fullEligible = IsFullBoneImportanceEligible(settings, tier);
         var activelyManaged = ShouldActivelyManageBoneImportance(settings, tier, budget);
@@ -487,7 +731,6 @@ public unsafe sealed class ArmatureManager : IDisposable
         }
 
         var stableSignature = GetStableBoneImportanceSignature(runtimeState, activeResult);
-        var glamourerAppearanceTransition = TryGetGlamourerAppearanceTransition(actor);
 
         if (!settings.ModelDerivedBoneImportanceEnabled)
         {
@@ -591,6 +834,27 @@ public unsafe sealed class ArmatureManager : IDisposable
                 runtimeSummary: "BIW was skipped until the next scheduled probe because this actor is currently low-priority.");
         }
 
+        // A forced refresh, an uncached result, or an active appearance transition must keep its
+        // normal priority. Only defer a stable cached profiled actor whose scheduled probe would
+        // otherwise coincide with other crowd actors this frame.
+        if (!priorityRefresh &&
+            hasCachedModelResult &&
+            !glamourerAppearanceTransition.Active &&
+            !budget.TryConsumeProbe(tier))
+        {
+            return ApplyRuntimePolicy(
+                activeResult,
+                settings,
+                runtimeState,
+                now,
+                AdvancedBodyScalingBoneImportanceRuntimeMode.Cached,
+                tier,
+                fullEligible,
+                crowdSafeDowngraded: !fullEligible,
+                stableThrottled: true,
+                runtimeSummary: "Crowd-safe BIW reused the cached result because this stable actor's model-signature probe was deferred to a later frame.");
+        }
+
         var probe = _boneImportanceService.ProbeActorModelSignature(actor, settings, stableSignature);
         runtimeState.LastProbeAtMs = now;
         runtimeState.LastProbedModelSignature = probe.ModelSignature;
@@ -612,6 +876,29 @@ public unsafe sealed class ArmatureManager : IDisposable
             || signatureChanged
             || runtimeState.LastResolveAtMs == 0
             || now - runtimeState.LastResolveAtMs >= resolveInterval;
+
+        // A stable signature already has a complete applied importance map. Do not let the
+        // per-frame full/reduced budget swap its source mode and force a template rebind just
+        // because this actor reached a periodic resolve interval. Signature changes and explicit
+        // appearance refreshes still take the normal rebuild path below.
+        if (probe.HasResolvedModelSet &&
+            hasCachedModelResult &&
+            !forceRefresh &&
+            !signatureChanged &&
+            string.Equals(probe.ModelSignature, stableSignature, StringComparison.OrdinalIgnoreCase))
+        {
+            return ApplyRuntimePolicy(
+                activeResult,
+                settings,
+                runtimeState,
+                now,
+                AdvancedBodyScalingBoneImportanceRuntimeMode.Cached,
+                tier,
+                fullEligible,
+                crowdSafeDowngraded: !fullEligible,
+                stableThrottled: true,
+                runtimeSummary: "Resolved model signature was unchanged, so the existing BIW map stayed applied without rebuilding template bindings.");
+        }
 
         if (probe.HasResolvedModelSet && !resolveDue && hasCachedModelResult)
         {
@@ -726,6 +1013,11 @@ public unsafe sealed class ArmatureManager : IDisposable
             runtimeSummary: probe.HasResolvedModelSet
                 ? "BIW was skipped for this actor because the internal crowd-safe budget prioritized higher-value actors this frame."
                 : "BIW was skipped because the actor did not expose a usable resolved whole-body model set during the current probe.");
+        }
+        finally
+        {
+            armature.PerformanceMetrics.Record("bone-importance-refresh", boneImportanceStarted);
+        }
     }
 
     private static AdvancedBodyScalingSettings CreateReducedBoneImportanceSettings(AdvancedBodyScalingSettings settings)
@@ -1169,7 +1461,7 @@ public unsafe sealed class ArmatureManager : IDisposable
 
     private AdvancedBodyScalingBoneImportanceActorTier ClassifyBoneImportanceTier(Armature armature, Actor actor)
     {
-        if (AreSameActor(actor, _objectManager.Player))
+        if (IsLocalPlayerArmature(armature, actor))
             return AdvancedBodyScalingBoneImportanceActorTier.Self;
 
         if (IsExplicitlyProfiledActor(armature))
@@ -1221,6 +1513,17 @@ public unsafe sealed class ArmatureManager : IDisposable
            && right.AsObject != null
            && left.AsObject->ObjectIndex == right.AsObject->ObjectIndex;
 
+    private bool IsLocalPlayerArmature(Armature armature, Actor actor)
+    {
+        if (AreSameActor(actor, _objectManager.Player))
+            return true;
+
+        // During redraw, CharacterBase copies can have a different object index from the
+        // current object-manager player instance. The armature identity remains stable.
+        var localPlayerIdentifier = _objectManager.PlayerData.Identifier;
+        return localPlayerIdentifier.IsValid && armature.ActorIdentifier.Equals(localPlayerIdentifier);
+    }
+
     private static string BuildAppliedBoneImportanceBindingIdentity(
         AdvancedBodyScalingSettings? settings,
         AdvancedBodyScalingBoneImportanceResult? result)
@@ -1243,6 +1546,15 @@ public unsafe sealed class ArmatureManager : IDisposable
 
         return $"{(int)result.Source}|{signature}|{settings.BoneImportanceHeuristicBlend:0.000}";
     }
+
+    private static bool ShouldRetainHigherQualityBoneImportance(
+        AdvancedBodyScalingBoneImportanceResult active,
+        AdvancedBodyScalingBoneImportanceResult candidate)
+        => active.ModelDerivedActive
+           && candidate.ModelDerivedActive
+           && string.Equals(active.ModelSignature, candidate.ModelSignature, StringComparison.OrdinalIgnoreCase)
+           && active.Source is AdvancedBodyScalingBoneImportanceSource.ModelWeights or AdvancedBodyScalingBoneImportanceSource.MixedAggregate
+           && candidate.Source == AdvancedBodyScalingBoneImportanceSource.CoarseParticipation;
 
     private static string BuildBoneImportanceBindingRefreshReason(
         string previousBindingIdentity,
@@ -1429,6 +1741,9 @@ public unsafe sealed class ArmatureManager : IDisposable
     /// </summary>
     private bool TryLinkSkeleton(Armature armature, BoneImportanceFrameBudgetState boneImportanceBudget)
     {
+        var updateStarted = armature.PerformanceMetrics.Start();
+        try
+        {
         if (!_objectManager.TryGetValue(armature.ActorIdentifier, out var actorData) ||
             actorData.Objects == null ||
             actorData.Objects.Count == 0)
@@ -1437,31 +1752,143 @@ public unsafe sealed class ArmatureManager : IDisposable
         //we assume that all other objects are a copy of object #0
         var actor = actorData.Objects[0];
 
+        var glamourerAppearanceTransition = TryGetGlamourerAppearanceTransition(actor);
+        var appearanceTransitionState = glamourerAppearanceTransition.Phase switch
+        {
+            GlamourerAppearanceTransitionPhase.AwaitingFinalization => "awaiting finalization",
+            GlamourerAppearanceTransitionPhase.Settling => "settling",
+            _ => "idle",
+        };
+        var appearanceLifecycleEvent = armature.ObserveGlamourerAppearanceEpoch(
+            glamourerAppearanceTransition.AppearanceEpoch,
+            glamourerAppearanceTransition.Active,
+            appearanceTransitionState,
+            glamourerAppearanceTransition.OperationType,
+            glamourerAppearanceTransition.FinalizedAtMs);
+        if (!string.IsNullOrWhiteSpace(appearanceLifecycleEvent))
+        {
+            _logger.Debug($"{appearanceLifecycleEvent} for actor #{actor.AsObject->ObjectIndex}.");
+            RecordSelfLifecycleTrace(armature, actor, appearanceLifecycleEvent, force: true, glamourerAppearanceTransition);
+        }
+
+        var hasAppearanceContext = TryGetActorAppearanceContext(actor, out var appearanceRace, out var appearanceClan, out var appearanceGender);
+        var appearanceContextRefreshReason = string.Empty;
+        var fallbackAppearanceContextRefresh = hasAppearanceContext && armature.ShouldRefreshForAppearanceContextFallback(
+            appearanceRace,
+            appearanceClan,
+            appearanceGender,
+            glamourerAppearanceTransition.Active,
+            out appearanceContextRefreshReason);
+        var stableAppearanceEpochRefresh = armature.TryGetPendingStableAppearanceRefresh(
+            glamourerAppearanceTransition.Active,
+            out var stableAppearanceEpoch,
+            out var stableAppearanceRefreshReason);
+        var appearanceContextRefresh = stableAppearanceEpochRefresh || fallbackAppearanceContextRefresh;
+        var appearanceRefreshReason = stableAppearanceEpochRefresh
+            ? stableAppearanceRefreshReason
+            : appearanceContextRefreshReason;
+
         var advancedBodyScaling = ResolveAdvancedBodyScaling(armature.Profile, actor);
         var skeletonUpdated = armature.IsSkeletonUpdated(actor.Model.AsCharacterBase);
-        var boneImportance = EvaluateBoneImportanceForArmature(armature, actor, advancedBodyScaling, boneImportanceBudget, skeletonUpdated, forceRefresh: !armature.IsBuilt);
+        // IsSkeletonUpdated intentionally returns false for an incomplete redraw: it cannot prove a
+        // topology change, but the existing native links are still unsafe. Retry a validated
+        // candidate publication at a bounded interval so a settled replacement can recover without
+        // requiring a profile toggle.
+        var bindingRecoveryDue = armature.IsBuilt
+            && !armature.IsSkeletonBindingCurrent
+            && armature.ShouldAttemptInvalidBindingRecovery();
+        var bindingUnsafe = !armature.IsBuilt || skeletonUpdated || !armature.IsSkeletonBindingCurrent;
+        var needsValidatedPublication = !armature.IsBuilt || skeletonUpdated || bindingRecoveryDue;
+        // Do not carry model-derived evidence across a pending skeleton publication. A successful
+        // publication below performs one forced, bounded refresh against the new live model.
+        var boneImportance = bindingUnsafe
+            ? AdvancedBodyScalingBoneImportanceResult.CreateFallback(
+                "Waiting for the current validated armature publication before refreshing model-derived weighting.",
+                enabled: advancedBodyScaling.ModelDerivedBoneImportanceEnabled,
+                preferSkinWeights: advancedBodyScaling.PreferTrueSkinWeightImportance,
+                heuristicBlend: advancedBodyScaling.BoneImportanceHeuristicBlend)
+            : EvaluateBoneImportanceForArmature(
+                armature,
+                actor,
+                advancedBodyScaling,
+                boneImportanceBudget,
+                skeletonUpdated,
+                glamourerAppearanceTransition,
+                forceRefresh: appearanceContextRefresh);
+
+        // A crowd budget may make a profiled actor eligible for a reduced resolve after it has
+        // already obtained a stable skin-weight map. Do not replace that stronger map with coarse
+        // participation when the resolved model identity is unchanged; doing so only rebound the
+        // same template and made the solver oscillate between equivalent crowd-budget passes.
+        if (!bindingUnsafe &&
+            !appearanceContextRefresh &&
+            ShouldRetainHigherQualityBoneImportance(armature.ActiveBoneImportanceResult, boneImportance))
+        {
+            boneImportance = armature.ActiveBoneImportanceResult;
+        }
+
         var previousBindingIdentity = BuildAppliedBoneImportanceBindingIdentity(armature.ActiveAdvancedBodyScalingSettings, armature.ActiveBoneImportanceResult);
         var currentBindingIdentity = BuildAppliedBoneImportanceBindingIdentity(advancedBodyScaling, boneImportance);
         var boneImportanceBindingChanged = !string.Equals(previousBindingIdentity, currentBindingIdentity, StringComparison.Ordinal);
-        if (!armature.IsBuilt || skeletonUpdated || boneImportanceBindingChanged)
+        if (needsValidatedPublication || (!bindingUnsafe && (boneImportanceBindingChanged || appearanceContextRefresh)))
         {
-            if (!armature.IsBuilt || skeletonUpdated)
+            if (needsValidatedPublication)
             {
-                _logger.Debug($"Skeleton for actor #{actor.AsObject->ObjectIndex} tied to \"{armature}\" has changed");
-                armature.RebuildSkeleton(
+                var previousRevision = armature.SkeletonRevision;
+                var reacquisitionPublication = armature.IsAwaitingActorReacquisitionPublication;
+                var published = armature.RebuildSkeleton(
                     actor.Model.AsCharacterBase,
                     _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
                     _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
                     advancedBodyScaling,
                     boneImportance);
+                if (published && armature.SkeletonRevision != previousRevision)
+                {
+                    // The profile remains owned by the armature, but its ModelBone links and
+                    // model-derived weighting must be rebuilt for this exact native generation.
+                    var refreshedBoneImportance = EvaluateBoneImportanceForArmature(
+                        armature,
+                        actor,
+                        advancedBodyScaling,
+                        boneImportanceBudget,
+                        skeletonUpdated: true,
+                        glamourerAppearanceTransition: glamourerAppearanceTransition,
+                        forceRefresh: true);
+                    armature.RebuildBoneTemplateBinding(
+                        _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
+                        _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
+                        advancedBodyScaling,
+                        refreshedBoneImportance,
+                        "post-publication model refresh");
+                    if (hasAppearanceContext)
+                        armature.MarkAppearanceContextBindingApplied(appearanceRace, appearanceClan, appearanceGender);
+                    if (glamourerAppearanceTransition.Active)
+                    {
+                        _logger.Debug($"IntermediateArmaturePublishedDuringAppearance epoch {armature.CurrentAppearanceEpoch} for actor #{actor.AsObject->ObjectIndex}; stable appearance work remains pending.");
+                        RecordSelfLifecycleTrace(armature, actor, "IntermediateArmaturePublishedDuringAppearance", force: true, glamourerAppearanceTransition);
+                    }
+                    else if (stableAppearanceEpochRefresh)
+                    {
+                        armature.MarkStableAppearanceEpochApplied(stableAppearanceEpoch, "validated armature publication");
+                        _logger.Debug($"StableAppearanceRebindCompleted epoch {stableAppearanceEpoch} for actor #{actor.AsObject->ObjectIndex} after validated armature publication.");
+                        RecordSelfLifecycleTrace(armature, actor, "StableAppearanceRebindCompleted", force: true, glamourerAppearanceTransition);
+                    }
+                    _logger.Debug($"Published armature revision {armature.SkeletonRevision} (native binding generation {armature.NativeBindingGeneration}) for {armature}; rebuilt current profile bindings and model-derived state.");
+                    RecordSelfLifecycleTrace(armature, actor,
+                        reacquisitionPublication ? "actor reacquisition publication" : "armature publication",
+                        force: true,
+                        glamourerAppearanceTransition);
+                }
             }
             else
             {
-                var refreshReason = BuildBoneImportanceBindingRefreshReason(
-                    previousBindingIdentity,
-                    armature.ActiveBoneImportanceResult,
-                    currentBindingIdentity,
-                    boneImportance);
+                var refreshReason = appearanceContextRefresh
+                    ? appearanceRefreshReason
+                    : BuildBoneImportanceBindingRefreshReason(
+                        previousBindingIdentity,
+                        armature.ActiveBoneImportanceResult,
+                        currentBindingIdentity,
+                        boneImportance);
                 var signatureChangeDetail = string.Equals(refreshReason, "resolved model signature changed", StringComparison.Ordinal)
                     ? BuildBoneImportanceSignatureChangeDetail(
                         armature.ActiveBoneImportanceResult.ModelSignature,
@@ -1472,10 +1899,132 @@ public unsafe sealed class ArmatureManager : IDisposable
                     _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
                     _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
                     advancedBodyScaling,
-                    boneImportance);
+                    boneImportance,
+                    $"binding identity: {refreshReason}");
+                if (hasAppearanceContext && !glamourerAppearanceTransition.Active)
+                    armature.MarkAppearanceContextBindingApplied(appearanceRace, appearanceClan, appearanceGender);
+                if (stableAppearanceEpochRefresh)
+                {
+                    armature.MarkStableAppearanceEpochApplied(stableAppearanceEpoch, "stable appearance binding refresh");
+                    _logger.Debug($"StableAppearanceRebindCompleted epoch {stableAppearanceEpoch} for actor #{actor.AsObject->ObjectIndex}.");
+                }
+                RecordSelfLifecycleTrace(armature, actor,
+                    stableAppearanceEpochRefresh ? "StableAppearanceRebindCompleted"
+                    : fallbackAppearanceContextRefresh ? "appearance-context/template binding refresh"
+                    : "BIW/template binding refresh",
+                    force: true,
+                    glamourerAppearanceTransition);
             }
         }
+        RecordSelfLifecycleTrace(armature, actor, "lifecycle state", force: false, glamourerAppearanceTransition);
         return true;
+        }
+        finally
+        {
+            armature.PerformanceMetrics.Record("armature-update-check", updateStarted);
+        }
+    }
+
+    private void RecordSelfLifecycleTrace(
+        Armature armature,
+        Actor actor,
+        string reason,
+        bool force,
+        GlamourerAppearanceTransitionSnapshot glamourerTransition)
+    {
+#if !DEBUG
+        return;
+#else
+        if (!_configuration.DebuggingModeEnabled || !AreSameActor(actor, _objectManager.Player) || actor.AsObject == null)
+            return;
+
+        unsafe
+        {
+            var cBase = actor.Model.AsCharacterBase;
+            var skeleton = cBase == null ? null : cBase->Skeleton;
+            var partials = new List<string>();
+            if (skeleton != null)
+            {
+                for (var partialIndex = 0; partialIndex < Math.Min((int)skeleton->PartialSkeletonCount, 4); partialIndex++)
+                {
+                    var pose = skeleton->PartialSkeletons[partialIndex].GetHavokPose(Constants.TruePoseIndex);
+                    var poseSkeleton = pose == null ? 0 : (nuint)pose->Skeleton;
+                    partials.Add($"p{partialIndex}=0x{(nuint)pose:X}/sk=0x{poseSkeleton:X}");
+                }
+            }
+
+            var customize = actor.Customize;
+            var modelIdentity = customize == null
+                ? "customize unavailable"
+                : $"race={customize->Race}; clan={customize->Clan}; gender={customize->Gender}";
+            var nativeIdentity = $"actor=0x{(nuint)actor.AsObject:X}; model/draw=0x{(nuint)actor.Model.Address:X}; cbase=0x{(nuint)cBase:X}; skeleton=0x{(nuint)skeleton:X}; {string.Join(", ", partials)}";
+            var manifest = armature.GetCapabilityManifestSnapshot();
+            var profile = armature.Profile;
+            var templateIds = profile.Templates
+                .Take(6)
+                .Select(template => $"{template.UniqueId.ToString()[..8]}:{(!profile.DisabledTemplates.Contains(template.UniqueId) ? "on" : "off")}");
+            var glamourer = glamourerTransition.Active ? glamourerTransition.Summary : "none";
+            // Summary contains a settling countdown. Only the categorical phase belongs in the deduplication key.
+            var glamourerPhase = glamourerTransition.Active
+                ? glamourerTransition.AwaitingFinalization ? "awaiting-finalization"
+                    : glamourerTransition.FinalizationSettling ? "finalization-settling"
+                    : "appearance-transition"
+                : "none";
+            var stateKey = string.Join("|", new[]
+            {
+                modelIdentity,
+                nativeIdentity,
+                manifest.StructuralFingerprint ?? string.Empty,
+                armature.SkeletonRevision.ToString(),
+                armature.NativeBindingGeneration.ToString(),
+                armature.IsBuilt.ToString(),
+                armature.IsSkeletonBindingCurrent.ToString(),
+                armature.PendingPublicationIdentity ?? string.Empty,
+                armature.PendingPublicationObservations.ToString(),
+                profile.UniqueId.ToString(),
+                profile.Enabled.ToString(),
+                armature.TemplateBindingRevision.ToString(),
+                armature.ResolvedBoneTransforms.Count.ToString(),
+                armature.BoundModelBoneCount.ToString(),
+                armature.ActiveBones.Count.ToString(),
+                armature.IsPendingProfileRebind.ToString(),
+                armature.ActiveBoneImportanceResult.ModelSignature ?? string.Empty,
+                glamourerPhase,
+                armature.CurrentAppearanceEpoch.ToString(),
+                armature.AppearanceEpochState,
+                armature.LatestPendingStableAppearanceEpoch.ToString(),
+                armature.LastAppliedStableAppearanceEpoch.ToString(),
+            });
+
+            var entry = new ArmatureLifecycleTraceEntry(
+                Sequence: 0,
+                TimestampMs: Environment.TickCount64,
+                Frame: _debugLifecycleFrame,
+                Reason: reason,
+                ActorIdentity: $"index={actor.AsObject->ObjectIndex}; address=0x{(nuint)actor.AsObject:X}",
+                ModelIdentity: modelIdentity,
+                NativeIdentity: nativeIdentity,
+                StructuralFingerprint: string.IsNullOrWhiteSpace(manifest.StructuralFingerprint) ? "unavailable" : manifest.StructuralFingerprint,
+                SkeletonRevision: armature.SkeletonRevision,
+                NativeBindingGeneration: armature.NativeBindingGeneration,
+                IsBuilt: armature.IsBuilt,
+                BindingCurrent: armature.IsSkeletonBindingCurrent,
+                PendingPublication: armature.PendingPublicationIdentity ?? "none",
+                PendingObservations: armature.PendingPublicationObservations,
+                ProfileIdentity: $"{profile.UniqueId.ToString()[..8]}; enabled={profile.Enabled}",
+                TemplateSummary: $"assigned={profile.Templates.Count}; {string.Join(", ", templateIds)}",
+                ResolvedTransformCount: armature.ResolvedBoneTransforms.Count,
+                BoundModelBoneCount: armature.BoundModelBoneCount,
+                ActiveModelBoneCount: armature.ActiveBones.Count,
+                TemplateBindingRevision: armature.TemplateBindingRevision,
+                PendingProfileRebind: armature.IsPendingProfileRebind,
+                BoneImportanceSignature: string.IsNullOrWhiteSpace(armature.ActiveBoneImportanceResult.ModelSignature) ? "unavailable" : armature.ActiveBoneImportanceResult.ModelSignature,
+                GlamourerTransition: glamourer,
+                NativeWrites: armature.GetDebugNativeWriteDiagnostics(),
+                StateKey: stateKey);
+            _selfLifecycleTrace.Record(entry, force);
+        }
+#endif
     }
 
     /// <summary>
@@ -1485,7 +2034,15 @@ public unsafe sealed class ArmatureManager : IDisposable
     /// </summary>
     private void ApplyPiecewiseTransformation(Armature armature, Actor actor, ActorIdentifier actorIdentifier, float deltaSeconds)
     {
+        var nativeApplicationStarted = armature.PerformanceMetrics.Start();
+        try
+        {
         var cBase = actor.Model.AsCharacterBase;
+        if (_configuration.DebuggingModeEnabled && AreSameActor(actor, _objectManager.Player))
+        {
+            armature.SetDebugNativeWriteDiagnosticsEnabled(true);
+            armature.BeginDebugNativeWriteFrame(Math.Max(armature.ActiveBones.Count - 1, 0));
+        }
 
         var isMount = actorIdentifier.Type == IdentifierType.Owned &&
             actorIdentifier.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Mount;
@@ -1500,6 +2057,8 @@ public unsafe sealed class ArmatureManager : IDisposable
 
         if (cBase != null)
         {
+            var drawObject = cBase->DrawObject.Object;
+
             // Final runtime order:
             // 1. Base/profile/template transforms
             // 2. Advanced body scaling output
@@ -1510,47 +2069,111 @@ public unsafe sealed class ArmatureManager : IDisposable
             // 7. Full-body IK final pose solve
             armature.EvaluatePoseCorrectives(cBase);
 
-            foreach (var mb in armature.ActiveBones)
+            var modelBoneApplicationStarted = armature.PerformanceMetrics.Start();
+            try
             {
-                if (mb == armature.MainRootBone)
+                foreach (var mb in armature.ActiveBones)
                 {
-                    var appliedTransform = mb.AppliedTransform;
-                    if (_gameObjectService.IsActorHasScalableRoot(actor) && appliedTransform != null && mb.IsModifiedScale())
+                    if (mb == armature.MainRootBone)
                     {
-                        cBase->DrawObject.Object.Scale = appliedTransform.Scaling;
+                        var appliedTransform = mb.AppliedTransform;
+                        var requestedScale = appliedTransform?.Scaling ?? Vector3.One;
+                        var rootScaleModified = appliedTransform != null
+                            && TransformSafety.IsFinite(requestedScale)
+                            && mb.IsModifiedScale();
+                        var actorEligibleForRootScale = _gameObjectService.IsActorHasScalableRoot(actor);
+                        var observedBefore = Vector3.One;
+                        var drawScale = cBase->DrawObject.Object.Scale;
+                        observedBefore = new Vector3(drawScale.X, drawScale.Y, drawScale.Z);
 
-                        //Fix mount owner's scale if needed
-                        //todo: always keep owner's scale proper instead of scaling with mount if no armature found
-                        if (isMount && mountOwner != null && mountOwnerArmature != null)
+                        var rootScaleApplied = false;
+                        if (actorEligibleForRootScale && rootScaleModified)
                         {
-                            var ownerDrawObject = cBase->DrawObject.Object.ChildObject;
+                            // Root scaling belongs to the character draw object. This is the same
+                            // transform boundary equipment and weapon attachments inherit.
+                            cBase->DrawObject.Object.Scale = requestedScale;
+                            cBase->DrawObject.Object.IsTransformChanged = true;
+                            rootScaleApplied = true;
+                        }
 
-                            //limit to only modified scales because that is just easier to handle
-                            //because we don't need to hook into dismount code to reset character scale
-                            //todo: hook into dismount
-                            //https://github.com/Cytraen/SeatedSidekickSpectator/blob/main/SetModeHook.cs?
-                            if (cBase->DrawObject.Object.ChildObject == mountOwner.Value.Model &&
-                                mountOwnerArmature.MainRootBone.IsModifiedScale() &&
-                                mountOwnerArmature.MainRootBone.AppliedTransform != null)
+                        if (actorEligibleForRootScale)
+                        {
+                            //Fix mount owner's scale if needed
+                            //todo: always keep owner's scale proper instead of scaling with mount if no armature found
+                            if (isMount && mountOwner != null && mountOwnerArmature != null)
                             {
-                                var baseScale = mountOwnerArmature.MainRootBone.AppliedTransform!.Scaling;
+                                var ownerDrawObject = drawObject.ChildObject;
 
-                                ownerDrawObject->Scale = new Vector3(Math.Abs(baseScale.X / cBase->DrawObject.Object.Scale.X),
-                                        Math.Abs(baseScale.Y / cBase->DrawObject.Object.Scale.Y),
-                                        Math.Abs(baseScale.Z / cBase->DrawObject.Object.Scale.Z));
+                                //limit to only modified scales because that is just easier to handle
+                                //because we don't need to hook into dismount code to reset character scale
+                                //todo: hook into dismount
+                                //https://github.com/Cytraen/SeatedSidekickSpectator/blob/main/SetModeHook.cs?
+                                if (drawObject.ChildObject == mountOwner.Value.Model &&
+                                    ownerDrawObject != null &&
+                                    mountOwnerArmature.MainRootBone.IsModifiedScale() &&
+                                    mountOwnerArmature.MainRootBone.AppliedTransform != null)
+                                {
+                                    var baseScale = mountOwnerArmature.MainRootBone.AppliedTransform!.Scaling;
+                                    var mountScale = rootScaleApplied ? requestedScale : observedBefore;
+                                    if (TransformSafety.TryDivide(
+                                            baseScale,
+                                            new Vector3(mountScale.X, mountScale.Y, mountScale.Z),
+                                            out var correctedOwnerScale))
+                                    {
+                                        ownerDrawObject->Scale = new Vector3(
+                                            MathF.Abs(correctedOwnerScale.X),
+                                            MathF.Abs(correctedOwnerScale.Y),
+                                            MathF.Abs(correctedOwnerScale.Z));
+                                        ownerDrawObject->IsTransformChanged = true;
+                                    }
+                                }
                             }
                         }
+
+                        armature.RecordRootScaleApplication(
+                            rootScaleModified,
+                            actorEligibleForRootScale,
+                            observedBefore,
+                            requestedScale,
+                            rootScaleApplied ? requestedScale : observedBefore,
+                            rootScaleApplied);
+                    }
+                    else
+                    {
+                        mb.ApplyModelTransform(cBase);
                     }
                 }
-                else
-                {
-                    mb.ApplyModelTransform(cBase);
-                }
+
+#if DEBUG
+                foreach (var diagnosticBone in armature.GetDebugPoseCorrectiveValidationBones())
+                    diagnosticBone.ApplyDebugPoseCorrectiveValidationTransform(cBase);
+                armature.CompleteDebugPoseCorrectiveValidationFrame();
+#endif
+
+            }
+            finally
+            {
+                armature.PerformanceMetrics.Record("modelbone-application", modelBoneApplicationStarted);
             }
 
+            var optionalLayersStarted = armature.PerformanceMetrics.Start();
+            try
+            {
             armature.EvaluateAndApplyFullIkRetargeting(cBase, deltaSeconds);
             armature.EvaluateAndApplyMotionWarping(cBase, deltaSeconds);
-            armature.EvaluateAndApplyFullBodyIk(cBase, deltaSeconds);
+            // Keep the player's corrective solve fully responsive. Profiled non-self actors
+            // reuse their latest smoothed Full-Body IK output between 30 Hz solves.
+            armature.EvaluateAndApplyFullBodyIk(cBase, deltaSeconds, useReducedCadence: !IsLocalPlayerArmature(armature, actor));
+            }
+            finally
+            {
+                armature.PerformanceMetrics.Record("optional-corrective-layers", optionalLayersStarted);
+            }
+        }
+        }
+        finally
+        {
+            armature.PerformanceMetrics.Record("native-transform-application", nativeApplicationStarted);
         }
     }
 
@@ -1565,17 +2188,26 @@ public unsafe sealed class ArmatureManager : IDisposable
         //2024/11/21: we no longer check cBase->DrawObject.IsVisible here so we can set object position in render hook.
 
         var cBase = actor.Model.AsCharacterBase;
-        if (cBase != null)
+        if (cBase != null && actor.AsObject != null)
         {
+            var drawObject = cBase->DrawObject.Object;
+            var actorObject = actor.AsObject;
+            var actorPosition = actorObject->Position;
+            if (!TransformSafety.IsFinite(actorPosition.X)
+                || !TransformSafety.IsFinite(actorPosition.Y)
+                || !TransformSafety.IsFinite(actorPosition.Z))
+                return;
+
             if (reset)
             {
-                cBase->DrawObject.Object.Position = actor.AsObject->Position;
+                drawObject.Position = actorPosition;
                 return;
             }
 
             //warn: hotpath for characters with n_root edits. IsApproximately might have some performance hit.
             var rootBoneTransform = arm.GetAppliedBoneTransform("n_root");
             if (rootBoneTransform == null ||
+                !TransformSafety.IsFinite(rootBoneTransform.Translation) ||
                 rootBoneTransform.Translation.IsApproximately(Vector3.Zero, 0.00001f))
                 return;
 
@@ -1585,16 +2217,21 @@ public unsafe sealed class ArmatureManager : IDisposable
                 return;
 
             //Reset position so we don't fly away
-            cBase->DrawObject.Object.Position = actor.AsObject->Position;
+            drawObject.Position = actorPosition;
 
             var newPosition = new FFXIVClientStructs.FFXIV.Common.Math.Vector3
             {
-                X = cBase->DrawObject.Object.Position.X + rootBoneTransform.Translation.X,
-                Y = cBase->DrawObject.Object.Position.Y + rootBoneTransform.Translation.Y,
-                Z = cBase->DrawObject.Object.Position.Z + rootBoneTransform.Translation.Z
+                X = drawObject.Position.X + rootBoneTransform.Translation.X,
+                Y = drawObject.Position.Y + rootBoneTransform.Translation.Y,
+                Z = drawObject.Position.Z + rootBoneTransform.Translation.Z
             };
 
-            cBase->DrawObject.Object.Position = newPosition;
+            if (TransformSafety.IsFinite(newPosition.X)
+                && TransformSafety.IsFinite(newPosition.Y)
+                && TransformSafety.IsFinite(newPosition.Z))
+            {
+                drawObject.Position = newPosition;
+            }
         }
     }
 
@@ -1602,6 +2239,7 @@ public unsafe sealed class ArmatureManager : IDisposable
     {
         armature.Profile.Armatures.Remove(armature);
         Armatures.Remove(armature.ActorIdentifier);
+        _actorFailureStates.Remove(armature.ActorIdentifier);
         _logger.Debug($"Armature {armature} removed from cache");
 
         _event.Invoke(ArmatureChanged.Type.Deleted, armature, reason);
@@ -1730,6 +2368,7 @@ public unsafe sealed class ArmatureManager : IDisposable
             type is not ProfileChanged.Type.MovedTemplate &&
             type is not ProfileChanged.Type.ChangedTemplate &&
             type is not ProfileChanged.Type.TemplateWeightChanged &&
+            type is not ProfileChanged.Type.TemplateCompatibilityChanged &&
             type is not ProfileChanged.Type.AdvancedBodyScalingSettingsChanged &&
             type is not ProfileChanged.Type.Toggled &&
             type is not ProfileChanged.Type.Deleted &&

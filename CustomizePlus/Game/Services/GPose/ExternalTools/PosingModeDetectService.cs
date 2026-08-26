@@ -16,14 +16,11 @@ public class PosingModeDetectService
     internal static unsafe byte* AnamnesisFreezeRotation;
     internal static unsafe byte* AnamnesisFreezeScale;
 
-    internal static unsafe bool IsAnamnesisPositionFrozen =>
-        AnamnesisFreezePosition != null && *AnamnesisFreezePosition == 0x90 || *AnamnesisFreezePosition == 0x00;
+    internal static unsafe bool IsAnamnesisPositionFrozen => IsFrozen(AnamnesisFreezePosition);
 
-    internal static unsafe bool IsAnamnesisRotationFrozen =>
-        AnamnesisFreezeRotation != null && *AnamnesisFreezeRotation == 0x90 || *AnamnesisFreezeRotation == 0x00;
+    internal static unsafe bool IsAnamnesisRotationFrozen => IsFrozen(AnamnesisFreezeRotation);
 
-    internal static unsafe bool IsAnamnesisScalingFrozen =>
-        AnamnesisFreezeScale != null && *AnamnesisFreezeScale == 0x90 || *AnamnesisFreezeScale == 0x00;
+    internal static unsafe bool IsAnamnesisScalingFrozen => IsFrozen(AnamnesisFreezeScale);
 
     internal static bool IsAnamnesis =>
         IsAnamnesisPositionFrozen || IsAnamnesisRotationFrozen || IsAnamnesisScalingFrozen;
@@ -32,8 +29,24 @@ public class PosingModeDetectService
 
     public unsafe PosingModeDetectService(ISigScanner sigScanner)
     {
-        AnamnesisFreezePosition = (byte*)sigScanner.ScanText("41 0F 29 24 12");
-        AnamnesisFreezeRotation = (byte*)sigScanner.ScanText("41 0F 29 5C 12 10");
-        AnamnesisFreezeScale = (byte*)sigScanner.ScanText("41 0F 29 44 12 20");
+        AnamnesisFreezePosition = TryScan(sigScanner, "41 0F 29 24 12");
+        AnamnesisFreezeRotation = TryScan(sigScanner, "41 0F 29 5C 12 10");
+        AnamnesisFreezeScale = TryScan(sigScanner, "41 0F 29 44 12 20");
+    }
+
+    private static unsafe bool IsFrozen(byte* address)
+        => address != null && (*address == 0x90 || *address == 0x00);
+
+    private static unsafe byte* TryScan(ISigScanner sigScanner, string signature)
+    {
+        try
+        {
+            return (byte*)sigScanner.ScanText(signature);
+        }
+        catch
+        {
+            // An unresolved game signature means posing-mode detection stays disabled.
+            return null;
+        }
     }
 }

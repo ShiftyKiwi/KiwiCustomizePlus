@@ -152,6 +152,12 @@ internal static unsafe class AdvancedBodyScalingFullBodyIkSystem
     private static readonly IReadOnlyDictionary<AdvancedBodyScalingFullBodyIkChain, ChainDefinition> DefinitionMap =
         Definitions.ToDictionary(definition => definition.Chain);
 
+    // A runtime solve only consumes declared chain bones. Avoid probing every live partial bone
+    // on every frame when most model data cannot influence the Full-Body IK result.
+    private static readonly HashSet<string> LiveSnapshotBoneNames = Definitions
+        .SelectMany(static definition => definition.RequiredBones.Concat(definition.OptionalTailBones.SelectMany(static group => group)))
+        .ToHashSet(StringComparer.Ordinal);
+
     private static readonly Dictionary<AdvancedBodyScalingCorrectiveRegion, AdvancedBodyScalingFullBodyIkChain[]> RegionChainMap = new()
     {
         [AdvancedBodyScalingCorrectiveRegion.NeckShoulder] = new[]
@@ -285,6 +291,17 @@ internal static unsafe class AdvancedBodyScalingFullBodyIkSystem
             summary);
     }
 
+    /// <summary>
+    /// Reapplies the latest validated/smoothed correction set without rebuilding the expensive
+    /// live-chain snapshot and solve. The caller is responsible for choosing a conservative
+    /// cadence; this method never creates or changes corrections.
+    /// </summary>
+    public static void ApplyCachedCorrections(
+        CharacterBase* cBase,
+        Armature armature,
+        IReadOnlyDictionary<string, BoneTransform> corrections)
+        => ApplyCorrections(cBase, armature, corrections);
+
     public static IReadOnlyList<AdvancedBodyScalingFullBodyIkEstimate> EstimateStaticSupport(
         IReadOnlyDictionary<string, BoneTransform> transforms,
         AdvancedBodyScalingSettings settings)
@@ -405,7 +422,7 @@ internal static unsafe class AdvancedBodyScalingFullBodyIkSystem
         var snapshot = new Dictionary<string, BoneSnapshot>(StringComparer.Ordinal);
         foreach (var bone in armature.GetAllBones())
         {
-            if (snapshot.ContainsKey(bone.BoneName))
+            if (!LiveSnapshotBoneNames.Contains(bone.BoneName) || snapshot.ContainsKey(bone.BoneName))
                 continue;
 
             var transform = bone.GetGameTransform(cBase, ModelBone.PoseType.Model);
@@ -419,7 +436,8 @@ internal static unsafe class AdvancedBodyScalingFullBodyIkSystem
                 Position = transform.Translation.ToVector3(),
                 Rotation = Quaternion.Normalize(transform.Rotation.ToQuaternion()),
                 Scale = transform.Scale.ToVector3(),
-                AppliedTransform = armature.GetAppliedBoneTransform(bone.BoneName),
+                AppliedTransform = bone.AppliedTransform
+                    ?? (armature.ResolvedBoneTransforms.TryGetValue(bone.BoneName, out var resolved) ? resolved : null),
             };
         }
 

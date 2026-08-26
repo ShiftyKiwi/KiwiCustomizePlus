@@ -122,14 +122,12 @@ public sealed class SemanticBodyGoalService
         BoneTransform? existingTransform,
         IReadOnlySet<string> liveBoneNames)
     {
-        if (BoneData.GetBoneFamily(boneName) == BoneData.BoneFamily.Unknown)
+        var metadata = BoneData.GetMetadata(boneName);
+        if (metadata.Origin == BoneOrigin.UnknownCustom)
             return "Unknown/custom bone skipped.";
 
-        if (!BoneData.IsDefaultBone(boneName))
-            return "Non-default or modded bone skipped.";
-
-        if (BoneData.IsIVCSCompatibleBone(boneName))
-            return "IVCS/modded-compatible bone skipped by MVP safety rules.";
+        if (!metadata.HasTrust(BoneAutomationTrust.SemanticSafe))
+            return $"{metadata.Origin} {metadata.Role} bone skipped by semantic safety policy.";
 
         if (liveBoneNames.Count > 0 && !liveBoneNames.Contains(boneName))
             return "Bone is not present on the current preview skeleton.";

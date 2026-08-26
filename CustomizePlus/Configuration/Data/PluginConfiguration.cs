@@ -30,6 +30,11 @@ public class PluginConfiguration : IPluginConfiguration, ISavable
 
     public bool DebuggingModeEnabled { get; set; }
 
+    // DEBUG-only AgentBridge state. The package protects the access token before persistence.
+    public string AgentBridgePluginInstanceId { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string AgentBridgeProtectedAccessToken { get; set; } = string.Empty;
+
     /// <summary>
     /// Id of the default profile applied to all characters without any profile. Can be set to Empty to disable this feature.
     /// </summary>

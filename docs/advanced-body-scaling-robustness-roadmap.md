@@ -76,19 +76,20 @@ Notes:
 - Manual control remains available.
 
 ## Phase 4 - Data-Driven Per-Bone Importance Weighting
-Status: TODO scaffolding only.
+Status: Implemented.
 
-Planned direction:
-- If supported mesh/skin-weight data is available, compute per-bone importance for supported deform bones only.
-- Use it to improve smoothing, guardrail strength, propagation defaults, and extremity down-weighting.
-- Cache results and fall back to existing heuristics when data is unavailable.
+Delivered:
+- Supported model/skin influence analysis with conservative Stage 1 participation and Stage 2 skin-weight paths.
+- Penumbra-aware resolved model discovery, multi-slot aggregation, cache invalidation, and safe heuristic fallback.
+- Area-aware and structural-classification refinement, plus confidence-weighted slot aggregation.
+- Crowd-safe actor eligibility, stable-cache reuse, and explicit source/refresh diagnostics.
 
 Guardrails:
-- Do not depend on IVCS2-only or unsupported physics-bone targets.
-- Degrade safely to current heuristics when mesh-weight access is unavailable.
+- Only validated supported deform bones participate in automation.
+- Model data remains advisory; unavailable, partial, or unsupported data falls back safely without granting custom bones automation trust.
 
 ## Phase 5 - Optional Collision-Risk Warnings
-Status: TODO scaffolding only.
+Status: Deferred.
 
 Planned direction:
 - Add lightweight warnings for likely clipping/problem zones:

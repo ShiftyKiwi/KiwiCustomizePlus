@@ -3,7 +3,7 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
     <AssemblyTitle>CustomizePlus</AssemblyTitle>
-    <Version>3.1.0</Version>
+    <Version>4.0.0</Version>
     <Description>Customize+</Description>
     <Copyright></Copyright>
     <PackageProjectUrl>https://github.com/ShiftyKiwi/KiwiCustomizePlus</PackageProjectUrl>
@@ -39,6 +39,13 @@
     <ProjectReference Include="..\CustomizePlus.GameData\CustomizePlus.GameData.csproj" />
     <ProjectReference Include="..\submodules\ECommonsLite\ECommonsLite\ECommonsLite.csproj" />
     <ProjectReference Include="..\submodules\OtterGui\OtterGui.csproj" />
+  </ItemGroup>
+
+  <!-- Keep the lock-file dependency stable while excluding the bridge from non-Debug assets. -->
+  <ItemGroup>
+    <PackageReference Include="Franthropy.AgentBridge" Version="0.1.0" PrivateAssets="all">
+      <ExcludeAssets Condition="'$(Configuration)'!='Debug'">all</ExcludeAssets>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>

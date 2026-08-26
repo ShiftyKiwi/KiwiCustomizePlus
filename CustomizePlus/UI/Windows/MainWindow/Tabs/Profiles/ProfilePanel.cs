@@ -324,6 +324,78 @@ public class ProfilePanel
         void ToggleOverride(Action<AdvancedBodyScalingOverrides> update)
             => _manager.UpdateAdvancedBodyScalingOverrides(profile, settings => update(settings.Overrides));
 
+        var overrides = profile.AdvancedBodyScalingOverrides.Overrides;
+
+        void DrawShapeConditioningBooleanOverride(
+            string label,
+            string id,
+            string tooltip,
+            Func<AdvancedBodyScalingOverrides, bool?> getOverride,
+            Func<AdvancedBodyScalingSettings, bool> getGlobal,
+            Action<AdvancedBodyScalingOverrides, bool?> setOverride)
+        {
+            var current = getOverride(overrides);
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted(label);
+            ImGui.TableNextColumn();
+            if (current.HasValue)
+            {
+                var enabled = current.Value;
+                if (ImGui.Checkbox($"##ProfileAdvScaling{id}", ref enabled))
+                    ToggleOverride(settings => setOverride(settings, enabled));
+            }
+            else
+            {
+                var enabled = getGlobal(globalSettings);
+                using (ImRaii.Disabled())
+                    ImGui.Checkbox($"##ProfileAdvScaling{id}", ref enabled);
+            }
+            CtrlHelper.AddHoverText(tooltip);
+            ImGui.TableNextColumn();
+            var enabledOverride = current.HasValue;
+            if (ImGui.Checkbox($"##ProfileAdvScaling{id}Override", ref enabledOverride))
+                ToggleOverride(settings => setOverride(settings, enabledOverride ? getGlobal(globalSettings) : null));
+        }
+
+        void DrawShapeConditioningStrengthOverride(
+            string label,
+            string id,
+            string tooltip,
+            Func<AdvancedBodyScalingOverrides, float?> getOverride,
+            Func<AdvancedBodyScalingSettings, float> getGlobal,
+            Action<AdvancedBodyScalingOverrides, float?> setOverride)
+        {
+            var current = getOverride(overrides);
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted(label);
+            ImGui.TableNextColumn();
+            if (current.HasValue)
+            {
+                var value = current.Value;
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.SliderFloat($"##ProfileAdvScaling{id}", ref value, 0f, 1f, "%.2f"))
+                    ToggleOverride(settings => setOverride(settings, value));
+            }
+            else
+            {
+                var value = getGlobal(globalSettings);
+                using (ImRaii.Disabled())
+                {
+                    ImGui.SetNextItemWidth(-1);
+                    ImGui.SliderFloat($"##ProfileAdvScaling{id}", ref value, 0f, 1f, "%.2f");
+                }
+            }
+            CtrlHelper.AddHoverText(tooltip);
+            ImGui.TableNextColumn();
+            var enabledOverride = current.HasValue;
+            if (ImGui.Checkbox($"##ProfileAdvScaling{id}Override", ref enabledOverride))
+                ToggleOverride(settings => setOverride(settings, enabledOverride ? getGlobal(globalSettings) : null));
+        }
+
         void UpdateRegionOverride(AdvancedBodyRegion region, Action<AdvancedBodyScalingRegionProfileOverrides> update)
             => _manager.UpdateAdvancedBodyScalingOverrides(profile, settings =>
             {
@@ -404,7 +476,6 @@ public class ProfilePanel
                     overrides.MotionWarpingChainOverrides.Remove(chain);
             });
 
-        var overrides = profile.AdvancedBodyScalingOverrides.Overrides;
         using (var table = ImRaii.Table(
                    "ProfileAdvancedBodyScaling",
                    3,
@@ -557,6 +628,186 @@ public class ProfilePanel
             var massOverride = overrides.MassRedistributionStrength.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingMassOverride", ref massOverride))
                 ToggleOverride(o => o.MassRedistributionStrength = massOverride ? globalSettings.MassRedistributionStrength : null);
+
+            // Bilateral consistency
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Bilateral consistency");
+            ImGui.TableNextColumn();
+            if (overrides.BilateralConsistencyEnabled.HasValue)
+            {
+                var enabled = overrides.BilateralConsistencyEnabled.Value;
+                if (ImGui.Checkbox("##ProfileAdvScalingBilateralConsistency", ref enabled))
+                    ToggleOverride(o => o.BilateralConsistencyEnabled = enabled);
+            }
+            else
+            {
+                var enabled = globalSettings.BilateralConsistencyEnabled;
+                using (ImRaii.Disabled())
+                    ImGui.Checkbox("##ProfileAdvScalingBilateralConsistency", ref enabled);
+            }
+            CtrlHelper.AddHoverText("Keeps corresponding left/right automatic shaping adjustments consistent only when the authored side inputs are equivalent. Explicit asymmetric intent remains untouched.");
+            ImGui.TableNextColumn();
+            var bilateralConsistencyOverride = overrides.BilateralConsistencyEnabled.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingBilateralConsistencyOverride", ref bilateralConsistencyOverride))
+                ToggleOverride(o => o.BilateralConsistencyEnabled = bilateralConsistencyOverride ? globalSettings.BilateralConsistencyEnabled : null);
+
+            // Proportional balance
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Proportional balance");
+            ImGui.TableNextColumn();
+            if (overrides.ProportionalBalanceEnabled.HasValue)
+            {
+                var enabled = overrides.ProportionalBalanceEnabled.Value;
+                if (ImGui.Checkbox("##ProfileAdvScalingProportional", ref enabled))
+                    ToggleOverride(o => o.ProportionalBalanceEnabled = enabled);
+            }
+            else
+            {
+                var enabled = globalSettings.ProportionalBalanceEnabled;
+                using (ImRaii.Disabled())
+                    ImGui.Checkbox("##ProfileAdvScalingProportional", ref enabled);
+            }
+            CtrlHelper.AddHoverText("Adds bounded automatic support between related body regions. Explicit rows, locks, pinned axes, and deliberate contrasts remain authoritative.");
+            ImGui.TableNextColumn();
+            var proportionalEnabledOverride = overrides.ProportionalBalanceEnabled.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingProportionalOverride", ref proportionalEnabledOverride))
+                ToggleOverride(o => o.ProportionalBalanceEnabled = proportionalEnabledOverride ? globalSettings.ProportionalBalanceEnabled : null);
+
+            // Proportional balance strength
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Balance strength");
+            ImGui.TableNextColumn();
+            if (overrides.ProportionalBalanceStrength.HasValue)
+            {
+                var value = overrides.ProportionalBalanceStrength.Value;
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.SliderFloat("##ProfileAdvScalingProportionalStrength", ref value, 0f, 1f, "%.2f"))
+                    ToggleOverride(o => o.ProportionalBalanceStrength = value);
+            }
+            else
+            {
+                var value = globalSettings.ProportionalBalanceStrength;
+                using (ImRaii.Disabled())
+                {
+                    ImGui.SetNextItemWidth(-1);
+                    ImGui.SliderFloat("##ProfileAdvScalingProportionalStrength", ref value, 0f, 1f, "%.2f");
+                }
+            }
+            CtrlHelper.AddHoverText("Limits the proportional support adjustment. It does not impose an ideal body ratio.");
+            ImGui.TableNextColumn();
+            var proportionalStrengthOverride = overrides.ProportionalBalanceStrength.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingProportionalStrengthOverride", ref proportionalStrengthOverride))
+                ToggleOverride(o => o.ProportionalBalanceStrength = proportionalStrengthOverride ? globalSettings.ProportionalBalanceStrength : null);
+
+            // Surface smoothness
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Surface smoothness");
+            ImGui.TableNextColumn();
+            if (overrides.SurfaceSmoothnessEnabled.HasValue)
+            {
+                var enabled = overrides.SurfaceSmoothnessEnabled.Value;
+                if (ImGui.Checkbox("##ProfileAdvScalingSurfaceSmoothness", ref enabled))
+                    ToggleOverride(o => o.SurfaceSmoothnessEnabled = enabled);
+            }
+            else
+            {
+                var enabled = globalSettings.SurfaceSmoothnessEnabled;
+                using (ImRaii.Disabled())
+                    ImGui.Checkbox("##ProfileAdvScalingSurfaceSmoothness", ref enabled);
+            }
+            CtrlHelper.AddHoverText("Runs one conservative bone-space smoothing pass on automatically generated body-support transforms only. Explicit, locked, pinned, unknown, clothing, prop, wing, and tongue bones are excluded.");
+            ImGui.TableNextColumn();
+            var surfaceSmoothnessOverride = overrides.SurfaceSmoothnessEnabled.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingSurfaceSmoothnessOverride", ref surfaceSmoothnessOverride))
+                ToggleOverride(o => o.SurfaceSmoothnessEnabled = surfaceSmoothnessOverride ? globalSettings.SurfaceSmoothnessEnabled : null);
+
+            // Surface smoothness strength
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Smoothness strength");
+            ImGui.TableNextColumn();
+            if (overrides.SurfaceSmoothnessStrength.HasValue)
+            {
+                var value = overrides.SurfaceSmoothnessStrength.Value;
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.SliderFloat("##ProfileAdvScalingSurfaceSmoothnessStrength", ref value, 0f, 1f, "%.2f"))
+                    ToggleOverride(o => o.SurfaceSmoothnessStrength = value);
+            }
+            else
+            {
+                var value = globalSettings.SurfaceSmoothnessStrength;
+                using (ImRaii.Disabled())
+                {
+                    ImGui.SetNextItemWidth(-1);
+                    ImGui.SliderFloat("##ProfileAdvScalingSurfaceSmoothnessStrength", ref value, 0f, 1f, "%.2f");
+                }
+            }
+            CtrlHelper.AddHoverText("Controls the bounded amount of automatic gradient smoothing while preserving the automatic field's regional magnitude.");
+            ImGui.TableNextColumn();
+            var surfaceSmoothnessStrengthOverride = overrides.SurfaceSmoothnessStrength.HasValue;
+            if (ImGui.Checkbox("##ProfileAdvScalingSurfaceSmoothnessStrengthOverride", ref surfaceSmoothnessStrengthOverride))
+                ToggleOverride(o => o.SurfaceSmoothnessStrength = surfaceSmoothnessStrengthOverride ? globalSettings.SurfaceSmoothnessStrength : null);
+
+            DrawShapeConditioningBooleanOverride(
+                "Cross-section conditioning", "CrossSectionConditioning",
+                "Conditions only automatically generated body-support scale-axis distortion. Explicit rows, locks, pins, and untrusted roles remain unchanged.",
+                static value => value.CrossSectionConditioningEnabled,
+                static value => value.CrossSectionConditioningEnabled,
+                static (value, enabled) => value.CrossSectionConditioningEnabled = enabled);
+            DrawShapeConditioningStrengthOverride(
+                "Cross-section strength", "CrossSectionConditioningStrength",
+                "Controls the bounded log-space cross-section refinement for trusted automatic receivers.",
+                static value => value.CrossSectionConditioningStrength,
+                static value => value.CrossSectionConditioningStrength,
+                static (value, strength) => value.CrossSectionConditioningStrength = strength);
+
+            DrawShapeConditioningBooleanOverride(
+                "Shape fairness", "ShapeFairness",
+                "Applies one bounded curvature pass over curated automatic body chains. It leaves explicit anchors and excluded roles untouched.",
+                static value => value.ShapeFairnessEnabled,
+                static value => value.ShapeFairnessEnabled,
+                static (value, enabled) => value.ShapeFairnessEnabled = enabled);
+            DrawShapeConditioningStrengthOverride(
+                "Fairness strength", "ShapeFairnessStrength",
+                "Controls the bounded second-order continuity correction for automatic support bones.",
+                static value => value.ShapeFairnessStrength,
+                static value => value.ShapeFairnessStrength,
+                static (value, strength) => value.ShapeFairnessStrength = strength);
+
+            DrawShapeConditioningBooleanOverride(
+                "Local volume intent", "LocalVolumeIntent",
+                "Uses the explicit primary region only as a log-volume anchor. It never targets an ideal body volume.",
+                static value => value.LocalVolumeIntentEnabled,
+                static value => value.LocalVolumeIntentEnabled,
+                static (value, enabled) => value.LocalVolumeIntentEnabled = enabled);
+            DrawShapeConditioningStrengthOverride(
+                "Volume intent strength", "LocalVolumeIntentStrength",
+                "Controls the bounded automatic support used to maintain a requested local enlargement or reduction.",
+                static value => value.LocalVolumeIntentStrength,
+                static value => value.LocalVolumeIntentStrength,
+                static (value, strength) => value.LocalVolumeIntentStrength = strength);
+
+            DrawShapeConditioningBooleanOverride(
+                "Pose-aware joint correctives", "PoseAwareJointCorrectives",
+                "Adds lightweight, runtime-only support around trusted elbow, knee, shoulder, and hip transitions. It does not rebuild the static deformation field per frame.",
+                static value => value.PoseAwareJointCorrectivesEnabled,
+                static value => value.PoseAwareJointCorrectivesEnabled,
+                static (value, enabled) => value.PoseAwareJointCorrectivesEnabled = enabled);
+            DrawShapeConditioningStrengthOverride(
+                "Joint corrective strength", "PoseAwareJointCorrectivesStrength",
+                "Controls the bounded pose-aware scale support applied only to eligible automatic joint-transition receivers.",
+                static value => value.PoseAwareJointCorrectivesStrength,
+                static value => value.PoseAwareJointCorrectivesStrength,
+                static (value, strength) => value.PoseAwareJointCorrectivesStrength = strength);
 
             // Proportion guardrail mode
             ImGui.TableNextRow();
@@ -2452,7 +2703,7 @@ public class ProfilePanel
         if (_selector.Selected!.Templates.Count > 1)
             ImGui.TextDisabled("Template weight only matters when multiple enabled templates affect the same bone.");
 
-        using var table = ImRaii.Table("TemplateTable", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX | ImGuiTableFlags.ScrollY);
+        using var table = ImRaii.Table("TemplateTable", 7, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX | ImGuiTableFlags.ScrollY);
         if (!table)
             return;
 
@@ -2462,6 +2713,7 @@ public class ProfilePanel
 
         ImGui.TableSetupColumn("Template", ImGuiTableColumnFlags.WidthFixed, 220 * ImGuiHelpers.GlobalScale);
         ImGui.TableSetupColumn("Weight", ImGuiTableColumnFlags.WidthFixed, 120 * ImGuiHelpers.GlobalScale);
+        ImGui.TableSetupColumn("Compatibility", ImGuiTableColumnFlags.WidthFixed, 120 * ImGuiHelpers.GlobalScale);
 
         ImGui.TableSetupColumn("##editbtn", ImGuiTableColumnFlags.WidthFixed, 120 * ImGuiHelpers.GlobalScale);
 
@@ -2502,6 +2754,31 @@ public class ProfilePanel
             if (ImGui.SliderFloat("##Weight", ref weightPercent, 0f, 100f, "%.0f%%"))
                 _endAction = () => _manager.SetTemplateWeight(_selector.Selected!, idx, weightPercent / 100f);
             ImGuiUtil.HoverTooltip("Blend weight for this template when multiple templates affect the same bone.");
+
+            ImGui.TableNextColumn();
+            var requirement = _selector.Selected!.GetTemplateCompatibilityRequirement(template.UniqueId);
+            var selectedRequirement = requirement.RequiredAll;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.BeginCombo("##Compatibility", requirement.ToDisplayString()))
+            {
+                foreach (var capability in new[]
+                {
+                    SkeletonCapability.None,
+                    SkeletonCapability.IVCS1,
+                    SkeletonCapability.IVCS2,
+                    SkeletonCapability.YAS,
+                    SkeletonCapability.NFLB,
+                    SkeletonCapability.Skelomae,
+                })
+                {
+                    var label = capability == SkeletonCapability.None ? "Always" : capability.ToString();
+                    if (ImGui.Selectable(label, selectedRequirement == capability))
+                        _endAction = () => _manager.SetTemplateCompatibilityRequirement(
+                            _selector.Selected!, idx, new TemplateCompatibilityRequirement(capability));
+                }
+                ImGui.EndCombo();
+            }
+            ImGuiUtil.HoverTooltip("Controls when this template contributes. Unsupported templates remain saved and become active automatically when their required capability is present.");
 
             ImGui.TableNextColumn();
 

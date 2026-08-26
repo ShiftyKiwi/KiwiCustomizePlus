@@ -15,6 +15,7 @@ They are loaded from:
 - Show support class notes such as `ManualOnly`, `KnownModded`, or `Risky`.
 - Provide local risk notes for troubleshooting.
 - Store mirror or parent notes for future design discussion.
+- Export compact Unknown Bone Workbench evidence for later registry review.
 
 ## What Metadata Cannot Do
 
@@ -30,12 +31,16 @@ Metadata is advisory only. It does not grant runtime trust and does not affect:
 - Mare/Synchronos-facing behavior.
 
 Built-in Customize+ bone data remains authoritative for supported known bones.
+Local entries targeting a known curated bone are ignored. Candidate mirror and
+parent fields are documentation only; they are never used as runtime topology.
 
 ## Schema Version 1
 
 ```json
 {
   "schemaVersion": 1,
+  "packId": "example-local-pack",
+  "packVersion": "0.1",
   "packName": "Example Local Pack",
   "packAuthor": "Local user",
   "source": "Local notes",
@@ -51,7 +56,12 @@ Built-in Customize+ bone data remains authoritative for supported known bones.
       "manualOnly": true,
       "allowSearchAlias": true,
       "mirrorPartner": "",
-      "parentOverride": ""
+      "parentOverride": "",
+      "candidateOrigin": "UnknownCustom",
+      "candidateFunctionalRole": "Unknown",
+      "candidateBodyRegion": "Unknown",
+      "candidateAutomationTrust": "ManualOnly",
+      "trustLevel": "ManualExtension"
     }
   ]
 }

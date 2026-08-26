@@ -688,7 +688,8 @@ internal static class AdvancedBodyScalingPipeline
     private static bool IsBodyBone(string boneName)
     {
         var family = BoneData.GetBoneFamily(boneName);
-        return BodyFamilies.Contains(family);
+        return BodyFamilies.Contains(family)
+            && BoneData.HasAutomationTrust(boneName, BoneAutomationTrust.AdvancedCorrectiveSafe);
     }
 
     private static void ExpandNeighbors(string source, int depth, HashSet<string> output)
@@ -1568,17 +1569,27 @@ internal sealed class BoneDependencyGraph
     {
         foreach (var bone in BoneData.GetBoneCodenames())
         {
-            foreach (var child in BoneData.GetChildren(bone))
-                AddEdge(bone, child, ParentChildWeight);
+            if (!BoneData.HasAutomationTrust(bone, BoneAutomationTrust.PropagationSafe))
+                continue;
 
-            var mirror = BoneData.GetBoneMirror(bone);
+            foreach (var child in BoneData.GetChildren(bone))
+            {
+                if (BoneData.HasAutomationTrust(child, BoneAutomationTrust.PropagationSafe))
+                    AddEdge(bone, child, ParentChildWeight);
+            }
+
+            var mirror = BoneData.GetAutomationMirror(bone);
             if (!string.IsNullOrEmpty(mirror))
                 AddEdge(bone, mirror, MirrorWeight);
         }
 
         foreach (var parent in BoneData.GetBoneCodenames())
         {
+            if (!BoneData.HasAutomationTrust(parent, BoneAutomationTrust.PropagationSafe))
+                continue;
+
             var children = BoneData.GetChildren(parent);
+            children = children.Where(child => BoneData.HasAutomationTrust(child, BoneAutomationTrust.PropagationSafe)).ToArray();
             if (children.Length < 2)
                 continue;
 
