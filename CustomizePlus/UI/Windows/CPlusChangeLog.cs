@@ -55,6 +55,7 @@ public class CPlusChangeLog
         Add3_0_3(Changelog);
         Add3_1_0(Changelog);
         Add4_0_0(Changelog);
+        Add4_1_0(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -96,6 +97,14 @@ public class CPlusChangeLog
         .RegisterEntry("Analysis and previews use safe working copies, and their changes can be applied or reverted through the shared editor history.", 1)
         .RegisterImportant("Local metadata packs are advisory only. Unknown/custom bones do not gain automatic mirroring, propagation, guardrail, BIW, or write authority.")
         .RegisterImportant("Customize+ remains the plugin name and CustomizePlus remains its internal, DLL, configuration, and IPC/API identity.");
+
+    private static void Add4_1_0(Changelog log)
+        => log.NextVersion("Version 4.1.0")
+        .RegisterHighlight("Added opt-in Hierarchical Shaping for small, bounded scale-only continuity support across compatible body chains.")
+        .RegisterEntry("Supports chest/shoulder/upper-arm, ribs/abdomen/waist, and pelvis/thigh/knee/calf chains with revision-gated cached rebuilds.", 1)
+        .RegisterEntry("Hierarchical Shaping and its optional 1% authored relaxation can be controlled globally or per profile.", 1)
+        .RegisterImportant("Explicit authored rows remain exact by default. Locks, pins, unsupported or unknown bones, clothing, props, and untrusted controls remain excluded.")
+        .RegisterEntry("Global Neck/Shoulder Baseline no longer uniquely opens by default.");
 
     private static void Add3_0_2(Changelog log)
         => log.NextVersion("Version 3.0.2")
