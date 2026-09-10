@@ -91,6 +91,8 @@ public sealed class AdvancedBodyScalingOverrides
     public float? SurfaceBalancingStrength { get; set; }
     public float? MassRedistributionStrength { get; set; }
     public bool? BilateralConsistencyEnabled { get; set; }
+    public bool? HierarchicalShapingEnabled { get; set; }
+    public bool? HierarchicalAuthoredRelaxationEnabled { get; set; }
     public bool? ProportionalBalanceEnabled { get; set; }
     public float? ProportionalBalanceStrength { get; set; }
     public bool? SurfaceSmoothnessEnabled { get; set; }
@@ -263,6 +265,12 @@ public sealed class AdvancedBodyScalingOverrides
 
         if (BilateralConsistencyEnabled.HasValue)
             merged.BilateralConsistencyEnabled = BilateralConsistencyEnabled.Value;
+
+        if (HierarchicalShapingEnabled.HasValue)
+            merged.HierarchicalShapingEnabled = HierarchicalShapingEnabled.Value;
+
+        if (HierarchicalAuthoredRelaxationEnabled.HasValue)
+            merged.HierarchicalAuthoredRelaxationEnabled = HierarchicalAuthoredRelaxationEnabled.Value;
 
         if (ProportionalBalanceEnabled.HasValue)
             merged.ProportionalBalanceEnabled = ProportionalBalanceEnabled.Value;
@@ -447,6 +455,8 @@ public sealed class AdvancedBodyScalingOverrides
             SurfaceBalancingStrength = SurfaceBalancingStrength,
             MassRedistributionStrength = MassRedistributionStrength,
             BilateralConsistencyEnabled = BilateralConsistencyEnabled,
+            HierarchicalShapingEnabled = HierarchicalShapingEnabled,
+            HierarchicalAuthoredRelaxationEnabled = HierarchicalAuthoredRelaxationEnabled,
             ProportionalBalanceEnabled = ProportionalBalanceEnabled,
             ProportionalBalanceStrength = ProportionalBalanceStrength,
             SurfaceSmoothnessEnabled = SurfaceSmoothnessEnabled,

@@ -758,6 +758,19 @@ public class ProfilePanel
                 ToggleOverride(o => o.SurfaceSmoothnessStrength = surfaceSmoothnessStrengthOverride ? globalSettings.SurfaceSmoothnessStrength : null);
 
             DrawShapeConditioningBooleanOverride(
+                "Hierarchical shaping", "HierarchicalShaping",
+                "Runs the optional final scale-only continuity layer for curated vanilla body chains. It remains derived at binding rebuild time and never changes saved template rows.",
+                static value => value.HierarchicalShapingEnabled,
+                static value => value.HierarchicalShapingEnabled,
+                static (value, enabled) => value.HierarchicalShapingEnabled = enabled);
+            DrawShapeConditioningBooleanOverride(
+                "Authored relaxation (1% max)", "HierarchicalAuthoredRelaxation",
+                "Allows only a session-only correction of at most 1% for explicit unlocked, unpinned curated body rows. With this off, explicit authored rows remain hard constraints.",
+                static value => value.HierarchicalAuthoredRelaxationEnabled,
+                static value => value.HierarchicalAuthoredRelaxationEnabled,
+                static (value, enabled) => value.HierarchicalAuthoredRelaxationEnabled = enabled);
+
+            DrawShapeConditioningBooleanOverride(
                 "Cross-section conditioning", "CrossSectionConditioning",
                 "Conditions only automatically generated body-support scale-axis distortion. Explicit rows, locks, pins, and untrusted roles remain unchanged.",
                 static value => value.CrossSectionConditioningEnabled,

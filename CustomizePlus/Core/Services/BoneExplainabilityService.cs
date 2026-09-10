@@ -261,6 +261,19 @@ public sealed class BoneExplainabilityService
                 }
             }
         }
+        var hierarchical = armature?.HierarchicalShapingDiagnostics;
+        if (hierarchical?.ContributionScaleDeltas.TryGetValue(boneName, out var hierarchicalDelta) == true)
+        {
+            var region = hierarchical.ContributionRegions.TryGetValue(boneName, out var contributionRegion)
+                ? contributionRegion
+                : "curated body chain";
+            stages.Add(new(
+                "Hierarchical shaping",
+                hierarchicalDelta,
+                $"Recorded bounded scale-only continuity support for {region}. It is rebuilt from current inputs and is never persisted to the template.",
+                true,
+                BoneTransformStageKind.AdditiveDelta));
+        }
         if (importance.HasValue)
             stages.Add(new("BIW attenuation factor", new Vector3(importance.Value), "A weighting factor for optional automatic work; it is not a transform and never overrides explicit rows.", importance.Value > 0f, BoneTransformStageKind.Factor));
         if (armature?.TryGetPoseCorrectiveScale(boneName, out var runtimeMultiplier) == true)
