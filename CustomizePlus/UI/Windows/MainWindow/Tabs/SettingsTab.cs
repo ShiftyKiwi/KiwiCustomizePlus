@@ -615,6 +615,10 @@ public class SettingsTab
         DrawWrappedDisabledValue("Cross-section conditioning", $"enabled {solver.CrossSectionConditioningEnabled}; strength {solver.CrossSectionConditioningStrength:0.00}; affected bones {solver.CrossSectionAffectedBoneCount}; anisotropy {solver.MaximumCrossSectionAnisotropyBefore:0.000}->{solver.MaximumCrossSectionAnisotropyAfter:0.000}; max correction {solver.MaximumCrossSectionCorrection:0.000}; constrained/untrusted skips {solver.CrossSectionSkippedUntrustedOrConstrainedCount}");
         DrawWrappedDisabledValue("Shape fairness", $"enabled {solver.ShapeFairnessEnabled}; strength {solver.ShapeFairnessStrength:0.00}; chains {(solver.ShapeFairnessChains.Count == 0 ? "none" : string.Join(", ", solver.ShapeFairnessChains))}; affected bones {solver.ShapeFairnessAffectedBoneCount}; curvature {solver.MaximumFairnessSecondDifferenceBefore:0.000}->{solver.MaximumFairnessSecondDifferenceAfter:0.000}; max correction {solver.MaximumFairnessCorrection:0.000}; magnitude error {solver.FairnessMagnitudePreservationError:0.000}");
         DrawWrappedDisabledValue("Local volume intent", $"enabled {solver.LocalVolumeIntentEnabled}; strength {solver.LocalVolumeIntentStrength:0.00}; regions {(solver.LocalVolumeIntentRegions.Count == 0 ? "none" : string.Join(", ", solver.LocalVolumeIntentRegions))}; log-volume error {solver.MaximumVolumeErrorBefore:0.000}->{solver.MaximumVolumeErrorAfter:0.000}; max correction {solver.MaximumVolumeAxisCorrection:0.000}; constrained/untrusted skips {solver.LocalVolumeIntentSkippedUntrustedOrConstrainedCount}");
+        var hierarchical = armature.HierarchicalShapingDiagnostics;
+        DrawWrappedDisabledValue("Hierarchical shaping", $"enabled {hierarchical.Enabled}; authored relaxation {hierarchical.AuthoredRelaxationEnabled} (max {AdvancedBodyScalingHierarchicalShapingSystem.MaximumAuthoredRelaxationPercent:0}%); regions {hierarchical.AppliedRegionCount}/{hierarchical.Regions.Count}; corrected bones {hierarchical.CorrectedBoneCount}; max delta {hierarchical.MaximumScaleDelta:0.0000}; cache {hierarchical.CacheKey}");
+        foreach (var region in hierarchical.Regions)
+            DrawWrappedDisabledValue($"  {region.Region}", $"{region.Status}; {region.Reason}");
         var jointCorrectives = armature.PoseAwareJointCorrectiveDebugState;
         DrawWrappedDisabledValue("Pose-aware joint correctives", $"enabled {jointCorrectives.Enabled}; active {jointCorrectives.Active}; strength {jointCorrectives.Strength:0.00}; categories {(jointCorrectives.ActiveCategories.Count == 0 ? "none" : string.Join(", ", jointCorrectives.ActiveCategories))}; eligible/corrected joints {jointCorrectives.EligibleJointCount}/{jointCorrectives.CorrectedJointCount}; max weight/correction {jointCorrectives.MaximumPoseWeight:0.000}/{jointCorrectives.MaximumCorrection:0.000}; writes {jointCorrectives.WriteCount}; safety skips {jointCorrectives.SafetySkipCount}; {jointCorrectives.EvaluationMilliseconds:0.000} ms");
         DrawWrappedDisabledValue("Extension automation", $"IVCS2 {solver.AutomatedIvcs2Controls}; YAS {solver.AutomatedYasControls}; NFLB body {solver.AutomatedNflbBodyControls}; Skelomae body {solver.AutomatedSkelomaeBodyControls}; clothing 0; props 0; tongue 0; wings 0");
@@ -1049,6 +1053,9 @@ public class SettingsTab
             DrawBoneImportanceWeightingSettings(settings);
 
             ImGui.Spacing();
+            DrawHierarchicalShapingSettings(settings);
+
+            ImGui.Spacing();
             DrawNeckCompensationSettings(settings);
 
             ImGui.Spacing();
@@ -1205,6 +1212,57 @@ public class SettingsTab
         }
     }
 
+    private void DrawHierarchicalShapingSettings(AdvancedBodyScalingSettings settings)
+    {
+        if (!ImGui.CollapsingHeader("Hierarchical Shaping"))
+            return;
+
+        ImGui.TextDisabled("Optional final scale-only continuity support for curated body chains. It is recomputed only when the validated template binding rebuilds and is never saved into your template.");
+
+        var enabled = settings.HierarchicalShapingEnabled;
+        if (ImGui.Checkbox("Enable hierarchical shaping", ref enabled))
+        {
+            var previous = settings.HierarchicalShapingEnabled;
+            settings.HierarchicalShapingEnabled = enabled;
+            _configuration.Save();
+            _armatureManager.RebindAllArmatures();
+            RecordGlobalAdvancedScalingChange("Hierarchical shaping", GetEnabledStateLabel(previous), GetEnabledStateLabel(enabled), "hierarchical-shaping");
+        }
+        CtrlHelper.AddHoverText("Uses bounded scale-only continuity support across chest/shoulder/upper-arm, ribs/abdomen/waist, and pelvis/thigh/knee/calf chains. Only validated vanilla structural bones participate; it never touches clothing, props, extensions, unknown bones, locks, or pinned axes.");
+
+        using (ImRaii.Disabled(!settings.HierarchicalShapingEnabled))
+        {
+            var relaxation = settings.HierarchicalAuthoredRelaxationEnabled;
+            if (ImGui.Checkbox("Allow bounded authored relaxation (1% max)", ref relaxation))
+            {
+                var previous = settings.HierarchicalAuthoredRelaxationEnabled;
+                settings.HierarchicalAuthoredRelaxationEnabled = relaxation;
+                _configuration.Save();
+                _armatureManager.RebindAllArmatures();
+                RecordGlobalAdvancedScalingChange("Hierarchical authored relaxation", GetEnabledStateLabel(previous), GetEnabledStateLabel(relaxation), "hierarchical-authored-relaxation");
+            }
+        }
+        CtrlHelper.AddHoverText("Off: every explicit authored scale row is a hard constraint. On: only explicit unlocked, unpinned curated body rows may receive a session-only correction of at most 1%. No relaxed value is written back to a template.");
+
+        var liveArmature = _armatureManager.Armatures.Values
+            .FirstOrDefault(armature => armature.ActiveAdvancedBodyScalingSettings?.HierarchicalShapingEnabled == true);
+        if (liveArmature == null)
+            return;
+
+        var diagnostics = liveArmature.HierarchicalShapingDiagnostics;
+        DrawWrappedDisabledValue(
+            "Live result",
+            diagnostics.CorrectedBoneCount == 0
+                ? "No correction applied. See the region status below for the safe refusal reason."
+                : $"{diagnostics.AppliedRegionCount} region(s), {diagnostics.CorrectedBoneCount} bone(s), max scale delta {diagnostics.MaximumScaleDelta:0.0000}.");
+        foreach (var region in diagnostics.Regions)
+        {
+            DrawWrappedDisabledValue(
+                region.Region,
+                $"{region.Status}; eligible {region.EligibleBoneCount}; corrected {region.CorrectedBoneCount}; continuity {region.ContinuityErrorBefore:0.000000}->{region.ContinuityErrorAfter:0.000000}. {region.Reason}");
+        }
+    }
+
     private static void DrawWrappedDisabledValue(string label, string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -1240,7 +1298,7 @@ public class SettingsTab
 
     private void DrawNeckCompensationSettings(AdvancedBodyScalingSettings settings)
     {
-        if (!ImGui.CollapsingHeader("Global Neck/Shoulder Baseline", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader("Global Neck/Shoulder Baseline"))
             return;
 
         ImGui.TextDisabled("These are the default neck/shoulder compensation values used when no race-specific preset overrides them.");
@@ -2790,12 +2848,14 @@ public class SettingsTab
         DrawAdvancedResetRow(
             "Balancing & naturalization",
             "Reset Balancing & Naturalization",
-            "Restores surface balancing, mass redistribution, bilateral consistency, proportional balance, surface smoothness, shape-conditioning passes, pose-aware joint correctives, and naturalization to shipped defaults. Does not touch guardrail modes, pose-aware validation, BIW, region tuning, neck presets, IK, motion warping, or RBF pose-space correctives.",
+            "Restores surface balancing, mass redistribution, bilateral consistency, hierarchical shaping, proportional balance, surface smoothness, shape-conditioning passes, pose-aware joint correctives, and naturalization to shipped defaults. Does not touch guardrail modes, pose-aware validation, BIW, region tuning, neck presets, IK, motion warping, or RBF pose-space correctives.",
             () =>
             {
                 settings.SurfaceBalancingStrength = defaults.SurfaceBalancingStrength;
                 settings.MassRedistributionStrength = defaults.MassRedistributionStrength;
                 settings.BilateralConsistencyEnabled = defaults.BilateralConsistencyEnabled;
+                settings.HierarchicalShapingEnabled = defaults.HierarchicalShapingEnabled;
+                settings.HierarchicalAuthoredRelaxationEnabled = defaults.HierarchicalAuthoredRelaxationEnabled;
                 settings.ProportionalBalanceEnabled = defaults.ProportionalBalanceEnabled;
                 settings.ProportionalBalanceStrength = defaults.ProportionalBalanceStrength;
                 settings.SurfaceSmoothnessEnabled = defaults.SurfaceSmoothnessEnabled;

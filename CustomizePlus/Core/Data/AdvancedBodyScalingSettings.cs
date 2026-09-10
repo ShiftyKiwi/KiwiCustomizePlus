@@ -326,6 +326,14 @@ public sealed class AdvancedBodyScalingSettings
     // behavior unless an author deliberately provides materially different side-specific inputs.
     public bool BilateralConsistencyEnabled { get; set; } = true;
 
+    // Hierarchical shaping is a separate, conservative final derived layer. It stays opt-in
+    // so existing profiles retain byte-for-byte resolved transform behavior by default.
+    public bool HierarchicalShapingEnabled { get; set; } = false;
+
+    // Allows a strictly bounded, session-only 1% relaxation of explicit unlocked scale rows.
+    // When disabled, explicit authored rows remain hard constraints for this layer.
+    public bool HierarchicalAuthoredRelaxationEnabled { get; set; } = false;
+
     public bool ProportionalBalanceEnabled { get; set; } = false;
 
     private float _proportionalBalanceStrength = 0.45f;
@@ -634,6 +642,8 @@ public sealed class AdvancedBodyScalingSettings
         SurfaceBalancingStrength = defaults.SurfaceBalancingStrength;
         MassRedistributionStrength = defaults.MassRedistributionStrength;
         BilateralConsistencyEnabled = defaults.BilateralConsistencyEnabled;
+        HierarchicalShapingEnabled = defaults.HierarchicalShapingEnabled;
+        HierarchicalAuthoredRelaxationEnabled = defaults.HierarchicalAuthoredRelaxationEnabled;
         ProportionalBalanceEnabled = defaults.ProportionalBalanceEnabled;
         ProportionalBalanceStrength = defaults.ProportionalBalanceStrength;
         SurfaceSmoothnessEnabled = defaults.SurfaceSmoothnessEnabled;
@@ -677,6 +687,8 @@ public sealed class AdvancedBodyScalingSettings
             SurfaceBalancingStrength = SurfaceBalancingStrength,
             MassRedistributionStrength = MassRedistributionStrength,
             BilateralConsistencyEnabled = BilateralConsistencyEnabled,
+            HierarchicalShapingEnabled = HierarchicalShapingEnabled,
+            HierarchicalAuthoredRelaxationEnabled = HierarchicalAuthoredRelaxationEnabled,
             ProportionalBalanceEnabled = ProportionalBalanceEnabled,
             ProportionalBalanceStrength = ProportionalBalanceStrength,
             SurfaceSmoothnessEnabled = SurfaceSmoothnessEnabled,

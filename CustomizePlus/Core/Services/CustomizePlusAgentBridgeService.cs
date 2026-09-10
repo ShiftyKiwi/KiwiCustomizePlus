@@ -31,6 +31,11 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
     private const int DebugReviewRefreshIntervalMs = 250;
     private const string PoseValidationSurfaceId = "debug.pose-corrective-validation";
     private const string PoseValidationActionId = "debug.run-pose-corrective-validation";
+    private const string HierarchicalShapingSurfaceId = "debug.hierarchical-shaping-performance";
+    private const string EnableHierarchicalShapingActionId = "debug.enable-hierarchical-shaping-session";
+    private const string DisableHierarchicalShapingActionId = "debug.disable-hierarchical-shaping-session";
+    private const string RestoreHierarchicalShapingActionId = "debug.restore-hierarchical-shaping-session";
+    private const string ResetHierarchicalShapingMeasurementsActionId = "debug.reset-hierarchical-shaping-measurements";
 
     private readonly ArmatureManager _armatureManager;
     private readonly FrameworkManager _framework;
@@ -52,6 +57,8 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
     private int _snapshotRequested;
     private long _lastDebugReviewAtMs;
     private int _poseValidationRequested;
+    private int _hierarchicalShapingSessionRequest;
+    private readonly bool _initialGlobalHierarchicalShapingEnabled;
     private bool _disposed;
     private readonly Dictionary<string, (long Revision, long NativeGeneration, long DeformationRevision, AgentBridgeExtensionSnapshot Summary)> _extensionSummaries = new(StringComparer.Ordinal);
 
@@ -72,6 +79,7 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
         _runtimeEvidence = runtimeEvidence;
         _templateEditorManager = templateEditorManager;
         _localBoneMetadata = localBoneMetadata;
+        _initialGlobalHierarchicalShapingEnabled = configuration.AdvancedBodyScalingSettings.HierarchicalShapingEnabled;
 
         if (string.IsNullOrWhiteSpace(configuration.AgentBridgePluginInstanceId))
             configuration.AgentBridgePluginInstanceId = Guid.NewGuid().ToString("N");
@@ -112,15 +120,21 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
                     new AgentBridgeCapabilityDescriptor("performance-counters.read"),
                     new AgentBridgeCapabilityDescriptor("authoring-tools.read"),
                     new AgentBridgeCapabilityDescriptor("pose-corrective-validation.debug"),
+                    new AgentBridgeCapabilityDescriptor("hierarchical-shaping-performance.debug"),
                 },
                 ReviewSurfaces: new[]
                 {
                     new AgentBridgeReviewSurfaceDescriptor(PoseValidationSurfaceId, "Customize+ Debug RBF validation", "get-snapshot", PoseValidationSurfaceId, 1),
+                    new AgentBridgeReviewSurfaceDescriptor(HierarchicalShapingSurfaceId, "Customize+ Debug Hierarchical Shaping performance", "get-snapshot", HierarchicalShapingSurfaceId, 1),
                 },
                 CaptureSurfaces: Array.Empty<AgentBridgeCaptureSurfaceDescriptor>(),
                 Actions: new[]
                 {
                     new AgentBridgeActionDescriptor(PoseValidationActionId, "Run bounded RBF validation", PoseValidationSurfaceId, AgentBridgeUiControlKind.Button, true),
+                    new AgentBridgeActionDescriptor(EnableHierarchicalShapingActionId, "Enable session Hierarchical Shaping", HierarchicalShapingSurfaceId, AgentBridgeUiControlKind.Button, true),
+                    new AgentBridgeActionDescriptor(DisableHierarchicalShapingActionId, "Disable session Hierarchical Shaping", HierarchicalShapingSurfaceId, AgentBridgeUiControlKind.Button, true),
+                    new AgentBridgeActionDescriptor(RestoreHierarchicalShapingActionId, "Restore session Hierarchical Shaping", HierarchicalShapingSurfaceId, AgentBridgeUiControlKind.Button, true),
+                    new AgentBridgeActionDescriptor(ResetHierarchicalShapingMeasurementsActionId, "Reset Hierarchical Shaping measurements", HierarchicalShapingSurfaceId, AgentBridgeUiControlKind.Button, true),
                 }),
             HandleRequestAsync = router.HandleAsync,
             EnableAudit = false,
@@ -148,6 +162,7 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
             return;
 
         ProcessDebugPoseValidationRequest();
+        ProcessDebugHierarchicalShapingSessionRequest();
         if (Environment.TickCount64 - _lastDebugReviewAtMs >= DebugReviewRefreshIntervalMs)
             RefreshDebugReviewControls();
         if (Environment.TickCount64 - _lastSnapshotAtMs < SnapshotRefreshIntervalMs)
@@ -172,6 +187,7 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
                 selected: false,
                 value: "Runs one current-player, Debug-only 25-cycle RBF validation fixture.",
                 () => Interlocked.Exchange(ref _poseValidationRequested, 1));
+            RegisterHierarchicalShapingDebugControls();
         }
         finally
         {
@@ -188,6 +204,81 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
             _logger.Debug($"Started bounded Debug RBF validation: {message}");
         else
             _logger.Warning($"Did not start bounded Debug RBF validation: {message}");
+    }
+
+    private void RegisterHierarchicalShapingDebugControls()
+    {
+        var enabled = _configuration.AdvancedBodyScalingSettings.HierarchicalShapingEnabled;
+        _debugReviewControls.Register(
+            EnableHierarchicalShapingActionId,
+            "Enable session Hierarchical Shaping",
+            AgentBridgeUiControlKind.Button,
+            Vector2.Zero,
+            Vector2.One,
+            enabled: !enabled,
+            selected: enabled,
+            value: "Temporarily enables the existing global setting, requests normal profile rebinds, and never saves configuration.",
+            () => Interlocked.Exchange(ref _hierarchicalShapingSessionRequest, 1));
+        _debugReviewControls.Register(
+            DisableHierarchicalShapingActionId,
+            "Disable session Hierarchical Shaping",
+            AgentBridgeUiControlKind.Button,
+            Vector2.Zero,
+            Vector2.One,
+            enabled: enabled,
+            selected: !enabled,
+            value: "Temporarily disables the existing global setting, requests normal profile rebinds, and never saves configuration. Profile overrides remain authoritative.",
+            () => Interlocked.Exchange(ref _hierarchicalShapingSessionRequest, 2));
+        _debugReviewControls.Register(
+            RestoreHierarchicalShapingActionId,
+            "Restore session Hierarchical Shaping",
+            AgentBridgeUiControlKind.Button,
+            Vector2.Zero,
+            Vector2.One,
+            enabled: enabled != _initialGlobalHierarchicalShapingEnabled,
+            selected: false,
+            value: "Restores the global setting value observed when this Debug bridge started. This does not save configuration.",
+            () => Interlocked.Exchange(ref _hierarchicalShapingSessionRequest, 3));
+        _debugReviewControls.Register(
+            ResetHierarchicalShapingMeasurementsActionId,
+            "Reset Hierarchical Shaping measurements",
+            AgentBridgeUiControlKind.Button,
+            Vector2.Zero,
+            Vector2.One,
+            enabled: true,
+            selected: false,
+            value: "Clears only Debug per-armature timing and cache-event counters. It does not change configuration, profiles, templates, or live transforms.",
+            () => Interlocked.Exchange(ref _hierarchicalShapingSessionRequest, 4));
+    }
+
+    private void ProcessDebugHierarchicalShapingSessionRequest()
+    {
+        var request = Interlocked.Exchange(ref _hierarchicalShapingSessionRequest, 0);
+        if (request == 0)
+            return;
+
+        if (request == 4)
+        {
+            foreach (var armature in _armatureManager.Armatures.Values)
+                armature.DebugHierarchicalShapingPerformance.ResetMeasurements();
+            _logger.Debug("Debug Hierarchical Shaping measurements reset without changing configuration or bindings.");
+            return;
+        }
+
+        var target = request switch
+        {
+            1 => true,
+            2 => false,
+            3 => _initialGlobalHierarchicalShapingEnabled,
+            _ => _configuration.AdvancedBodyScalingSettings.HierarchicalShapingEnabled,
+        };
+        var settings = _configuration.AdvancedBodyScalingSettings;
+        if (settings.HierarchicalShapingEnabled == target)
+            return;
+
+        settings.HierarchicalShapingEnabled = target;
+        _armatureManager.RebindAllArmatures();
+        _logger.Debug($"Debug Hierarchical Shaping session setting changed to {target}; normal profile rebind requested without saving configuration.");
     }
 
     private AgentBridgeResponse ReviewDebugControl(AgentBridgeRequest request)
@@ -302,6 +393,7 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
                         .ToArray(),
                     armature.PoseCorrectiveDebugState.Summary),
                 PoseValidation: ToPoseValidationSnapshot(armature.DebugPoseCorrectiveValidationSnapshot),
+                HierarchicalShaping: ToHierarchicalShapingSnapshot(armature),
                 Quality: new AgentBridgeQualitySnapshot(
                     armature.DeformationQualityDiagnostics.MaxBilateralDifference,
                     armature.DeformationQualityDiagnostics.MaxBilateralPair,
@@ -363,26 +455,33 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
         var armatureState = _armatureManager.Armatures.Values
             .OrderBy(static armature => armature.ActorIdentifier.ToString(), StringComparer.Ordinal)
             .Take(24)
-            .Select(static armature => string.Join(':',
-                armature.ActorIdentifier,
-                armature.IsBuilt,
-                armature.IsSkeletonBindingCurrent,
-                armature.SkeletonRevision,
-                armature.NativeBindingGeneration,
-                armature.ActorLifetimeGeneration,
-                armature.CurrentAppearanceEpoch,
-                armature.AppearanceEpochState,
-                armature.TemplateBindingRevision,
-                armature.TemplateBindingBuildCount,
-                armature.ProfileResolutionRevision,
-                armature.DeformationRevision,
-                armature.DiagnosticsRevision,
-                armature.IsPendingProfileRebind,
-                armature.LastSkeletonBindingIssue,
-                armature.ActiveBoneImportanceResult.ModelSignature,
-                armature.GetCapabilityManifestSnapshot().Revision,
-                armature.GetDebugNativeWriteDiagnostics().SkippedStaleBinding,
-                armature.GetDebugNativeWriteDiagnostics().SkippedUnsafeTransform));
+            .Select(static armature =>
+            {
+                var hierarchical = GetHierarchicalShapingSnapshot(armature);
+                return string.Join(':',
+                    armature.ActorIdentifier,
+                    armature.IsBuilt,
+                    armature.IsSkeletonBindingCurrent,
+                    armature.SkeletonRevision,
+                    armature.NativeBindingGeneration,
+                    armature.ActorLifetimeGeneration,
+                    armature.CurrentAppearanceEpoch,
+                    armature.AppearanceEpochState,
+                    armature.TemplateBindingRevision,
+                    armature.TemplateBindingBuildCount,
+                    armature.ProfileResolutionRevision,
+                    armature.DeformationRevision,
+                    armature.DiagnosticsRevision,
+                    armature.IsPendingProfileRebind,
+                    armature.LastSkeletonBindingIssue,
+                    armature.ActiveBoneImportanceResult.ModelSignature,
+                    armature.GetCapabilityManifestSnapshot().Revision,
+                    armature.GetDebugNativeWriteDiagnostics().SkippedStaleBinding,
+                    armature.GetDebugNativeWriteDiagnostics().SkippedUnsafeTransform,
+                    hierarchical.SolveCount,
+                    hierarchical.CacheHitCount,
+                    hierarchical.CacheMissCount);
+            });
         var authoring = $"{_templateEditorManager.IsEditorActive}:{_templateEditorManager.IsEditorPaused}:{_templateEditorManager.EditorSessionId}:{_templateEditorManager.EditorRevision}:{_templateEditorManager.CurrentlyEditedTemplate?.UniqueId}:{_templateEditorManager.EditHistory.UndoCount}:{_templateEditorManager.EditHistory.RedoCount}:{_templateEditorManager.EditHistory.LatestLabel}:{_templateEditorManager.ProfileContextPreviewActive}:{_templateEditorManager.ProfileContextTemplateCount}:{_localBoneMetadata.LoadedPackCount}:{_localBoneMetadata.LoadedEntryCount}";
         return string.Join('|', armatureState) + $"|authoring:{authoring}";
     }
@@ -407,6 +506,47 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
                 .Where(static capability => capability != SkeletonCapability.None)
                 .Select(capability => new AgentBridgeCapabilitySnapshot(capability.ToString(), manifest.GetState(capability).ToString()))
                 .ToArray());
+
+    private static AgentBridgeHierarchicalShapingSnapshot ToHierarchicalShapingSnapshot(Armature armature)
+    {
+        var performance = GetHierarchicalShapingSnapshot(armature);
+        return new AgentBridgeHierarchicalShapingSnapshot(
+            performance.EffectiveEnabled,
+            performance.AuthoredRelaxationEnabled,
+            performance.AppliedRegionCount,
+            performance.AdmittedRegionCount,
+            performance.CorrectedBoneCount,
+            performance.MaximumRelativeCorrectionPercent,
+            performance.CacheEntryAvailable,
+            performance.LastRebuildWasCacheHit,
+            performance.SolveCount,
+            performance.CacheHitCount,
+            performance.CacheMissCount,
+            performance.NoAdmittedRegionCount,
+            performance.LastSolveMilliseconds,
+            performance.MedianSolveMilliseconds,
+            performance.P95SolveMilliseconds,
+            performance.MaximumSolveMilliseconds,
+            performance.TotalSolveMilliseconds,
+            performance.SolveSamples,
+            performance.CombinedRebuildCount,
+            performance.MedianCombinedRebuildMilliseconds,
+            performance.P95CombinedRebuildMilliseconds,
+            performance.MaximumCombinedRebuildMilliseconds,
+            performance.TotalCombinedRebuildMilliseconds,
+            performance.CombinedRebuildSamples);
+    }
+
+    private static DebugHierarchicalShapingPerformanceSnapshot GetHierarchicalShapingSnapshot(Armature armature)
+    {
+        var settings = armature.ActiveAdvancedBodyScalingSettings;
+        var diagnostics = armature.HierarchicalShapingDiagnostics;
+        return armature.DebugHierarchicalShapingPerformance.Snapshot(
+            settings?.HierarchicalShapingEnabled == true,
+            settings?.HierarchicalAuthoredRelaxationEnabled == true,
+            diagnostics,
+            diagnostics.CacheKey is not "inactive" and not "binding-unavailable");
+    }
 
     private AgentBridgeExtensionSnapshot GetExtensionSnapshot(Armature armature)
     {
@@ -579,12 +719,13 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
         AgentBridgePoseJointCorrectiveSnapshot PoseJointCorrectives,
         AgentBridgePoseRbfCorrectiveSnapshot PoseRbfCorrectives,
         AgentBridgePoseCorrectiveValidationSnapshot PoseValidation,
+        AgentBridgeHierarchicalShapingSnapshot HierarchicalShaping,
         AgentBridgeQualitySnapshot Quality,
         IReadOnlyList<RuntimeTimingSummary> Performance,
         IReadOnlyList<AgentBridgeTemplateApplicabilitySnapshot> TemplateApplicability)
     {
         public string Key
-            => $"{Actor}:{Built}:{BindingCurrent}:{SkeletonRevision}:{NativeBindingGeneration}:{ActorLifetimeGeneration}:{AwaitingActorReacquisitionPublication}:{AwaitingAppearanceContextRebind}:{CurrentAppearanceEpoch}:{AppearanceEpochState}:{CurrentAppearanceOperationType}:{LatestPendingStableAppearanceEpoch}:{LastAppliedStableAppearanceEpoch}:{PendingAppearanceContext}:{LastAppearanceLifecycleEvent}:{LastAppearanceRebindReason}:{LastAppearanceRebindEpoch}:{TemplateBindingRevision}:{TemplateBindingBuildCount}:{LastTemplateBindingBuildReason}:{ProfileResolutionRevision}:{DeformationRevision}:{DiagnosticsRevision}:{ResolvedTransformCount}:{BoundModelBoneCount}:{ActiveModelBoneCount}:{PendingProfileRebind}:{PendingPublication}:{BindingIssue}:{RevertRecovery}:{Root}:{BoneImportanceSignature}:{Manifest.Revision}:{Manifest.StructuralFingerprint}:{Extensions}:{NativeWrites}:{PoseJointCorrectives}:{PoseRbfCorrectives}:{PoseValidation.Status}:{PoseValidation.Phase}:{PoseValidation.CompletedCycles}:{PoseValidation.NativeApplicationCount}:{PoseValidation.MaximumActiveScaleDelta}:{PoseValidation.MaximumPostCycleScaleDelta}:{Quality}:{string.Join(',', Performance.Select(static item => item.Stage + ':' + item.Samples))}:{string.Join(',', TemplateApplicability.Select(static item => item.Key))}";
+            => $"{Actor}:{Built}:{BindingCurrent}:{SkeletonRevision}:{NativeBindingGeneration}:{ActorLifetimeGeneration}:{AwaitingActorReacquisitionPublication}:{AwaitingAppearanceContextRebind}:{CurrentAppearanceEpoch}:{AppearanceEpochState}:{CurrentAppearanceOperationType}:{LatestPendingStableAppearanceEpoch}:{LastAppliedStableAppearanceEpoch}:{PendingAppearanceContext}:{LastAppearanceLifecycleEvent}:{LastAppearanceRebindReason}:{LastAppearanceRebindEpoch}:{TemplateBindingRevision}:{TemplateBindingBuildCount}:{LastTemplateBindingBuildReason}:{ProfileResolutionRevision}:{DeformationRevision}:{DiagnosticsRevision}:{ResolvedTransformCount}:{BoundModelBoneCount}:{ActiveModelBoneCount}:{PendingProfileRebind}:{PendingPublication}:{BindingIssue}:{RevertRecovery}:{Root}:{BoneImportanceSignature}:{Manifest.Revision}:{Manifest.StructuralFingerprint}:{Extensions}:{NativeWrites}:{PoseJointCorrectives}:{PoseRbfCorrectives}:{PoseValidation.Status}:{PoseValidation.Phase}:{PoseValidation.CompletedCycles}:{PoseValidation.NativeApplicationCount}:{PoseValidation.MaximumActiveScaleDelta}:{PoseValidation.MaximumPostCycleScaleDelta}:{HierarchicalShaping}:{Quality}:{string.Join(',', Performance.Select(static item => item.Stage + ':' + item.Samples))}:{string.Join(',', TemplateApplicability.Select(static item => item.Key))}";
     }
 
     private sealed record AgentBridgeRevertRecoverySnapshot(
@@ -686,6 +827,32 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
         float SurfaceGradientScore,
         IReadOnlyList<string> Warnings,
         DeformationQualitySolverDiagnostics Solver);
+
+    private sealed record AgentBridgeHierarchicalShapingSnapshot(
+        bool EffectiveEnabled,
+        bool AuthoredRelaxationEnabled,
+        int AppliedRegionCount,
+        int AdmittedRegionCount,
+        int CorrectedBoneCount,
+        float MaximumRelativeCorrectionPercent,
+        bool CacheEntryAvailable,
+        bool LastRebuildWasCacheHit,
+        long SolveCount,
+        long CacheHitCount,
+        long CacheMissCount,
+        long NoAdmittedRegionCount,
+        double LastSolveMilliseconds,
+        double MedianSolveMilliseconds,
+        double P95SolveMilliseconds,
+        double MaximumSolveMilliseconds,
+        double TotalSolveMilliseconds,
+        IReadOnlyList<double> SolveSamples,
+        long CombinedRebuildCount,
+        double MedianCombinedRebuildMilliseconds,
+        double P95CombinedRebuildMilliseconds,
+        double MaximumCombinedRebuildMilliseconds,
+        double TotalCombinedRebuildMilliseconds,
+        IReadOnlyList<double> CombinedRebuildSamples);
 
     private sealed record AgentBridgePoseJointCorrectiveSnapshot(
         bool Enabled,

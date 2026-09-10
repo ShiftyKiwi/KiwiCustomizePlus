@@ -192,7 +192,11 @@ public unsafe class Armature
         = AdvancedBodyScalingBoneImportanceResult.CreateFallback("Not evaluated yet.", enabled: false, preferSkinWeights: true, heuristicBlend: 0f);
     internal bool BoneImportanceAppliedToPipeline { get; private set; }
     internal DeformationQualityDiagnostics DeformationQualityDiagnostics { get; private set; } = DeformationQualityDiagnostics.Empty;
+    internal HierarchicalShapingDiagnostics HierarchicalShapingDiagnostics { get; private set; } = HierarchicalShapingDiagnostics.CreateInactive(null);
     internal RuntimePerformanceMetrics PerformanceMetrics { get; } = new();
+#if DEBUG
+    internal DebugHierarchicalShapingPerformanceState DebugHierarchicalShapingPerformance { get; } = new();
+#endif
     internal RootScaleApplicationDiagnostics RootScaleDiagnostics { get; private set; } = RootScaleApplicationDiagnostics.Empty;
     internal AdvancedBodyScalingBoneImportanceRuntimeState BoneImportanceRuntimeState { get; } = new();
 
@@ -206,6 +210,8 @@ public unsafe class Armature
     private readonly Dictionary<string, Vector3> _rbfPoseCorrectiveScaleMultipliers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Vector3> _jointPoseCorrectiveScaleMultipliers = new(StringComparer.Ordinal);
     private readonly Dictionary<AdvancedBodyScalingCorrectiveRegion, AdvancedBodyScalingCorrectiveRuntimeState> _poseCorrectiveRuntimeState = new();
+    private string? _hierarchicalShapingCacheKey;
+    private HierarchicalShapingDiagnostics? _hierarchicalShapingCachedDiagnostics;
 #if DEBUG
     private DebugPoseCorrectiveValidationSession? _debugPoseCorrectiveValidation;
     private DebugPoseCorrectiveValidationSnapshot _debugPoseCorrectiveValidationSnapshot = DebugPoseCorrectiveValidationSnapshot.Idle;
@@ -1295,6 +1301,13 @@ public unsafe class Armature
         var manifest = GetCapabilityManifestSnapshot();
         var resolution = ProfileTransformResolver.Resolve(Profile, manifest);
         PerformanceMetrics.Record("profile-resolution", profileResolutionStarted);
+        var nextProfileResolutionSignature = ComputeTransformSignature(resolution.EffectiveTransforms, manifest.Revision);
+        if (nextProfileResolutionSignature != _profileResolutionSignature)
+        {
+            _profileResolutionSignature = nextProfileResolutionSignature;
+            ProfileResolutionRevision++;
+        }
+
         var effectiveTransforms = resolution.EffectiveTransforms;
         var explicitTransformNames = effectiveTransforms.Keys.ToHashSet(StringComparer.Ordinal);
         _explicitTemplateTransformNames.Clear();
@@ -1310,6 +1323,7 @@ public unsafe class Armature
         }
 
         var solverDiagnostics = DeformationQualitySolverDiagnostics.Inactive;
+        var hierarchicalDiagnostics = HierarchicalShapingDiagnostics.CreateInactive(advancedBodyScaling);
         if (advancedBodyScaling != null && advancedBodyScaling.Enabled && advancedBodyScaling.Mode != AdvancedBodyScalingMode.Manual)
         {
             var liveBones = GetAllBones().Select(static bone => bone.BoneName).ToHashSet(StringComparer.Ordinal);
@@ -1320,14 +1334,65 @@ public unsafe class Armature
                 manifest,
                 ActiveBoneImportanceResult,
                 advancedBodyScaling);
+            if (advancedBodyScaling.HierarchicalShapingEnabled && manifest.BindingCurrent)
+            {
+#if DEBUG
+                var hierarchicalStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+#endif
+                var hierarchicalInputSignature = ComputeTransformSignature(effectiveTransforms, manifest.Revision);
+                var cacheKey = BuildHierarchicalShapingCacheKey(
+                    manifest,
+                    nextProfileResolutionSignature,
+                    hierarchicalInputSignature,
+                    advancedBodyScaling);
+                var cacheHit = _hierarchicalShapingCacheKey == cacheKey
+                    && _hierarchicalShapingCachedDiagnostics != null
+                    && AdvancedBodyScalingHierarchicalShapingSystem.TryApplyCached(
+                        effectiveTransforms,
+                        explicitTransformNames,
+                        liveBones,
+                        manifest,
+                        advancedBodyScaling,
+                        _hierarchicalShapingCachedDiagnostics,
+                        out hierarchicalDiagnostics);
+                if (!cacheHit)
+                {
+                    hierarchicalDiagnostics = AdvancedBodyScalingHierarchicalShapingSystem.Apply(
+                        effectiveTransforms,
+                        explicitTransformNames,
+                        liveBones,
+                        manifest,
+                        advancedBodyScaling);
+                    _hierarchicalShapingCacheKey = cacheKey;
+                    _hierarchicalShapingCachedDiagnostics = hierarchicalDiagnostics;
+                }
+
+                hierarchicalDiagnostics = hierarchicalDiagnostics.WithCacheMetadata(cacheKey, cacheHit);
+#if DEBUG
+                if (cacheHit)
+                {
+                    DebugHierarchicalShapingPerformance.RecordCacheHit();
+                }
+                else
+                {
+                    var hierarchicalElapsed = (System.Diagnostics.Stopwatch.GetTimestamp() - hierarchicalStarted) * 1000d / System.Diagnostics.Stopwatch.Frequency;
+                    DebugHierarchicalShapingPerformance.RecordSolve(hierarchicalElapsed, hierarchicalDiagnostics);
+                }
+#endif
+            }
+            else
+            {
+                _hierarchicalShapingCacheKey = null;
+                _hierarchicalShapingCachedDiagnostics = null;
+            }
+        }
+        else
+        {
+            _hierarchicalShapingCacheKey = null;
+            _hierarchicalShapingCachedDiagnostics = null;
         }
 
-        var nextProfileResolutionSignature = ComputeTransformSignature(resolution.EffectiveTransforms, manifest.Revision);
-        if (nextProfileResolutionSignature != _profileResolutionSignature)
-        {
-            _profileResolutionSignature = nextProfileResolutionSignature;
-            ProfileResolutionRevision++;
-        }
+        HierarchicalShapingDiagnostics = hierarchicalDiagnostics;
 
         var nextDeformationSignature = ComputeTransformSignature(effectiveTransforms, manifest.Revision);
         if (nextDeformationSignature != _deformationSignature)
@@ -1349,12 +1414,20 @@ public unsafe class Armature
         diagnosticsHash.Add(solverDiagnostics.MaximumProportionalCorrection);
         diagnosticsHash.Add(solverDiagnostics.MaximumPostSmoothingGradient);
         diagnosticsHash.Add(solverDiagnostics.SurfaceSmoothnessAffectedBoneCount);
+        diagnosticsHash.Add(HierarchicalShapingDiagnostics.Enabled);
+        diagnosticsHash.Add(HierarchicalShapingDiagnostics.AuthoredRelaxationEnabled);
+        diagnosticsHash.Add(HierarchicalShapingDiagnostics.CorrectedBoneCount);
+        diagnosticsHash.Add(HierarchicalShapingDiagnostics.MaximumScaleDelta);
         var nextDiagnosticsSignature = diagnosticsHash.ToHashCode();
         if (nextDiagnosticsSignature != _diagnosticsSignature)
         {
             _diagnosticsSignature = nextDiagnosticsSignature;
             DiagnosticsRevision++;
         }
+#if DEBUG
+        var combinedDeformationElapsed = (System.Diagnostics.Stopwatch.GetTimestamp() - deformationStarted) * 1000d / System.Diagnostics.Stopwatch.Frequency;
+        DebugHierarchicalShapingPerformance.RecordCombinedRebuild(combinedDeformationElapsed);
+#endif
         PerformanceMetrics.Record("deformation-solve", deformationStarted);
 
         var bindingStarted = PerformanceMetrics.Start();
@@ -1422,6 +1495,13 @@ public unsafe class Armature
 
         return hash.ToHashCode();
     }
+
+    private string BuildHierarchicalShapingCacheKey(
+        SkeletonCapabilityManifest manifest,
+        int profileResolutionSignature,
+        int hierarchicalInputSignature,
+        AdvancedBodyScalingSettings? settings)
+        => $"actor={ActorIdentifier};profile-id={Profile.UniqueId};lifetime={ActorLifetimeGeneration};binding={SkeletonRevision};profile-revision={ProfileResolutionRevision};manifest={manifest.Revision};topology={manifest.StructuralFingerprint};resolution={profileResolutionSignature};input={hierarchicalInputSignature};enabled={settings?.HierarchicalShapingEnabled ?? false};relax={settings?.HierarchicalAuthoredRelaxationEnabled ?? false};mode={settings?.Mode};solver=1";
 
     internal void SetDebugNativeWriteDiagnosticsEnabled(bool enabled)
     {
