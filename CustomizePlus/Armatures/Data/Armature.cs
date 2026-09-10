@@ -1447,7 +1447,7 @@ public unsafe class Armature
                 enableSoftScaleLimits,
                 enableAutomaticChildCompensation);
 
-            if (adjusted.IsEdited())
+            if (ShouldRetainResolvedTransform(adjusted))
                 ResolvedBoneTransforms[kvPair.Key] = adjusted;
         }
 
@@ -1477,7 +1477,10 @@ public unsafe class Armature
         Plugin.Logger.Verbose($"Rebuilt template binding for armature {_localId} ({LastTemplateBindingBuildReason})");
     }
 
-    private static int ComputeTransformSignature(IReadOnlyDictionary<string, BoneTransform> transforms, long manifestRevision)
+    internal static bool ShouldRetainResolvedTransform(BoneTransform transform)
+        => transform.IsEdited(true);
+
+    internal static int ComputeTransformSignature(IReadOnlyDictionary<string, BoneTransform> transforms, long manifestRevision)
     {
         var hash = new HashCode();
         hash.Add(manifestRevision);

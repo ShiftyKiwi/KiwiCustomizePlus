@@ -498,7 +498,7 @@ public class BoneEditorPanel
                                 try
                                 {
                                     var editedBones = boneGroup
-                                        .Where(b => b.Transform != null && b.Transform.IsEdited())
+                                        .Where(b => ShouldIncludeGroupExport(b.Transform))
                                         .Select(b => (b.BoneCodeName, b.Transform))
                                         .ToList();
 
@@ -570,6 +570,9 @@ public class BoneEditorPanel
         }
 
     }
+
+    internal static bool ShouldIncludeGroupExport(BoneTransform? transform)
+        => transform?.IsEdited(true) == true;
 
     private void DrawEditorConfirmationPopup()
     {
@@ -982,7 +985,7 @@ public class BoneEditorPanel
         var templateBones = _editorManager.CurrentlyEditedTemplate?.Bones ?? _templateFileSystemSelector.Selected?.Bones;
         var lockedRows = templateBones?.Count(b => b.Value.LockState != BoneLockState.Unlocked) ?? 0;
         var pinnedAxes = templateBones?.Sum(b => (b.Value.PinX ? 1 : 0) + (b.Value.PinY ? 1 : 0) + (b.Value.PinZ ? 1 : 0)) ?? 0;
-        var editedBones = templateBones?.Where(b => b.Value.IsEdited()).ToList() ?? new List<KeyValuePair<string, BoneTransform>>();
+        var editedBones = templateBones?.Where(b => b.Value.IsEdited(true)).ToList() ?? new List<KeyValuePair<string, BoneTransform>>();
         var missingEditedBones = liveBoneNames.Count > 0
             ? editedBones.Count(b => !liveBoneNames.Contains(b.Key))
             : 0;

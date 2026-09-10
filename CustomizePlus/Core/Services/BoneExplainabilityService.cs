@@ -156,7 +156,7 @@ public sealed class BoneExplainabilityService
             CompatibilityDormant: compatibilityDormant,
             Metadata: metadata,
             ExplicitAuthority: explicitAuthority,
-            AxisLocked: explicitTransform?.LockState == BoneLockState.Locked,
+            AxisLocked: explicitTransform?.LockState != BoneLockState.Unlocked,
             AxisPinned: explicitTransform?.HasPinnedScaleAxes() == true,
             SolverEnabled: armature?.ActiveAdvancedBodyScalingSettings?.Enabled == true && armature.ActiveAdvancedBodyScalingSettings.Mode != AdvancedBodyScalingMode.Manual,
             ModelDerivedImportanceActive: armature?.ActiveBoneImportanceResult.ModelDerivedActive == true,

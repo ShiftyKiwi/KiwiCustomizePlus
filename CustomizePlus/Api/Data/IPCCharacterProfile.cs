@@ -34,6 +34,7 @@ public class IPCCharacterProfile
                 PropagateRotation = kvPair.Value.PropagateRotation,
                 PropagateScale = kvPair.Value.PropagateScale,
                 PropagationFalloff = kvPair.Value.PropagationFalloff,
+                LockState = kvPair.Value.LockState,
                 PinX = kvPair.Value.PinX,
                 PinY = kvPair.Value.PinY,
                 PinZ = kvPair.Value.PinZ,
@@ -79,6 +80,7 @@ public class IPCCharacterProfile
                     PropagateRotation = kvPair.Value.PropagateRotation,
                     PropagateScale = kvPair.Value.PropagateScale,
                     PropagationFalloff = kvPair.Value.PropagationFalloff,
+                    LockState = kvPair.Value.LockState,
                     PinX = kvPair.Value.PinX,
                     PinY = kvPair.Value.PinY,
                     PinZ = kvPair.Value.PinZ,
@@ -137,6 +139,7 @@ public class IPCBoneTransform
 
     public bool ChildScaleIndependent { get; set; } = false;
     public float PropagationFalloff { get; set; } = Constants.DefaultPropagationFalloff;
+    public BoneLockState LockState { get; set; } = BoneLockState.Unlocked;
     public bool PinX { get; set; }
     public bool PinY { get; set; }
     public bool PinZ { get; set; }

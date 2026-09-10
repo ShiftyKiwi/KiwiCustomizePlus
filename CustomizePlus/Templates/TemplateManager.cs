@@ -99,7 +99,9 @@ public class TemplateManager : IDisposable
             ModifiedDate = DateTimeOffset.UtcNow,
             UniqueId = CreateNewGuid(),
             Name = actualName,
-            Bones = bones != null && bones.Count > 0 ? new Dictionary<string, BoneTransform>(bones) : new()
+            Bones = bones != null && bones.Count > 0
+                ? bones.ToDictionary(static pair => pair.Key, static pair => pair.Value.DeepCopy(), StringComparer.Ordinal)
+                : new()
         };
 
         if (template.Bones.Count > 0)

@@ -1,5 +1,6 @@
 using System.Numerics;
 using CustomizePlus.Core.Data;
+using CustomizePlus.Templates.Data;
 using Xunit;
 
 namespace CustomizePlus.Tests;
@@ -110,6 +111,55 @@ public class AdvancedBodyScalingHierarchicalShapingTests
         Assert.Equal(before["j_sebo_c"].Scaling, transforms["j_sebo_c"].Scaling);
         Assert.Equal(before["j_sako_l"].Scaling, transforms["j_sako_l"].Scaling);
         Assert.Equal(before["j_sako_r"].Scaling, transforms["j_sako_r"].Scaling);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void EachAxisPinAndLock_BlockHierarchicalReceiversAfterTemplateReload(int pinnedAxis)
+    {
+        var baseline = CreateTorsoField();
+        var explicitRows = new HashSet<string>(baseline.Keys, StringComparer.Ordinal);
+        explicitRows.Remove("j_sebo_c");
+        var baselineDiagnostics = AdvancedBodyScalingHierarchicalShapingSystem.Apply(
+            baseline,
+            explicitRows,
+            Live(baseline),
+            CreateManifest(),
+            new AdvancedBodyScalingSettings { HierarchicalShapingEnabled = true });
+        Assert.Contains("j_sebo_c", baselineDiagnostics.ContributionScaleDeltas.Keys);
+
+        var pinned = CreateTorsoField();
+        SetPin(pinned["j_sebo_c"], pinnedAxis, true);
+        var pinnedReloaded = Reload(pinned);
+        var pinnedDiagnostics = AdvancedBodyScalingHierarchicalShapingSystem.Apply(
+            pinnedReloaded,
+            explicitRows,
+            Live(pinnedReloaded),
+            CreateManifest(),
+            new AdvancedBodyScalingSettings { HierarchicalShapingEnabled = true });
+        Assert.DoesNotContain("j_sebo_c", pinnedDiagnostics.ContributionScaleDeltas.Keys);
+
+        SetPin(pinnedReloaded["j_sebo_c"], pinnedAxis, false);
+        var unpinnedDiagnostics = AdvancedBodyScalingHierarchicalShapingSystem.Apply(
+            pinnedReloaded,
+            explicitRows,
+            Live(pinnedReloaded),
+            CreateManifest(),
+            new AdvancedBodyScalingSettings { HierarchicalShapingEnabled = true });
+        Assert.Contains("j_sebo_c", unpinnedDiagnostics.ContributionScaleDeltas.Keys);
+
+        var locked = CreateTorsoField();
+        locked["j_sebo_c"].LockState = BoneLockState.Locked;
+        var lockedReloaded = Reload(locked);
+        var lockedDiagnostics = AdvancedBodyScalingHierarchicalShapingSystem.Apply(
+            lockedReloaded,
+            explicitRows,
+            Live(lockedReloaded),
+            CreateManifest(),
+            new AdvancedBodyScalingSettings { HierarchicalShapingEnabled = true });
+        Assert.DoesNotContain("j_sebo_c", lockedDiagnostics.ContributionScaleDeltas.Keys);
     }
 
     [Fact]
@@ -330,6 +380,30 @@ public class AdvancedBodyScalingHierarchicalShapingTests
 
     private static Dictionary<string, BoneTransform> Clone(IReadOnlyDictionary<string, BoneTransform> source)
         => source.ToDictionary(pair => pair.Key, pair => new BoneTransform(pair.Value), StringComparer.Ordinal);
+
+    private static Dictionary<string, BoneTransform> Reload(IReadOnlyDictionary<string, BoneTransform> source)
+        => Template.Load(new Template
+        {
+            Bones = source.ToDictionary(pair => pair.Key, pair => pair.Value.DeepCopy(), StringComparer.Ordinal),
+        }.JsonSerialize()).Bones;
+
+    private static void SetPin(BoneTransform transform, int axis, bool value)
+    {
+        switch (axis)
+        {
+            case 0:
+                transform.PinX = value;
+                break;
+            case 1:
+                transform.PinY = value;
+                break;
+            case 2:
+                transform.PinZ = value;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(axis));
+        }
+    }
 
     private static void AssertTransformsEqual(IReadOnlyDictionary<string, BoneTransform> expected, IReadOnlyDictionary<string, BoneTransform> actual)
     {
