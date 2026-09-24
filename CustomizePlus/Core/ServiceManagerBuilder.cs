@@ -158,6 +158,9 @@ public static class ServiceManagerBuilder
             .AddSingleton<SaveService>()
             .AddSingleton<FilenameService>()
             .AddSingleton<BackupService>()
+            .AddSingleton<PortableResolvedTemplateBuilder>()
+            .AddSingleton<ResolvedTemplateClipboard>()
+            .AddSingleton<ResolvedTemplateExportService>()
             .AddSingleton<LocalBoneMetadataService>()
             .AddSingleton<BoneExplainabilityService>()
             .AddSingleton<SemanticBodyGoalService>()
@@ -170,7 +173,8 @@ public static class ServiceManagerBuilder
 #if DEBUG
         services
             .AddSingleton<RuntimeEvidenceService>()
-            .AddSingleton<CustomizePlusAgentBridgeService>();
+            .AddSingleton<CustomizePlusAgentBridgeService>()
+            .AddSingleton<ResolvedTemplateExportDebugAdapter>();
 #endif
 
         return services;

@@ -5,6 +5,7 @@ using Dalamud.Interface;
 using Dalamud.Interface.Utility;
 using Dalamud.Bindings.ImGui;
 using OtterGui;
+using OtterGui.Classes;
 using OtterGui.Raii;
 using OtterGui.Extensions;
 using OtterGui.Log;
@@ -25,6 +26,8 @@ using Penumbra.GameData.Actors;
 using Penumbra.GameData.Enums;
 using CustomizePlus.GameData.Extensions;
 using Dalamud.Interface.Components;
+using CustomizePlus.Core.Services;
+using Dalamud.Interface.ImGuiNotification;
 
 namespace CustomizePlus.UI.Windows.MainWindow.Tabs.Profiles;
 
@@ -54,6 +57,8 @@ public class ProfilePanel
     private readonly TemplateEditorEvent _templateEditorEvent;
     private readonly PopupSystem _popupSystem;
     private readonly Logger _logger;
+    private readonly ResolvedTemplateExportService _resolvedTemplateExportService;
+    private readonly MessageService _messageService;
 
     private string? _newName;
     private int? _newPriority;
@@ -77,7 +82,9 @@ public class ProfilePanel
         ActorManager actorManager,
         TemplateEditorEvent templateEditorEvent,
         PopupSystem popupSystem,
-        Logger logger)
+        Logger logger,
+        ResolvedTemplateExportService resolvedTemplateExportService,
+        MessageService messageService)
     {
         _selector = selector;
         _manager = manager;
@@ -89,6 +96,8 @@ public class ProfilePanel
         _templateEditorEvent = templateEditorEvent;
         _popupSystem = popupSystem;
         _logger = logger;
+        _resolvedTemplateExportService = resolvedTemplateExportService;
+        _messageService = messageService;
     }
 
     public void Draw()
@@ -127,15 +136,29 @@ public class ProfilePanel
         ? HeaderDrawer.Button.Invisible
         :new HeaderDrawer.Button {
             Description = "Copy the current profile combined into one template to your clipboard.",
+            Id = "profile-combined-template-export",
             Icon = FontAwesomeIcon.Copy,
             OnClick = ExportToClipboard,
             Visible = _selector.Selected != null,
             Disabled = false
         };
 
+    private HeaderDrawer.Button ExportResolvedTemplateToClipboardButton()
+        => _selector.Selected == null
+            ? HeaderDrawer.Button.Invisible
+            : new HeaderDrawer.Button
+            {
+                Description = "Copy the current profile's static Advanced Body Scaling result as a normal template. Dynamic pose, IK, and motion corrections are excluded.",
+                Id = "profile-resolved-static-template-export",
+                Icon = FontAwesomeIcon.Copy,
+                OnClick = ExportResolvedTemplateToClipboard,
+                Visible = true,
+                Disabled = false,
+            };
+
     private void DrawHeader()
         => HeaderDrawer.Draw(SelectionName, 0, ImGui.GetColorU32(ImGuiCol.FrameBg),
-            1, ExportToClipboardButton(), LockButton(),
+            2, ExportToClipboardButton(), ExportResolvedTemplateToClipboardButton(), LockButton(),
             HeaderDrawer.Button.IncognitoButton(_selector.IncognitoMode, v => _selector.IncognitoMode = v));
 
     private void DrawMultiSelection()
@@ -2360,6 +2383,31 @@ public class ProfilePanel
         {
             _logger.Error($"Could not copy data from profile {_selector.Selected!.UniqueId} to clipboard: {ex}");
             _popupSystem.ShowPopup(PopupSystem.Messages.ActionError);
+        }
+    }
+
+    private void ExportResolvedTemplateToClipboard()
+    {
+        var selected = _selector.Selected;
+        if (selected == null)
+            return;
+
+        try
+        {
+            var result = _resolvedTemplateExportService.CopyResolvedTemplateToClipboard(selected.UniqueId);
+            if (!result.Success)
+            {
+                _messageService.NotificationMessage(result.FailureReason, NotificationType.Error, false);
+                return;
+            }
+
+            _popupSystem.ShowPopup(PopupSystem.Messages.ClipboardDataNotLongTerm);
+            _messageService.NotificationMessage("Copied the resolved static shape as a normal template.", NotificationType.Success, false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Could not copy the resolved shape for profile {selected.UniqueId} to clipboard: {ex}");
+            _messageService.NotificationMessage("Could not copy the resolved shape as a template.", NotificationType.Error, false);
         }
     }
 

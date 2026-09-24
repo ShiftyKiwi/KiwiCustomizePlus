@@ -24,6 +24,7 @@ public static class HeaderDrawer
 
         public Action? OnClick;
         public string Description = string.Empty;
+        public string Id = string.Empty;
         public float Width;
         public uint BorderColor;
         public uint TextColor;
@@ -47,7 +48,8 @@ public static class HeaderDrawer
 
             using var color = ImRaii.PushColor(ImGuiCol.Border, BorderColor)
                 .Push(ImGuiCol.Text, TextColor, TextColor != 0);
-            if (ImGuiUtil.DrawDisabledButton(Icon.ToIconString(), new Vector2(Width, ImGui.GetFrameHeight()), string.Empty, Disabled, true))
+            var label = string.IsNullOrEmpty(Id) ? Icon.ToIconString() : $"{Icon.ToIconString()}##{Id}";
+            if (ImGuiUtil.DrawDisabledButton(label, new Vector2(Width, ImGui.GetFrameHeight()), string.Empty, Disabled, true))
                 OnClick?.Invoke();
             color.Pop();
             ImGuiUtil.HoverTooltip(Description);

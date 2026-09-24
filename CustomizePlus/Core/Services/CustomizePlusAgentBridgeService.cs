@@ -7,15 +7,23 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using CustomizePlus.Armatures.Data;
 using CustomizePlus.Armatures.Services;
 using CustomizePlus.Configuration.Data;
 using CustomizePlus.Core.Data;
+using CustomizePlus.Core.Helpers;
+using CustomizePlus.Profiles.Data;
+using CustomizePlus.Profiles.Enums;
 using CustomizePlus.Templates;
+using CustomizePlus.Templates.Data;
 using Dalamud.Plugin;
 using Franthropy.Dalamud.AgentBridge;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using OtterGui.Classes;
 using OtterGui.Log;
 
@@ -36,8 +44,11 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
     private const string DisableHierarchicalShapingActionId = "debug.disable-hierarchical-shaping-session";
     private const string RestoreHierarchicalShapingActionId = "debug.restore-hierarchical-shaping-session";
     private const string ResetHierarchicalShapingMeasurementsActionId = "debug.reset-hierarchical-shaping-measurements";
+    private const string ResolvedTemplateRoundTripSurfaceId = "debug.resolved-template-roundtrip";
+    private const string RunResolvedTemplateRoundTripActionId = "debug.run-resolved-template-roundtrip";
 
     private readonly ArmatureManager _armatureManager;
+    private readonly PortableResolvedTemplateBuilder _portableResolvedTemplateBuilder;
     private readonly FrameworkManager _framework;
     private readonly PluginConfiguration _configuration;
     private readonly Logger _logger;
@@ -58,27 +69,36 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
     private long _lastDebugReviewAtMs;
     private int _poseValidationRequested;
     private int _hierarchicalShapingSessionRequest;
+    private int _resolvedTemplateRoundTripRequested;
+    private string _lastResolvedTemplateStaticSnapshotSha256 = string.Empty;
+    private AgentBridgeResolvedTemplateRoundTripSnapshot _resolvedTemplateRoundTrip = AgentBridgeResolvedTemplateRoundTripSnapshot.NotRun;
     private readonly bool _initialGlobalHierarchicalShapingEnabled;
     private bool _disposed;
     private readonly Dictionary<string, (long Revision, long NativeGeneration, long DeformationRevision, AgentBridgeExtensionSnapshot Summary)> _extensionSummaries = new(StringComparer.Ordinal);
 
     public CustomizePlusAgentBridgeService(
         ArmatureManager armatureManager,
+        PortableResolvedTemplateBuilder portableResolvedTemplateBuilder,
         FrameworkManager framework,
         PluginConfiguration configuration,
         IDalamudPluginInterface pluginInterface,
         Logger logger,
         RuntimeEvidenceService runtimeEvidence,
         TemplateEditorManager templateEditorManager,
-        LocalBoneMetadataService localBoneMetadata)
+        LocalBoneMetadataService localBoneMetadata,
+        ResolvedTemplateExportDebugAdapter resolvedTemplateExportDebugAdapter)
     {
         _armatureManager = armatureManager;
+        _portableResolvedTemplateBuilder = portableResolvedTemplateBuilder;
         _framework = framework;
         _configuration = configuration;
         _logger = logger;
         _runtimeEvidence = runtimeEvidence;
         _templateEditorManager = templateEditorManager;
         _localBoneMetadata = localBoneMetadata;
+        // Keep the separate DEBUG-only Conduit adapter alive for this plugin lifetime.
+        // It exposes only the bounded shared export action; the AgentBridge itself remains read-only.
+        _ = resolvedTemplateExportDebugAdapter;
         _initialGlobalHierarchicalShapingEnabled = configuration.AdvancedBodyScalingSettings.HierarchicalShapingEnabled;
 
         if (string.IsNullOrWhiteSpace(configuration.AgentBridgePluginInstanceId))
@@ -121,11 +141,13 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
                     new AgentBridgeCapabilityDescriptor("authoring-tools.read"),
                     new AgentBridgeCapabilityDescriptor("pose-corrective-validation.debug"),
                     new AgentBridgeCapabilityDescriptor("hierarchical-shaping-performance.debug"),
+                    new AgentBridgeCapabilityDescriptor("resolved-template-roundtrip.debug"),
                 },
                 ReviewSurfaces: new[]
                 {
                     new AgentBridgeReviewSurfaceDescriptor(PoseValidationSurfaceId, "Customize+ Debug RBF validation", "get-snapshot", PoseValidationSurfaceId, 1),
                     new AgentBridgeReviewSurfaceDescriptor(HierarchicalShapingSurfaceId, "Customize+ Debug Hierarchical Shaping performance", "get-snapshot", HierarchicalShapingSurfaceId, 1),
+                    new AgentBridgeReviewSurfaceDescriptor(ResolvedTemplateRoundTripSurfaceId, "Customize+ Debug resolved-template round trip", "get-snapshot", ResolvedTemplateRoundTripSurfaceId, 1),
                 },
                 CaptureSurfaces: Array.Empty<AgentBridgeCaptureSurfaceDescriptor>(),
                 Actions: new[]
@@ -135,6 +157,7 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
                     new AgentBridgeActionDescriptor(DisableHierarchicalShapingActionId, "Disable session Hierarchical Shaping", HierarchicalShapingSurfaceId, AgentBridgeUiControlKind.Button, true),
                     new AgentBridgeActionDescriptor(RestoreHierarchicalShapingActionId, "Restore session Hierarchical Shaping", HierarchicalShapingSurfaceId, AgentBridgeUiControlKind.Button, true),
                     new AgentBridgeActionDescriptor(ResetHierarchicalShapingMeasurementsActionId, "Reset Hierarchical Shaping measurements", HierarchicalShapingSurfaceId, AgentBridgeUiControlKind.Button, true),
+                    new AgentBridgeActionDescriptor(RunResolvedTemplateRoundTripActionId, "Run resolved-template round trip", ResolvedTemplateRoundTripSurfaceId, AgentBridgeUiControlKind.Button, true),
                 }),
             HandleRequestAsync = router.HandleAsync,
             EnableAudit = false,
@@ -163,6 +186,7 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
 
         ProcessDebugPoseValidationRequest();
         ProcessDebugHierarchicalShapingSessionRequest();
+        ProcessResolvedTemplateRoundTripRequest();
         if (Environment.TickCount64 - _lastDebugReviewAtMs >= DebugReviewRefreshIntervalMs)
             RefreshDebugReviewControls();
         if (Environment.TickCount64 - _lastSnapshotAtMs < SnapshotRefreshIntervalMs)
@@ -188,6 +212,7 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
                 value: "Runs one current-player, Debug-only 25-cycle RBF validation fixture.",
                 () => Interlocked.Exchange(ref _poseValidationRequested, 1));
             RegisterHierarchicalShapingDebugControls();
+            RegisterResolvedTemplateRoundTripDebugControl();
         }
         finally
         {
@@ -250,6 +275,210 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
             value: "Clears only Debug per-armature timing and cache-event counters. It does not change configuration, profiles, templates, or live transforms.",
             () => Interlocked.Exchange(ref _hierarchicalShapingSessionRequest, 4));
     }
+
+    private void RegisterResolvedTemplateRoundTripDebugControl()
+        => _debugReviewControls.Register(
+            RunResolvedTemplateRoundTripActionId,
+            "Run resolved-template round trip",
+            AgentBridgeUiControlKind.Button,
+            Vector2.Zero,
+            Vector2.One,
+            enabled: true,
+            selected: false,
+            value: "Debug-only: serializes the current stable resolved snapshot, imports it into an in-memory temporary profile with Advanced Body Scaling explicitly off, and reports numerical equivalence. It never saves, assigns, or applies the temporary profile.",
+            () => Interlocked.Exchange(ref _resolvedTemplateRoundTripRequested, 1));
+
+    private void ProcessResolvedTemplateRoundTripRequest()
+    {
+        if (Interlocked.Exchange(ref _resolvedTemplateRoundTripRequested, 0) == 0)
+            return;
+
+        var armatures = _armatureManager.Armatures.Values
+            .Where(static armature => armature.IsBuilt && armature.IsSkeletonBindingCurrent && !armature.IsAwaitingAppearanceContextRebind)
+            .OrderBy(static armature => armature.ActorIdentifier.ToString(), StringComparer.Ordinal)
+            .ToArray();
+        if (armatures.Length != 1)
+        {
+            _resolvedTemplateRoundTrip = AgentBridgeResolvedTemplateRoundTripSnapshot.Unavailable(
+                $"Expected one stable live armature for the Debug round trip, found {armatures.Length}.");
+            _lastSnapshotKey = string.Empty;
+            return;
+        }
+
+        var armature = armatures[0];
+        var sourceProfile = armature.Profile;
+        var sourceDigestBefore = ComputeProfileDigest(sourceProfile);
+        var nativeBefore = armature.GetDebugNativeWriteDiagnostics();
+        try
+        {
+            var build = _portableResolvedTemplateBuilder.TryBuild(sourceProfile, armature);
+            if (!build.Success)
+            {
+                _resolvedTemplateRoundTrip = AgentBridgeResolvedTemplateRoundTripSnapshot.Unavailable(build.Reason);
+                return;
+            }
+
+            var payload = Base64Helper.ExportTemplateToBase64(build.Template!);
+            var payloadHash = ComputeSha256(payload);
+            var payloadVersion = Base64Helper.ImportFromBase64(payload, out var json);
+            if (payloadVersion != Template.Version)
+            {
+                _resolvedTemplateRoundTrip = AgentBridgeResolvedTemplateRoundTripSnapshot.Unavailable(
+                    $"The existing template clipboard format returned version {payloadVersion}, expected {Template.Version}.");
+                return;
+            }
+
+            var imported = Template.Load(JObject.Parse(json));
+            var disposableProfile = new Profile
+            {
+                Name = "[Debug] Resolved Template Round Trip",
+                Enabled = true,
+                ProfileType = ProfileType.Temporary,
+                AdvancedBodyScalingOverrides = new AdvancedBodyScalingProfileSettings
+                {
+                    UseProfileOverrides = true,
+                    Overrides = new AdvancedBodyScalingOverrides { Enabled = false },
+                },
+            };
+            disposableProfile.Templates.Add(imported);
+
+            var staticSnapshot = armature.ResolvedBoneTransforms;
+            var staticSnapshotHash = ComputeTransformSetSha256(staticSnapshot);
+            var ordinaryCombined = ProfileTransformResolver.Resolve(sourceProfile, armature.GetCapabilityManifestSnapshot()).EffectiveTransforms;
+            var importedResolution = ProfileTransformResolver.Resolve(disposableProfile, armature.GetCapabilityManifestSnapshot()).EffectiveTransforms;
+            var sourceDigestAfter = ComputeProfileDigest(sourceProfile);
+            var nativeAfter = armature.GetDebugNativeWriteDiagnostics();
+            var equivalent = CompareTransforms(staticSnapshot, importedResolution);
+            var combinedDifference = CompareTransforms(staticSnapshot, ordinaryCombined);
+            var sameAsPreviousStaticSnapshot = !string.IsNullOrEmpty(_lastResolvedTemplateStaticSnapshotSha256)
+                && string.Equals(_lastResolvedTemplateStaticSnapshotSha256, staticSnapshotHash, StringComparison.Ordinal);
+            _lastResolvedTemplateStaticSnapshotSha256 = staticSnapshotHash;
+
+            _resolvedTemplateRoundTrip = new AgentBridgeResolvedTemplateRoundTripSnapshot(
+                Status: equivalent.IsExact ? "passed" : "failed",
+                Detail: equivalent.IsExact
+                    ? "The imported temporary profile resolves exactly to the published static snapshot."
+                    : "The imported temporary profile differs from the published static snapshot.",
+                Actor: armature.ActorIdentifier.ToString(),
+                SourceProfile: sourceProfile.Name.Text,
+                SourceAdvancedBodyScalingEnabled: armature.ActiveAdvancedBodyScalingSettings?.Enabled == true,
+                HierarchicalShapingEnabled: GetHierarchicalShapingSnapshot(armature).EffectiveEnabled,
+                StaticTransformCount: staticSnapshot.Count,
+                OrdinaryCombinedTransformCount: ordinaryCombined.Count,
+                DifferenceFromOrdinaryCombined: combinedDifference,
+                ClipboardPayloadLength: payload.Length,
+                ClipboardPayloadSha256: payloadHash,
+                ClipboardPayloadVersion: payloadVersion,
+                StaticSnapshotSha256: staticSnapshotHash,
+                DisposableProfileAdvancedBodyScalingExplicitlyOff: disposableProfile.AdvancedBodyScalingOverrides.UseProfileOverrides
+                    && disposableProfile.AdvancedBodyScalingOverrides.Overrides.Enabled == false,
+                ImportedTransformCount: importedResolution.Count,
+                ImportedComparison: equivalent,
+                StaticLockedTransformCount: staticSnapshot.Values.Count(static transform => transform.LockState != BoneLockState.Unlocked),
+                ImportedLockedTransformCount: importedResolution.Values.Count(static transform => transform.LockState != BoneLockState.Unlocked),
+                StaticPinnedTransformCount: staticSnapshot.Values.Count(static transform => transform.HasPinnedScaleAxes()),
+                ImportedPinnedTransformCount: importedResolution.Values.Count(static transform => transform.HasPinnedScaleAxes()),
+                SourceProfileUnchanged: string.Equals(sourceDigestBefore, sourceDigestAfter, StringComparison.Ordinal),
+                SameAsPreviousStaticSnapshot: sameAsPreviousStaticSnapshot,
+                PersistentWrites: false,
+                DirectNativeResearchWrites: nativeAfter.Attempted - nativeBefore.Attempted);
+            _logger.Debug($"Debug resolved-template round trip completed for {armature.ActorIdentifier}: {staticSnapshot.Count} static transforms, exact={equivalent.IsExact}.");
+        }
+        catch (Exception ex)
+        {
+            _resolvedTemplateRoundTrip = AgentBridgeResolvedTemplateRoundTripSnapshot.Unavailable(
+                $"The Debug resolved-template round trip failed: {ex.Message}");
+            _logger.Error($"Debug resolved-template round trip failed: {ex}");
+        }
+        finally
+        {
+            _lastSnapshotKey = string.Empty;
+        }
+    }
+
+    private static AgentBridgeTransformComparison CompareTransforms(
+        IReadOnlyDictionary<string, BoneTransform> expected,
+        IReadOnlyDictionary<string, BoneTransform> actual)
+    {
+        var missing = expected.Keys.Count(key => !actual.ContainsKey(key));
+        var unexpected = actual.Keys.Count(key => !expected.ContainsKey(key));
+        var mismatched = 0;
+        var lockOrPinMismatches = 0;
+        var maximumComponentDelta = 0f;
+        foreach (var (boneName, expectedTransform) in expected)
+        {
+            if (!actual.TryGetValue(boneName, out var actualTransform))
+                continue;
+
+            var delta = MaxComponentDelta(expectedTransform, actualTransform);
+            maximumComponentDelta = Math.Max(maximumComponentDelta, delta);
+            var protectionMatches = expectedTransform.LockState == actualTransform.LockState
+                && expectedTransform.PinX == actualTransform.PinX
+                && expectedTransform.PinY == actualTransform.PinY
+                && expectedTransform.PinZ == actualTransform.PinZ;
+            if (!protectionMatches)
+                lockOrPinMismatches++;
+            if (delta > 0.000001f || !protectionMatches
+                || expectedTransform.PropagateTranslation != actualTransform.PropagateTranslation
+                || expectedTransform.PropagateRotation != actualTransform.PropagateRotation
+                || expectedTransform.PropagateScale != actualTransform.PropagateScale
+                || expectedTransform.ChildScalingIndependent != actualTransform.ChildScalingIndependent)
+                mismatched++;
+        }
+
+        return new AgentBridgeTransformComparison(
+            ExpectedCount: expected.Count,
+            ActualCount: actual.Count,
+            MissingCount: missing,
+            UnexpectedCount: unexpected,
+            MismatchedCount: mismatched,
+            LockOrPinMismatches: lockOrPinMismatches,
+            MaximumComponentDelta: maximumComponentDelta);
+    }
+
+    private static float MaxComponentDelta(BoneTransform expected, BoneTransform actual)
+    {
+        var maximum = 0f;
+        maximum = Math.Max(maximum, MaxComponentDelta(expected.Translation, actual.Translation));
+        maximum = Math.Max(maximum, MaxComponentDelta(expected.Rotation, actual.Rotation));
+        maximum = Math.Max(maximum, MaxComponentDelta(expected.Scaling, actual.Scaling));
+        maximum = Math.Max(maximum, MaxComponentDelta(expected.ChildScaling, actual.ChildScaling));
+        return Math.Max(maximum, MathF.Abs(expected.PropagationFalloff - actual.PropagationFalloff));
+    }
+
+    private static float MaxComponentDelta(Vector3 expected, Vector3 actual)
+        => Math.Max(Math.Max(MathF.Abs(expected.X - actual.X), MathF.Abs(expected.Y - actual.Y)), MathF.Abs(expected.Z - actual.Z));
+
+    private static string ComputeProfileDigest(Profile profile)
+        => ComputeSha256(profile.JsonSerialize().ToString(Formatting.None));
+
+    private static string ComputeTransformSetSha256(IReadOnlyDictionary<string, BoneTransform> transforms)
+    {
+        var builder = new StringBuilder();
+        foreach (var (boneName, transform) in transforms.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+        {
+            builder.Append(boneName).Append('|');
+            AppendVectorBits(builder, transform.Translation);
+            AppendVectorBits(builder, transform.Rotation);
+            AppendVectorBits(builder, transform.Scaling);
+            AppendVectorBits(builder, transform.ChildScaling);
+            builder.Append(BitConverter.SingleToInt32Bits(transform.PropagationFalloff)).Append('|')
+                .Append((int)transform.LockState).Append('|')
+                .Append(transform.PinX).Append('|').Append(transform.PinY).Append('|').Append(transform.PinZ).Append('|')
+                .Append(transform.PropagateTranslation).Append('|').Append(transform.PropagateRotation).Append('|').Append(transform.PropagateScale).Append('|')
+                .Append(transform.ChildScalingIndependent).Append('\n');
+        }
+
+        return ComputeSha256(builder.ToString());
+    }
+
+    private static void AppendVectorBits(StringBuilder builder, Vector3 vector)
+        => builder.Append(BitConverter.SingleToInt32Bits(vector.X)).Append('|')
+            .Append(BitConverter.SingleToInt32Bits(vector.Y)).Append('|')
+            .Append(BitConverter.SingleToInt32Bits(vector.Z)).Append('|');
+
+    private static string ComputeSha256(string value)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
     private void ProcessDebugHierarchicalShapingSessionRequest()
     {
@@ -446,7 +675,8 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
                 _localBoneMetadata.LoadedEntryCount),
             RecentSelfLifecycle: lifecycle,
             Evidence: evidence,
-            BridgePerformance: new AgentBridgePerformanceSnapshot(_snapshotBuildCount + 1, _snapshotLatestMilliseconds, _snapshotAverageMilliseconds, _snapshotMaxMilliseconds)));
+            BridgePerformance: new AgentBridgePerformanceSnapshot(_snapshotBuildCount + 1, _snapshotLatestMilliseconds, _snapshotAverageMilliseconds, _snapshotMaxMilliseconds),
+            ResolvedTemplateRoundTrip: _resolvedTemplateRoundTrip));
         RecordSnapshotTiming(started);
     }
 
@@ -665,7 +895,8 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
         AgentBridgeAuthoringToolSnapshot Authoring,
         IReadOnlyList<string> RecentSelfLifecycle,
         RuntimeEvidenceSummary Evidence,
-        AgentBridgePerformanceSnapshot BridgePerformance)
+        AgentBridgePerformanceSnapshot BridgePerformance,
+        AgentBridgeResolvedTemplateRoundTripSnapshot ResolvedTemplateRoundTrip)
     {
         public static AgentBridgeSnapshot Empty { get; } = new(
             "customizeplus.debug.snapshot.v1",
@@ -677,7 +908,8 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
             new AgentBridgeAuthoringToolSnapshot(false, false, string.Empty, string.Empty, 0, 0, 0, string.Empty, false, 0, 0, 0),
             Array.Empty<string>(),
             new RuntimeEvidenceSummary(0, "No comparison run.", string.Empty),
-            new AgentBridgePerformanceSnapshot(0, 0d, 0d, 0d));
+            new AgentBridgePerformanceSnapshot(0, 0d, 0d, 0d),
+            AgentBridgeResolvedTemplateRoundTripSnapshot.NotRun);
     }
 
     private sealed record AgentBridgeArmatureSnapshot(
@@ -817,6 +1049,54 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
         double LatestMilliseconds,
         double AverageMilliseconds,
         double MaxMilliseconds);
+
+    private sealed record AgentBridgeTransformComparison(
+        int ExpectedCount,
+        int ActualCount,
+        int MissingCount,
+        int UnexpectedCount,
+        int MismatchedCount,
+        int LockOrPinMismatches,
+        float MaximumComponentDelta)
+    {
+        public bool IsExact => MissingCount == 0 && UnexpectedCount == 0 && MismatchedCount == 0 && LockOrPinMismatches == 0;
+    }
+
+    private sealed record AgentBridgeResolvedTemplateRoundTripSnapshot(
+        string Status,
+        string Detail,
+        string Actor,
+        string SourceProfile,
+        bool SourceAdvancedBodyScalingEnabled,
+        bool HierarchicalShapingEnabled,
+        int StaticTransformCount,
+        int OrdinaryCombinedTransformCount,
+        AgentBridgeTransformComparison DifferenceFromOrdinaryCombined,
+        int ClipboardPayloadLength,
+        string ClipboardPayloadSha256,
+        int ClipboardPayloadVersion,
+        string StaticSnapshotSha256,
+        bool DisposableProfileAdvancedBodyScalingExplicitlyOff,
+        int ImportedTransformCount,
+        AgentBridgeTransformComparison ImportedComparison,
+        int StaticLockedTransformCount,
+        int ImportedLockedTransformCount,
+        int StaticPinnedTransformCount,
+        int ImportedPinnedTransformCount,
+        bool SourceProfileUnchanged,
+        bool SameAsPreviousStaticSnapshot,
+        bool PersistentWrites,
+        long DirectNativeResearchWrites)
+    {
+        public static AgentBridgeResolvedTemplateRoundTripSnapshot NotRun { get; } = new(
+            "not-run", "No Debug resolved-template round trip has been requested.", string.Empty, string.Empty,
+            false, false, 0, 0, new AgentBridgeTransformComparison(0, 0, 0, 0, 0, 0, 0f),
+            0, string.Empty, 0, string.Empty, false, 0, new AgentBridgeTransformComparison(0, 0, 0, 0, 0, 0, 0f),
+            0, 0, 0, 0, false, false, false, 0);
+
+        public static AgentBridgeResolvedTemplateRoundTripSnapshot Unavailable(string detail)
+            => NotRun with { Status = "unavailable", Detail = detail };
+    }
 
     private sealed record AgentBridgeQualitySnapshot(
         float MaxBilateralDifference,
