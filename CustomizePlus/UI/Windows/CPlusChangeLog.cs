@@ -57,6 +57,7 @@ public class CPlusChangeLog
         Add4_0_0(Changelog);
         Add4_1_0(Changelog);
         Add4_1_1(Changelog);
+        Add4_2_0(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -112,6 +113,13 @@ public class CPlusChangeLog
         .RegisterEntry("Fixed lock-only template rows being lost when runtime armature bindings are rebuilt.")
         .RegisterEntry("Fixed lock-only template rows being omitted from grouped transform exports.")
         .RegisterEntry("Fixed IPC profile conversion preserving row lock state, and improved template-copy isolation for mutable bone transforms.");
+
+    private static void Add4_2_0(Changelog log)
+        => log.NextVersion("Version 4.2.0")
+        .RegisterHighlight("Added Copy Resolved Shape as Template to Profile headers.")
+        .RegisterEntry("Copies the profile's stable static Advanced Body Scaling result as a normal template that can be used with Advanced Body Scaling disabled.", 1)
+        .RegisterEntry("Compatible locks and pinned scale axes are preserved. Dynamic pose, IK, and motion corrections are excluded.", 1)
+        .RegisterImportant("Resolved-shape export reads the active profile context without changing the source profile or its templates.");
 
     private static void Add3_0_2(Changelog log)
         => log.NextVersion("Version 3.0.2")
