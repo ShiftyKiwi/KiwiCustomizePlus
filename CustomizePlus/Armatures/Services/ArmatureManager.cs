@@ -523,23 +523,24 @@ public unsafe sealed class ArmatureManager : IDisposable
                     activeProfile.Armatures.Add(armature);
                 }
 
-                var actorForSettings = objects[0];
+                if (!TrySelectBindableActor(armature, obj.Value, out var actorForSettings))
+                {
+                    // Do not resolve a profile against an invalid GPose world copy. Retain the
+                    // pending request so the normal lifecycle pass retries after a valid copy appears.
+                    armature.IsPendingProfileRebind = true;
+                    continue;
+                }
+
                 var advancedBodyScaling = ResolveAdvancedBodyScaling(armature.Profile, actorForSettings);
-                var actorSkeletonUpdated = actorForSettings && armature.IsSkeletonUpdated(actorForSettings.Model.AsCharacterBase);
-                var boneImportance = actorForSettings
-                    ? EvaluateBoneImportanceForArmature(
-                        armature,
-                        actorForSettings,
-                        advancedBodyScaling,
-                        boneImportanceBudget,
-                        actorSkeletonUpdated,
-                        TryGetGlamourerAppearanceTransition(actorForSettings),
-                        forceRefresh: true)
-                    : AdvancedBodyScalingBoneImportanceResult.CreateFallback(
-                        "No live actor was available during profile rebind.",
-                        enabled: advancedBodyScaling.ModelDerivedBoneImportanceEnabled,
-                        preferSkinWeights: advancedBodyScaling.PreferTrueSkinWeightImportance,
-                        heuristicBlend: advancedBodyScaling.BoneImportanceHeuristicBlend);
+                var actorSkeletonUpdated = armature.IsSkeletonUpdated(actorForSettings.Model.AsCharacterBase);
+                var boneImportance = EvaluateBoneImportanceForArmature(
+                    armature,
+                    actorForSettings,
+                    advancedBodyScaling,
+                    boneImportanceBudget,
+                    actorSkeletonUpdated,
+                    TryGetGlamourerAppearanceTransition(actorForSettings),
+                    forceRefresh: true);
                 armature.RebuildBoneTemplateBinding(
                     _configuration.RuntimeSafetySettings.SoftScaleLimitsEnabled,
                     _configuration.RuntimeSafetySettings.AutomaticChildScaleCompensationEnabled,
@@ -605,7 +606,12 @@ public unsafe sealed class ArmatureManager : IDisposable
                 {
                     if (actorData.Objects.Count > 0)
                     {
-                        var motionActor = actorData.Objects[0];
+                        if (!TrySelectBindableActor(armature, actorData, out var motionActor))
+                        {
+                            armature.ResetMotionWarpingContext("No current bindable actor was available for motion sampling.");
+                            continue;
+                        }
+
                         if (_emoteService.IsSitting(motionActor))
                         {
                             armature.ResetMotionWarpingContext("Motion warping is suppressed while the actor is sitting.");
@@ -1736,6 +1742,268 @@ public unsafe sealed class ArmatureManager : IDisposable
     }
 
     /// <summary>
+    /// Selects the actor instance that may be used for the current binding operation. GPose and
+    /// ordinary quest cutscenes can group a skeletonless world actor with a valid cutscene copy.
+    /// </summary>
+    private bool TrySelectBindableActor(Armature armature, ActorData actorData, out Actor actor)
+    {
+        actor = Actor.Null;
+        if (actorData.Objects.Count == 0)
+            return false;
+
+        if (_objectManager.IsInLobby)
+            return TrySelectLobbyActor(armature, actorData, out actor);
+
+        var cutsceneActors = actorData.OnlyGPose().Objects;
+        if (!ArmatureActorSelection.RequiresValidatedSelection(_gposeService.IsInGPose, cutsceneActors.Count > 0))
+        {
+            actor = actorData.Objects[0];
+            return true;
+        }
+
+        var selectionActors = cutsceneActors.Count > 0 ? cutsceneActors : actorData.Objects;
+        var candidates = selectionActors
+            .Select(candidate => CreateActorSelectionCandidate(armature.ActorIdentifier, candidate))
+            .ToArray();
+        var selection = ArmatureActorSelection.Select(candidates, isInGPose: true);
+        if (!selection.IsSelected)
+        {
+            armature.MarkNativeBindingUnavailable($"GPose/cutscene actor selection rejected: {selection.Reason}");
+            return false;
+        }
+
+        actor = selectionActors[selection.Index];
+        return true;
+    }
+
+    private bool TrySelectLobbyActor(Armature armature, ActorData actorData, out Actor actor)
+    {
+        actor = Actor.Null;
+        if (armature.ActorIdentifier.Type != IdentifierType.Player)
+        {
+            armature.MarkNativeBindingUnavailable("Lobby actor selection rejected: authoritative lobby mapping did not resolve to a player identifier.");
+            return false;
+        }
+
+        // ActorObjectManager.AddLobbyCharacters creates this group from AgentLobby's character
+        // entries. Preview actors occupy cutscene slots, but cannot derive a normal identifier.
+        var candidates = actorData.Objects
+            .Select(CreateLobbySelectionCandidate)
+            .ToArray();
+        var selection = ArmatureActorSelection.SelectLobby(candidates);
+        if (!selection.IsSelected)
+        {
+            armature.MarkNativeBindingUnavailable($"Lobby actor selection rejected: {selection.Reason}");
+            return false;
+        }
+
+        actor = actorData.Objects[selection.Index];
+        return true;
+    }
+
+    private ArmatureActorSelectionCandidate CreateActorSelectionCandidate(ActorIdentifier expectedIdentifier, Actor candidate)
+    {
+        var isValid = candidate.Valid && candidate.IsCharacter;
+        var isGPoseOrCutscene = isValid && candidate.IsGPoseOrCutscene;
+        if (!isValid)
+            return new ArmatureActorSelectionCandidate(isGPoseOrCutscene, false, false, false, false);
+
+        var identityMatches = candidate.Identifier(_actorManager, out var candidateIdentifier)
+            && candidateIdentifier.CreatePermanent() == expectedIdentifier;
+        var characterBase = candidate.Model.AsCharacterBase;
+        var hasCharacterBase = characterBase != null;
+        var hasSkeleton = hasCharacterBase
+            && characterBase->Skeleton != null
+            && characterBase->Skeleton->PartialSkeletonCount > 0;
+        return new ArmatureActorSelectionCandidate(isGPoseOrCutscene, true, hasCharacterBase, hasSkeleton, identityMatches);
+    }
+
+    private static ArmatureLobbyActorSelectionCandidate CreateLobbySelectionCandidate(Actor candidate)
+    {
+        var isValid = candidate.Valid && candidate.IsCharacter;
+        if (!isValid)
+            return new ArmatureLobbyActorSelectionCandidate(false, false, false);
+
+        var characterBase = candidate.Model.AsCharacterBase;
+        var hasCharacterBase = characterBase != null;
+        var hasSkeleton = hasCharacterBase
+            && characterBase->Skeleton != null
+            && characterBase->Skeleton->PartialSkeletonCount > 0;
+        return new ArmatureLobbyActorSelectionCandidate(true, hasCharacterBase, hasSkeleton);
+    }
+
+#if DEBUG
+    /// <summary>
+    /// Captures bounded, read-only actor-selection evidence for the development bridge. This never
+    /// participates in binding, profile resolution, or transform application.
+    /// </summary>
+    internal IReadOnlyList<ArmatureActorSelectionDebugSnapshot> GetActorSelectionDebugSnapshots()
+        => Armatures.Values
+            .OrderBy(static armature => armature.ActorIdentifier.ToString(), StringComparer.Ordinal)
+            .Take(24)
+            .Select(CreateActorSelectionDebugSnapshot)
+            .ToArray();
+
+    private ArmatureActorSelectionDebugSnapshot CreateActorSelectionDebugSnapshot(Armature armature)
+    {
+        if (!_objectManager.TryGetValue(armature.ActorIdentifier, out var actorData) || actorData.Objects.Count == 0)
+        {
+            return new ArmatureActorSelectionDebugSnapshot(
+                armature.ActorIdentifier.ToString(),
+                false,
+                _gposeService.IsInGPose,
+                0,
+                -1,
+                "actor group unavailable",
+                -1,
+                "actor group unavailable",
+                Array.Empty<ArmatureActorSelectionDebugCandidate>());
+        }
+
+        var objects = actorData.Objects;
+        var candidates = objects
+            .Select(candidate => CreateActorSelectionCandidate(armature.ActorIdentifier, candidate))
+            .ToArray();
+        var debugCandidates = candidates
+            .Select((candidate, index) => new ArmatureActorSelectionDebugCandidate(
+                (int)objects[index].Index.Index,
+                candidate.IsGPoseOrCutscene,
+                candidate.IsValid,
+                candidate.HasCharacterBase,
+                candidate.HasSkeleton,
+                candidate.MatchesExpectedIdentifier))
+            .ToArray();
+
+        var cutsceneObjects = actorData.OnlyGPose().Objects;
+        var currentSelectionActors = cutsceneObjects.Count > 0 ? cutsceneObjects : objects;
+        var currentSelection = ArmatureActorSelection.RequiresValidatedSelection(_gposeService.IsInGPose, cutsceneObjects.Count > 0)
+            ? ArmatureActorSelection.Select(
+                currentSelectionActors
+                    .Select(candidate => CreateActorSelectionCandidate(armature.ActorIdentifier, candidate))
+                    .ToArray(),
+                isInGPose: true)
+            : ArmatureActorSelectionResult.Selected(0);
+        var cutsceneCandidates = (cutsceneObjects.Count > 0 ? cutsceneObjects : objects)
+            .Select(candidate => CreateActorSelectionCandidate(armature.ActorIdentifier, candidate))
+            .ToArray();
+        var cutsceneSelection = ArmatureActorSelection.Select(cutsceneCandidates, isInGPose: true);
+        var currentObjectIndex = currentSelection.IsSelected
+            ? (int)currentSelectionActors[currentSelection.Index].Index.Index
+            : -1;
+        var cutsceneObjectIndex = cutsceneSelection.IsSelected
+            ? (int)(cutsceneObjects.Count > 0 ? cutsceneObjects : objects)[cutsceneSelection.Index].Index.Index
+            : -1;
+
+        return new ArmatureActorSelectionDebugSnapshot(
+            armature.ActorIdentifier.ToString(),
+            true,
+            _gposeService.IsInGPose,
+            objects.Count,
+            currentObjectIndex,
+            ArmatureActorSelection.RequiresValidatedSelection(_gposeService.IsInGPose, cutsceneObjects.Count > 0)
+                ? currentSelection.Reason
+                : "normal-world first object (current behavior)",
+            cutsceneObjectIndex,
+            cutsceneSelection.Reason,
+            debugCandidates);
+    }
+
+    /// <summary>Captures only the current player and valid cutscene slots when no armature exists yet.</summary>
+    internal ArmatureCutsceneSelectionDebugSnapshot GetCutsceneSelectionDebugSnapshot()
+        => new(
+            CreateCutsceneActorDebugSnapshot(_objectManager.Player),
+            _objectManager.Objects.CutsceneCharacters
+                .Where(static actor => actor.Valid)
+                .Take(16)
+                .Select(CreateCutsceneActorDebugSnapshot)
+                .ToArray());
+
+    private ArmatureCutsceneActorDebugSnapshot CreateCutsceneActorDebugSnapshot(Actor actor)
+    {
+        var isValid = actor.Valid;
+        var isCharacter = isValid && actor.IsCharacter;
+        var identifier = isValid && actor.Identifier(_actorManager, out var actorIdentifier)
+            ? actorIdentifier.CreatePermanent().ToString()
+            : "unresolved";
+        var characterBase = isCharacter ? actor.Model.AsCharacterBase : null;
+        var hasCharacterBase = characterBase != null;
+        var hasSkeleton = hasCharacterBase
+            && characterBase->Skeleton != null
+            && characterBase->Skeleton->PartialSkeletonCount > 0;
+        return new ArmatureCutsceneActorDebugSnapshot(
+            (int)actor.Index.Index,
+            _actorManager.ToCutsceneParent(actor.Index.Index),
+            isValid ? actor.AsObject->GetGameObjectId().Id.ToString("X16") : string.Empty,
+            identifier,
+            isValid,
+            isCharacter,
+            isValid && actor.IsPlayer,
+            hasCharacterBase,
+            hasSkeleton);
+    }
+
+    /// <summary>
+    /// Captures the Character Select path using the lobby's own ActorIdentifier keys. This is
+    /// diagnostics only: it neither refreshes profiles nor participates in selection or writes.
+    /// </summary>
+    internal ArmatureLobbySelectionDebugSnapshot GetLobbySelectionDebugSnapshot()
+    {
+        var lobbyEntries = _objectManager.Take(8).ToArray();
+        if (!_objectManager.IsInLobby)
+            return new ArmatureLobbySelectionDebugSnapshot(false, _configuration.ProfileApplicationSettings.ApplyInLobby, Array.Empty<ArmatureLobbyActorDebugSnapshot>());
+
+        var actors = lobbyEntries
+            .Select(entry => CreateLobbyActorDebugSnapshot(entry.Key.CreatePermanent(), entry.Value))
+            .ToArray();
+        return new ArmatureLobbySelectionDebugSnapshot(true, _configuration.ProfileApplicationSettings.ApplyInLobby, actors);
+    }
+
+    private ArmatureLobbyActorDebugSnapshot CreateLobbyActorDebugSnapshot(ActorIdentifier expectedIdentifier, ActorData actorData)
+    {
+        var actor = actorData.Objects.Count > 0 ? actorData.Objects[0] : Actor.Null;
+        var candidate = CreateActorSelectionCandidate(expectedIdentifier, actor);
+        var selection = ArmatureActorSelection.SelectLobby(actorData.Objects.Select(CreateLobbySelectionCandidate).ToArray());
+        var derivedIdentifier = actor.Identifier(_actorManager, out var resolvedIdentifier)
+            ? resolvedIdentifier.CreatePermanent().ToString()
+            : "unresolved";
+        var profile = _profileManager.GetEnabledProfilesByActor(expectedIdentifier).FirstOrDefault();
+        var templates = profile?.Templates
+            .Select(template => new ArmatureLobbyTemplateDebugSnapshot(
+                template.Name.ToString(),
+                !profile.DisabledTemplates.Contains(template.UniqueId),
+                profile.TemplateWeights.GetValueOrDefault(template.UniqueId, 1f),
+                template.Bones.Count))
+            .ToArray()
+            ?? Array.Empty<ArmatureLobbyTemplateDebugSnapshot>();
+        var armature = Armatures.Values.FirstOrDefault(candidate => candidate.ActorIdentifier.MatchesIgnoringOwnership(expectedIdentifier));
+        var armatureExists = armature != null;
+        var characterBase = candidate.IsValid ? actor.Model.AsCharacterBase : null;
+
+        return new ArmatureLobbyActorDebugSnapshot(
+            expectedIdentifier.ToString(),
+            actor.Valid ? (int)actor.Index.Index : -1,
+            actor.Valid ? actor.AsObject->ObjectKind.ToString() : "invalid",
+            candidate.IsValid,
+            actor.Valid && actor.IsCharacter,
+            characterBase != null,
+            candidate.HasSkeleton,
+            candidate.IsGPoseOrCutscene,
+            derivedIdentifier,
+            candidate.MatchesExpectedIdentifier,
+            selection.Reason,
+            selection.IsSelected ? (int)actor.Index.Index : -1,
+            profile?.Name.ToString() ?? string.Empty,
+            profile?.UniqueId.ToString() ?? string.Empty,
+            templates,
+            armatureExists,
+            armature?.IsSkeletonBindingCurrent ?? false,
+            armature?.SkeletonRevision ?? 0,
+            armature?.ResolvedBoneTransforms.Count ?? 0,
+            armature?.LastSkeletonBindingIssue ?? string.Empty);
+    }
+#endif
+
+    /// <summary>
     /// Returns whether or not a link can be established between the armature and an in-game object.
     /// If unbuilt, the armature will be rebuilded.
     /// </summary>
@@ -1746,11 +2014,9 @@ public unsafe sealed class ArmatureManager : IDisposable
         {
         if (!_objectManager.TryGetValue(armature.ActorIdentifier, out var actorData) ||
             actorData.Objects == null ||
-            actorData.Objects.Count == 0)
+            actorData.Objects.Count == 0 ||
+            !TrySelectBindableActor(armature, actorData, out var actor))
             return false;
-
-        //we assume that all other objects are a copy of object #0
-        var actor = actorData.Objects[0];
 
         var glamourerAppearanceTransition = TryGetGlamourerAppearanceTransition(actor);
         var appearanceTransitionState = glamourerAppearanceTransition.Phase switch
@@ -1873,7 +2139,7 @@ public unsafe sealed class ArmatureManager : IDisposable
                         _logger.Debug($"StableAppearanceRebindCompleted epoch {stableAppearanceEpoch} for actor #{actor.AsObject->ObjectIndex} after validated armature publication.");
                         RecordSelfLifecycleTrace(armature, actor, "StableAppearanceRebindCompleted", force: true, glamourerAppearanceTransition);
                     }
-                    _logger.Debug($"Published armature revision {armature.SkeletonRevision} (native binding generation {armature.NativeBindingGeneration}) for {armature}; rebuilt current profile bindings and model-derived state.");
+                    _logger.Debug($"Published armature revision {armature.SkeletonRevision} (native binding generation {armature.NativeBindingGeneration}) for {armature} using actor #{actor.AsObject->ObjectIndex}; rebuilt current profile bindings and model-derived state.");
                     RecordSelfLifecycleTrace(armature, actor,
                         reacquisitionPublication ? "actor reacquisition publication" : "armature publication",
                         force: true,

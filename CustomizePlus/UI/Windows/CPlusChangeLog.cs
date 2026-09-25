@@ -58,6 +58,7 @@ public class CPlusChangeLog
         Add4_1_0(Changelog);
         Add4_1_1(Changelog);
         Add4_2_0(Changelog);
+        Add4_2_1(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -120,6 +121,13 @@ public class CPlusChangeLog
         .RegisterEntry("Copies the profile's stable static Advanced Body Scaling result as a normal template that can be used with Advanced Body Scaling disabled.", 1)
         .RegisterEntry("Compatible locks and pinned scale axes are preserved. Dynamic pose, IK, and motion corrections are excluded.", 1)
         .RegisterImportant("Resolved-shape export reads the active profile context without changing the source profile or its templates.");
+
+    private static void Add4_2_1(Changelog log)
+        => log.NextVersion("Version 4.2.1")
+        .RegisterEntry("Fixed assigned profiles failing to reapply to Event NPCs when entering or leaving GPose.")
+        .RegisterEntry("Fixed assigned player profiles failing to apply when supported quest cutscenes use a separate character representation.")
+        .RegisterEntry("Fixed profile application on Character Select after actor-selection hardening.")
+        .RegisterImportant("Actor representation selection remains validated and fails closed when no unique bindable representation is available.");
 
     private static void Add3_0_2(Changelog log)
         => log.NextVersion("Version 3.0.2")

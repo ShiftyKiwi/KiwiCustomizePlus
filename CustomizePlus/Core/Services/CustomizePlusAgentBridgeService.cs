@@ -31,7 +31,7 @@ namespace CustomizePlus.Core.Services;
 
 /// <summary>
 /// Development-only, read-only bridge for obtaining a cached diagnostic snapshot.
-/// It deliberately consumes published armature state and never walks or mutates native skeleton data.
+/// It deliberately consumes published armature state and bounded lifecycle diagnostics, and never mutates native skeleton data.
 /// </summary>
 internal sealed class CustomizePlusAgentBridgeService : IDisposable
 {
@@ -648,6 +648,34 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
             .ToArray();
         var activeTemplates = armatures.Sum(static armature => armature.TemplateApplicability.Count(static item => item.Active));
         var dormantTemplates = armatures.Sum(static armature => armature.TemplateApplicability.Count(static item => item.Enabled && !item.Active));
+        var actorSelections = force
+            ? _armatureManager.GetActorSelectionDebugSnapshots()
+                .Select(static selection => new AgentBridgeActorSelectionSnapshot(
+                    selection.Actor,
+                    selection.GroupFound,
+                    selection.IsInGPose,
+                    selection.GroupObjectCount,
+                    selection.CurrentSelectedObjectIndex,
+                    selection.CurrentSelectionReason,
+                    selection.CutsceneAwareSelectedObjectIndex,
+                    selection.CutsceneAwareSelectionReason,
+                    selection.Candidates
+                        .Select(static candidate => new AgentBridgeActorSelectionCandidateSnapshot(
+                            candidate.ObjectIndex,
+                            candidate.IsGPoseOrCutscene,
+                            candidate.IsValid,
+                            candidate.HasCharacterBase,
+                            candidate.HasSkeleton,
+                            candidate.MatchesExpectedIdentifier))
+                        .ToArray()))
+                .ToArray()
+            : Volatile.Read(ref _snapshot).ActorSelections;
+        var cutsceneSelection = force
+            ? ToCutsceneSelectionSnapshot(_armatureManager.GetCutsceneSelectionDebugSnapshot())
+            : Volatile.Read(ref _snapshot).CutsceneSelection;
+        var lobbySelection = force
+            ? ToLobbySelectionSnapshot(_armatureManager.GetLobbySelectionDebugSnapshot())
+            : Volatile.Read(ref _snapshot).LobbySelection;
         Volatile.Write(ref _snapshot, new AgentBridgeSnapshot(
             Schema: "customizeplus.debug.snapshot.v1",
             CapturedAtUtc: DateTimeOffset.UtcNow,
@@ -676,9 +704,63 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
             RecentSelfLifecycle: lifecycle,
             Evidence: evidence,
             BridgePerformance: new AgentBridgePerformanceSnapshot(_snapshotBuildCount + 1, _snapshotLatestMilliseconds, _snapshotAverageMilliseconds, _snapshotMaxMilliseconds),
-            ResolvedTemplateRoundTrip: _resolvedTemplateRoundTrip));
+            ResolvedTemplateRoundTrip: _resolvedTemplateRoundTrip,
+            ActorSelections: actorSelections,
+            CutsceneSelection: cutsceneSelection,
+            LobbySelection: lobbySelection));
         RecordSnapshotTiming(started);
     }
+
+    private static AgentBridgeCutsceneSelectionSnapshot ToCutsceneSelectionSnapshot(ArmatureCutsceneSelectionDebugSnapshot snapshot)
+        => new(
+            ToCutsceneActorSnapshot(snapshot.PlayerSlot),
+            snapshot.CutsceneSlots.Select(ToCutsceneActorSnapshot).ToArray());
+
+    private static AgentBridgeCutsceneActorSnapshot ToCutsceneActorSnapshot(ArmatureCutsceneActorDebugSnapshot snapshot)
+        => new(
+            snapshot.ObjectIndex,
+            snapshot.CutsceneParentIndex,
+            snapshot.GameObjectId,
+            snapshot.Identifier,
+            snapshot.IsValid,
+            snapshot.IsCharacter,
+            snapshot.IsPlayer,
+            snapshot.HasCharacterBase,
+            snapshot.HasSkeleton);
+
+    private static AgentBridgeLobbySelectionSnapshot ToLobbySelectionSnapshot(ArmatureLobbySelectionDebugSnapshot snapshot)
+        => new(
+            snapshot.IsInLobby,
+            snapshot.ApplyProfilesInLobby,
+            snapshot.Actors
+                .Select(static actor => new AgentBridgeLobbyActorSnapshot(
+                    actor.ExpectedIdentifier,
+                    actor.ObjectIndex,
+                    actor.ObjectKind,
+                    actor.IsValid,
+                    actor.IsCharacter,
+                    actor.HasCharacterBase,
+                    actor.HasSkeleton,
+                    actor.IsGPoseOrCutscene,
+                    actor.DerivedIdentifier,
+                    actor.MatchesExpectedIdentifier,
+                    actor.SelectionReason,
+                    actor.SelectedObjectIndex,
+                    actor.ProfileName,
+                    actor.ProfileId,
+                    actor.Templates
+                        .Select(static template => new AgentBridgeLobbyTemplateSnapshot(
+                            template.Name,
+                            template.Enabled,
+                            template.Weight,
+                            template.SavedTransformCount))
+                        .ToArray(),
+                    actor.ArmatureExists,
+                    actor.BindingCurrent,
+                    actor.SkeletonRevision,
+                    actor.ResolvedTransformCount,
+                    actor.BindingIssue))
+                .ToArray());
 
     private string BuildPublishedStateKey()
     {
@@ -896,7 +978,10 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
         IReadOnlyList<string> RecentSelfLifecycle,
         RuntimeEvidenceSummary Evidence,
         AgentBridgePerformanceSnapshot BridgePerformance,
-        AgentBridgeResolvedTemplateRoundTripSnapshot ResolvedTemplateRoundTrip)
+        AgentBridgeResolvedTemplateRoundTripSnapshot ResolvedTemplateRoundTrip,
+        IReadOnlyList<AgentBridgeActorSelectionSnapshot> ActorSelections,
+        AgentBridgeCutsceneSelectionSnapshot CutsceneSelection,
+        AgentBridgeLobbySelectionSnapshot LobbySelection)
     {
         public static AgentBridgeSnapshot Empty { get; } = new(
             "customizeplus.debug.snapshot.v1",
@@ -909,8 +994,80 @@ internal sealed class CustomizePlusAgentBridgeService : IDisposable
             Array.Empty<string>(),
             new RuntimeEvidenceSummary(0, "No comparison run.", string.Empty),
             new AgentBridgePerformanceSnapshot(0, 0d, 0d, 0d),
-            AgentBridgeResolvedTemplateRoundTripSnapshot.NotRun);
+            AgentBridgeResolvedTemplateRoundTripSnapshot.NotRun,
+            Array.Empty<AgentBridgeActorSelectionSnapshot>(),
+            new AgentBridgeCutsceneSelectionSnapshot(
+                new AgentBridgeCutsceneActorSnapshot(-1, -1, string.Empty, "unresolved", false, false, false, false, false),
+                Array.Empty<AgentBridgeCutsceneActorSnapshot>()),
+            new AgentBridgeLobbySelectionSnapshot(false, false, Array.Empty<AgentBridgeLobbyActorSnapshot>()));
     }
+
+    private sealed record AgentBridgeActorSelectionSnapshot(
+        string Actor,
+        bool GroupFound,
+        bool IsInGPose,
+        int GroupObjectCount,
+        int CurrentSelectedObjectIndex,
+        string CurrentSelectionReason,
+        int CutsceneAwareSelectedObjectIndex,
+        string CutsceneAwareSelectionReason,
+        IReadOnlyList<AgentBridgeActorSelectionCandidateSnapshot> Candidates);
+
+    private sealed record AgentBridgeActorSelectionCandidateSnapshot(
+        int ObjectIndex,
+        bool IsGPoseOrCutscene,
+        bool IsValid,
+        bool HasCharacterBase,
+        bool HasSkeleton,
+        bool MatchesExpectedIdentifier);
+
+    private sealed record AgentBridgeCutsceneSelectionSnapshot(
+        AgentBridgeCutsceneActorSnapshot PlayerSlot,
+        IReadOnlyList<AgentBridgeCutsceneActorSnapshot> CutsceneSlots);
+
+    private sealed record AgentBridgeCutsceneActorSnapshot(
+        int ObjectIndex,
+        int CutsceneParentIndex,
+        string GameObjectId,
+        string Identifier,
+        bool IsValid,
+        bool IsCharacter,
+        bool IsPlayer,
+        bool HasCharacterBase,
+        bool HasSkeleton);
+
+    private sealed record AgentBridgeLobbySelectionSnapshot(
+        bool IsInLobby,
+        bool ApplyProfilesInLobby,
+        IReadOnlyList<AgentBridgeLobbyActorSnapshot> Actors);
+
+    private sealed record AgentBridgeLobbyActorSnapshot(
+        string ExpectedIdentifier,
+        int ObjectIndex,
+        string ObjectKind,
+        bool IsValid,
+        bool IsCharacter,
+        bool HasCharacterBase,
+        bool HasSkeleton,
+        bool IsGPoseOrCutscene,
+        string DerivedIdentifier,
+        bool MatchesExpectedIdentifier,
+        string SelectionReason,
+        int SelectedObjectIndex,
+        string ProfileName,
+        string ProfileId,
+        IReadOnlyList<AgentBridgeLobbyTemplateSnapshot> Templates,
+        bool ArmatureExists,
+        bool BindingCurrent,
+        long SkeletonRevision,
+        int ResolvedTransformCount,
+        string BindingIssue);
+
+    private sealed record AgentBridgeLobbyTemplateSnapshot(
+        string Name,
+        bool Enabled,
+        float Weight,
+        int SavedTransformCount);
 
     private sealed record AgentBridgeArmatureSnapshot(
         string Actor,
