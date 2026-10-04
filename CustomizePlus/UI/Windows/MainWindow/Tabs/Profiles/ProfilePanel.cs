@@ -68,6 +68,7 @@ public class ProfilePanel
 
     private int _dragIndex = -1;
     private Race _profileRaceNeckPresetRace = Race.Elezen;
+    private bool _showAdvancedBodyScalingOverridesOnly;
 
     private string SelectionName
         => _selector.Selected == null ? "No Selection" : _selector.IncognitoMode ? _selector.Selected.Incognito : _selector.Selected.Name.Text;
@@ -348,6 +349,27 @@ public class ProfilePanel
             => _manager.UpdateAdvancedBodyScalingOverrides(profile, settings => update(settings.Overrides));
 
         var overrides = profile.AdvancedBodyScalingOverrides.Overrides;
+        var overrideSummary = AdvancedBodyScalingOverridePresentation.Summarize(overrides);
+        if (ImGui.Checkbox("Show Overrides Only", ref _showAdvancedBodyScalingOverridesOnly))
+        {
+            // This is a local presentation filter. It intentionally does not change profile state.
+        }
+        CtrlHelper.AddHoverText("Show only settings this profile explicitly overrides. Clearing an Override checkbox returns that setting to the current global value.");
+        ImGui.SameLine();
+        ImGui.TextDisabled($"{overrideSummary.TotalCount} explicit {(overrideSummary.TotalCount == 1 ? "override" : "overrides")}");
+        ImGui.TextDisabled("Disabled controls inherit the current global value. Final runtime values can also depend on the actor's detected race and race-specific neck presets.");
+
+        bool ShouldDrawRow(bool isOverridden)
+            => AdvancedBodyScalingOverridePresentation.ShouldShowRow(_showAdvancedBodyScalingOverridesOnly, isOverridden);
+
+        bool ShouldDrawSection(AdvancedBodyScalingOverrideSection section)
+            => !_showAdvancedBodyScalingOverridesOnly || overrideSummary.GetCount(section) > 0;
+
+        string SectionLabel(string label, AdvancedBodyScalingOverrideSection section, string id)
+        {
+            var count = overrideSummary.GetCount(section);
+            return $"{label} ({count} {(count == 1 ? "override" : "overrides")})###{id}";
+        }
 
         void DrawShapeConditioningBooleanOverride(
             string label,
@@ -358,6 +380,9 @@ public class ProfilePanel
             Action<AdvancedBodyScalingOverrides, bool?> setOverride)
         {
             var current = getOverride(overrides);
+            if (!ShouldDrawRow(current.HasValue))
+                return;
+
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
             ImGui.AlignTextToFramePadding();
@@ -391,6 +416,9 @@ public class ProfilePanel
             Action<AdvancedBodyScalingOverrides, float?> setOverride)
         {
             var current = getOverride(overrides);
+            if (!ShouldDrawRow(current.HasValue))
+                return;
+
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
             ImGui.AlignTextToFramePadding();
@@ -499,6 +527,7 @@ public class ProfilePanel
                     overrides.MotionWarpingChainOverrides.Remove(chain);
             });
 
+        if (ShouldDrawSection(AdvancedBodyScalingOverrideSection.GeneralAndShaping))
         using (var table = ImRaii.Table(
                    "ProfileAdvancedBodyScaling",
                    3,
@@ -509,11 +538,13 @@ public class ProfilePanel
                 return;
 
             ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-            ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Inherited / profile value", ImGuiTableColumnFlags.WidthStretch);
             ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
             ImGui.TableSetupScrollFreeze(0, 1);
             ImGui.TableHeadersRow();
 
+            if (ShouldDrawRow(overrides.Enabled.HasValue))
+            {
             // Enabled
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -537,7 +568,10 @@ public class ProfilePanel
             var enabledOverride = overrides.Enabled.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingEnabledOverride", ref enabledOverride))
                 ToggleOverride(o => o.Enabled = enabledOverride ? globalSettings.Enabled : null);
+            }
 
+            if (ShouldDrawRow(overrides.Mode.HasValue))
+            {
             // Automation mode
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -571,7 +605,10 @@ public class ProfilePanel
             var modeOverride = overrides.Mode.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingModeOverride", ref modeOverride))
                 ToggleOverride(o => o.Mode = modeOverride ? globalSettings.Mode : null);
+            }
 
+            if (ShouldDrawRow(overrides.AnimationSafeModeEnabled.HasValue))
+            {
             // Animation-safe mode
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -595,7 +632,10 @@ public class ProfilePanel
             var animationSafeOverride = overrides.AnimationSafeModeEnabled.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingAnimationSafeOverride", ref animationSafeOverride))
                 ToggleOverride(o => o.AnimationSafeModeEnabled = animationSafeOverride ? globalSettings.AnimationSafeModeEnabled : null);
+            }
 
+            if (ShouldDrawRow(overrides.SurfaceBalancingStrength.HasValue))
+            {
             // Surface balancing strength
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -623,7 +663,10 @@ public class ProfilePanel
             var surfaceOverride = overrides.SurfaceBalancingStrength.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingSurfaceOverride", ref surfaceOverride))
                 ToggleOverride(o => o.SurfaceBalancingStrength = surfaceOverride ? globalSettings.SurfaceBalancingStrength : null);
+            }
 
+            if (ShouldDrawRow(overrides.MassRedistributionStrength.HasValue))
+            {
             // Mass redistribution strength
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -651,7 +694,10 @@ public class ProfilePanel
             var massOverride = overrides.MassRedistributionStrength.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingMassOverride", ref massOverride))
                 ToggleOverride(o => o.MassRedistributionStrength = massOverride ? globalSettings.MassRedistributionStrength : null);
+            }
 
+            if (ShouldDrawRow(overrides.BilateralConsistencyEnabled.HasValue))
+            {
             // Bilateral consistency
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -675,7 +721,10 @@ public class ProfilePanel
             var bilateralConsistencyOverride = overrides.BilateralConsistencyEnabled.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingBilateralConsistencyOverride", ref bilateralConsistencyOverride))
                 ToggleOverride(o => o.BilateralConsistencyEnabled = bilateralConsistencyOverride ? globalSettings.BilateralConsistencyEnabled : null);
+            }
 
+            if (ShouldDrawRow(overrides.ProportionalBalanceEnabled.HasValue))
+            {
             // Proportional balance
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -699,7 +748,10 @@ public class ProfilePanel
             var proportionalEnabledOverride = overrides.ProportionalBalanceEnabled.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingProportionalOverride", ref proportionalEnabledOverride))
                 ToggleOverride(o => o.ProportionalBalanceEnabled = proportionalEnabledOverride ? globalSettings.ProportionalBalanceEnabled : null);
+            }
 
+            if (ShouldDrawRow(overrides.ProportionalBalanceStrength.HasValue))
+            {
             // Proportional balance strength
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -727,7 +779,10 @@ public class ProfilePanel
             var proportionalStrengthOverride = overrides.ProportionalBalanceStrength.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingProportionalStrengthOverride", ref proportionalStrengthOverride))
                 ToggleOverride(o => o.ProportionalBalanceStrength = proportionalStrengthOverride ? globalSettings.ProportionalBalanceStrength : null);
+            }
 
+            if (ShouldDrawRow(overrides.SurfaceSmoothnessEnabled.HasValue))
+            {
             // Surface smoothness
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -751,7 +806,10 @@ public class ProfilePanel
             var surfaceSmoothnessOverride = overrides.SurfaceSmoothnessEnabled.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingSurfaceSmoothnessOverride", ref surfaceSmoothnessOverride))
                 ToggleOverride(o => o.SurfaceSmoothnessEnabled = surfaceSmoothnessOverride ? globalSettings.SurfaceSmoothnessEnabled : null);
+            }
 
+            if (ShouldDrawRow(overrides.SurfaceSmoothnessStrength.HasValue))
+            {
             // Surface smoothness strength
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -779,6 +837,7 @@ public class ProfilePanel
             var surfaceSmoothnessStrengthOverride = overrides.SurfaceSmoothnessStrength.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingSurfaceSmoothnessStrengthOverride", ref surfaceSmoothnessStrengthOverride))
                 ToggleOverride(o => o.SurfaceSmoothnessStrength = surfaceSmoothnessStrengthOverride ? globalSettings.SurfaceSmoothnessStrength : null);
+            }
 
             DrawShapeConditioningBooleanOverride(
                 "Hierarchical shaping", "HierarchicalShaping",
@@ -845,6 +904,8 @@ public class ProfilePanel
                 static value => value.PoseAwareJointCorrectivesStrength,
                 static (value, strength) => value.PoseAwareJointCorrectivesStrength = strength);
 
+            if (ShouldDrawRow(overrides.GuardrailMode.HasValue))
+            {
             // Proportion guardrail mode
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -878,7 +939,10 @@ public class ProfilePanel
             var guardrailOverride = overrides.GuardrailMode.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingGuardrailOverride", ref guardrailOverride))
                 ToggleOverride(o => o.GuardrailMode = guardrailOverride ? globalSettings.GuardrailMode : null);
+            }
 
+            if (ShouldDrawRow(overrides.NaturalizationStrength.HasValue))
+            {
             // Naturalization strength
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -906,7 +970,10 @@ public class ProfilePanel
             var naturalizationOverride = overrides.NaturalizationStrength.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingNaturalizationOverride", ref naturalizationOverride))
                 ToggleOverride(o => o.NaturalizationStrength = naturalizationOverride ? globalSettings.NaturalizationStrength : null);
+            }
 
+            if (ShouldDrawRow(overrides.PoseValidationMode.HasValue))
+            {
             // Pose-aware validation mode
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -940,7 +1007,10 @@ public class ProfilePanel
             var poseOverride = overrides.PoseValidationMode.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingPoseOverride", ref poseOverride))
                 ToggleOverride(o => o.PoseValidationMode = poseOverride ? globalSettings.PoseValidationMode : null);
+            }
 
+            if (ShouldDrawRow(overrides.NeckLengthCompensation.HasValue))
+            {
             // Neck length compensation
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -968,7 +1038,10 @@ public class ProfilePanel
             var neckLengthOverride = overrides.NeckLengthCompensation.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingNeckLengthOverride", ref neckLengthOverride))
                 ToggleOverride(o => o.NeckLengthCompensation = neckLengthOverride ? globalSettings.NeckLengthCompensation : null);
+            }
 
+            if (ShouldDrawRow(overrides.NeckShoulderBlendStrength.HasValue))
+            {
             // Neck-to-shoulder blend
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -996,7 +1069,10 @@ public class ProfilePanel
             var neckBlendOverride = overrides.NeckShoulderBlendStrength.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingNeckBlendOverride", ref neckBlendOverride))
                 ToggleOverride(o => o.NeckShoulderBlendStrength = neckBlendOverride ? globalSettings.NeckShoulderBlendStrength : null);
+            }
 
+            if (ShouldDrawRow(overrides.ClavicleShoulderSmoothing.HasValue))
+            {
             // Clavicle/shoulder bridge smoothing
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
@@ -1024,13 +1100,15 @@ public class ProfilePanel
             var clavicleOverride = overrides.ClavicleShoulderSmoothing.HasValue;
             if (ImGui.Checkbox("##ProfileAdvScalingClavicleSmoothingOverride", ref clavicleOverride))
                 ToggleOverride(o => o.ClavicleShoulderSmoothing = clavicleOverride ? globalSettings.ClavicleShoulderSmoothing : null);
+            }
         }
 
         ImGui.Spacing();
-        DrawRaceSpecificNeckPresetOverrides(profile, globalSettings, overrides);
+        DrawRaceSpecificNeckPresetOverrides(profile, globalSettings, overrides, _showAdvancedBodyScalingOverridesOnly);
 
         ImGui.Spacing();
-        if (ImGui.CollapsingHeader("Bone Importance Weighting Overrides"))
+        if (ShouldDrawSection(AdvancedBodyScalingOverrideSection.BoneImportance) &&
+            ImGui.CollapsingHeader(SectionLabel("Bone Importance Weighting Overrides", AdvancedBodyScalingOverrideSection.BoneImportance, "ProfileBoneImportanceOverrides")))
         {
             ImGui.TextDisabled("Override the model-derived bone-importance quality settings for this profile. Runtime full-BIW actor priority remains controlled globally.");
 
@@ -1042,11 +1120,13 @@ public class ProfilePanel
             if (boneImportanceTable)
             {
                 ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-                ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Inherited / profile value", ImGuiTableColumnFlags.WidthStretch);
                 ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
                 ImGui.TableSetupScrollFreeze(0, 1);
                 ImGui.TableHeadersRow();
 
+                if (ShouldDrawRow(overrides.ModelDerivedBoneImportanceEnabled.HasValue))
+                {
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn();
                 ImGui.AlignTextToFramePadding();
@@ -1069,7 +1149,10 @@ public class ProfilePanel
                 var boneImportanceEnabledOverride = overrides.ModelDerivedBoneImportanceEnabled.HasValue;
                 if (ImGui.Checkbox("##ProfileBoneImportanceEnabledOverride", ref boneImportanceEnabledOverride))
                     ToggleOverride(o => o.ModelDerivedBoneImportanceEnabled = boneImportanceEnabledOverride ? globalSettings.ModelDerivedBoneImportanceEnabled : null);
+                }
 
+                if (ShouldDrawRow(overrides.PreferTrueSkinWeightImportance.HasValue))
+                {
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn();
                 ImGui.AlignTextToFramePadding();
@@ -1092,7 +1175,10 @@ public class ProfilePanel
                 var skinWeightOverride = overrides.PreferTrueSkinWeightImportance.HasValue;
                 if (ImGui.Checkbox("##ProfileBoneImportanceSkinWeightsOverride", ref skinWeightOverride))
                     ToggleOverride(o => o.PreferTrueSkinWeightImportance = skinWeightOverride ? globalSettings.PreferTrueSkinWeightImportance : null);
+                }
 
+                if (ShouldDrawRow(overrides.BoneImportanceHeuristicBlend.HasValue))
+                {
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn();
                 ImGui.AlignTextToFramePadding();
@@ -1119,15 +1205,23 @@ public class ProfilePanel
                 var blendOverride = overrides.BoneImportanceHeuristicBlend.HasValue;
                 if (ImGui.Checkbox("##ProfileBoneImportanceBlendOverride", ref blendOverride))
                     ToggleOverride(o => o.BoneImportanceHeuristicBlend = blendOverride ? globalSettings.BoneImportanceHeuristicBlend : null);
+                }
             }
         }
 
         ImGui.Spacing();
-        if (ImGui.CollapsingHeader("RBF Pose-Space Corrective Overrides"))
+        if (ShouldDrawSection(AdvancedBodyScalingOverrideSection.PoseCorrectives) &&
+            ImGui.CollapsingHeader(SectionLabel("RBF Pose-Space Corrective Overrides", AdvancedBodyScalingOverrideSection.PoseCorrectives, "ProfilePoseCorrectiveOverrides")))
         {
             ImGui.TextDisabled("Override the RBF pose-space corrective baseline for this profile. Disabled fields inherit the global corrective settings.");
             var globalCorrectives = globalSettings.PoseCorrectives;
 
+            if (ShouldDrawRow(
+                    overrides.PoseCorrectivesEnabled.HasValue ||
+                    overrides.PoseCorrectiveStrength.HasValue ||
+                    overrides.PoseCorrectivePoseMapSharpness.HasValue ||
+                    overrides.PoseCorrectiveDamping.HasValue ||
+                    overrides.PoseCorrectiveMaxCorrectionClamp.HasValue))
             using (var correctiveTable = ImRaii.Table(
                        "ProfilePoseCorrectives",
                        3,
@@ -1137,11 +1231,13 @@ public class ProfilePanel
                 if (correctiveTable)
                 {
                     ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn("Inherited / profile value", ImGuiTableColumnFlags.WidthStretch);
                     ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
                     ImGui.TableSetupScrollFreeze(0, 1);
                     ImGui.TableHeadersRow();
 
+                    if (ShouldDrawRow(overrides.PoseCorrectivesEnabled.HasValue))
+                    {
                     ImGui.TableNextRow();
                     ImGui.TableNextColumn();
                     ImGui.AlignTextToFramePadding();
@@ -1164,7 +1260,10 @@ public class ProfilePanel
                     var poseCorrectivesEnabledOverride = overrides.PoseCorrectivesEnabled.HasValue;
                     if (ImGui.Checkbox("##ProfilePoseCorrectivesEnabledOverride", ref poseCorrectivesEnabledOverride))
                         ToggleOverride(o => o.PoseCorrectivesEnabled = poseCorrectivesEnabledOverride ? globalCorrectives.Enabled : null);
+                    }
 
+                    if (ShouldDrawRow(overrides.PoseCorrectiveStrength.HasValue))
+                    {
                     ImGui.TableNextRow();
                     ImGui.TableNextColumn();
                     ImGui.AlignTextToFramePadding();
@@ -1191,7 +1290,10 @@ public class ProfilePanel
                     var poseCorrectiveStrengthOverride = overrides.PoseCorrectiveStrength.HasValue;
                     if (ImGui.Checkbox("##ProfilePoseCorrectiveStrengthOverride", ref poseCorrectiveStrengthOverride))
                         ToggleOverride(o => o.PoseCorrectiveStrength = poseCorrectiveStrengthOverride ? globalCorrectives.Strength : null);
+                    }
 
+                    if (ShouldDrawRow(overrides.PoseCorrectivePoseMapSharpness.HasValue))
+                    {
                     ImGui.TableNextRow();
                     ImGui.TableNextColumn();
                     ImGui.AlignTextToFramePadding();
@@ -1218,7 +1320,10 @@ public class ProfilePanel
                     var poseCorrectiveSharpnessOverride = overrides.PoseCorrectivePoseMapSharpness.HasValue;
                     if (ImGui.Checkbox("##ProfilePoseCorrectiveSharpnessOverride", ref poseCorrectiveSharpnessOverride))
                         ToggleOverride(o => o.PoseCorrectivePoseMapSharpness = poseCorrectiveSharpnessOverride ? globalCorrectives.PoseMapSharpness : null);
+                    }
 
+                    if (ShouldDrawRow(overrides.PoseCorrectiveDamping.HasValue))
+                    {
                     ImGui.TableNextRow();
                     ImGui.TableNextColumn();
                     ImGui.AlignTextToFramePadding();
@@ -1245,7 +1350,10 @@ public class ProfilePanel
                     var poseCorrectiveDampingOverride = overrides.PoseCorrectiveDamping.HasValue;
                     if (ImGui.Checkbox("##ProfilePoseCorrectiveDampingOverride", ref poseCorrectiveDampingOverride))
                         ToggleOverride(o => o.PoseCorrectiveDamping = poseCorrectiveDampingOverride ? globalCorrectives.Damping : null);
+                    }
 
+                    if (ShouldDrawRow(overrides.PoseCorrectiveMaxCorrectionClamp.HasValue))
+                    {
                     ImGui.TableNextRow();
                     ImGui.TableNextColumn();
                     ImGui.AlignTextToFramePadding();
@@ -1272,6 +1380,7 @@ public class ProfilePanel
                     var poseCorrectiveClampOverride = overrides.PoseCorrectiveMaxCorrectionClamp.HasValue;
                     if (ImGui.Checkbox("##ProfilePoseCorrectiveClampOverride", ref poseCorrectiveClampOverride))
                         ToggleOverride(o => o.PoseCorrectiveMaxCorrectionClamp = poseCorrectiveClampOverride ? globalCorrectives.MaxCorrectionClamp : null);
+                    }
                 }
             }
 
@@ -1283,6 +1392,9 @@ public class ProfilePanel
                 var description = AdvancedBodyScalingPoseCorrectiveSystem.GetRegionDescription(region);
                 var globalRegion = globalCorrectives.GetRegionSettings(region);
                 overrides.PoseCorrectiveRegionOverrides.TryGetValue(region, out var regionOverride);
+
+                if (_showAdvancedBodyScalingOverridesOnly && (regionOverride == null || regionOverride.IsEmpty))
+                    continue;
 
                 if (!ImGui.TreeNode($"{label}##ProfilePoseCorrectiveRegion{region}"))
                     continue;
@@ -1297,11 +1409,13 @@ public class ProfilePanel
                     if (regionTable)
                     {
                         ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-                        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                        ImGui.TableSetupColumn("Inherited / profile value", ImGuiTableColumnFlags.WidthStretch);
                         ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
                         ImGui.TableSetupScrollFreeze(0, 1);
                         ImGui.TableHeadersRow();
 
+                        if (ShouldDrawRow(regionOverride?.Enabled.HasValue == true))
+                        {
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -1323,7 +1437,10 @@ public class ProfilePanel
                         var enabledOverride = regionOverride?.Enabled.HasValue == true;
                         if (ImGui.Checkbox($"##ProfilePoseCorrectiveRegionEnabledOverride{region}", ref enabledOverride))
                             UpdatePoseCorrectiveRegionOverride(region, o => o.Enabled = enabledOverride ? globalRegion.Enabled : null);
+                        }
 
+                        if (ShouldDrawRow(regionOverride?.Strength.HasValue == true))
+                        {
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -1349,6 +1466,7 @@ public class ProfilePanel
                         var strengthOverride = regionOverride?.Strength.HasValue == true;
                         if (ImGui.Checkbox($"##ProfilePoseCorrectiveRegionStrengthOverride{region}", ref strengthOverride))
                             UpdatePoseCorrectiveRegionOverride(region, o => o.Strength = strengthOverride ? globalRegion.Strength : null);
+                        }
                     }
                 }
 
@@ -1358,11 +1476,26 @@ public class ProfilePanel
         }
 
         ImGui.Spacing();
-        if (ImGui.CollapsingHeader("Full IK Retargeting Overrides"))
+        if (ShouldDrawSection(AdvancedBodyScalingOverrideSection.FullIkRetargeting) &&
+            ImGui.CollapsingHeader(SectionLabel("Full IK Retargeting Overrides", AdvancedBodyScalingOverrideSection.FullIkRetargeting, "ProfileFullIkRetargetingOverrides")))
         {
             ImGui.TextDisabled("Override the Full IK Retargeting baseline for this profile. Disabled fields inherit the global retargeting settings.");
             var globalRetarget = globalSettings.FullIkRetargeting;
 
+            if (ShouldDrawRow(
+                    overrides.FullIkRetargetingEnabled.HasValue ||
+                    overrides.FullIkRetargetingStrength.HasValue ||
+                    overrides.FullIkRetargetingPelvisStrength.HasValue ||
+                    overrides.FullIkRetargetingSpineStrength.HasValue ||
+                    overrides.FullIkRetargetingArmStrength.HasValue ||
+                    overrides.FullIkRetargetingLegStrength.HasValue ||
+                    overrides.FullIkRetargetingHeadStrength.HasValue ||
+                    overrides.FullIkRetargetingReachAdaptationStrength.HasValue ||
+                    overrides.FullIkRetargetingStrideAdaptationStrength.HasValue ||
+                    overrides.FullIkRetargetingPosturePreservationStrength.HasValue ||
+                    overrides.FullIkRetargetingMotionSafetyBias.HasValue ||
+                    overrides.FullIkRetargetingBlendBias.HasValue ||
+                    overrides.FullIkRetargetingMaxCorrectionClamp.HasValue))
             using (var retargetTable = ImRaii.Table(
                        "ProfileFullIkRetargeting",
                        3,
@@ -1372,7 +1505,7 @@ public class ProfilePanel
                 if (retargetTable)
                 {
                     ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn("Inherited / profile value", ImGuiTableColumnFlags.WidthStretch);
                     ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
                     ImGui.TableSetupScrollFreeze(0, 1);
                     ImGui.TableHeadersRow();
@@ -1385,6 +1518,9 @@ public class ProfilePanel
                         Action<AdvancedBodyScalingOverrides, bool?> setter,
                         string helpText)
                     {
+                        if (!ShouldDrawRow(overrideValue.HasValue))
+                            return;
+
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -1420,6 +1556,9 @@ public class ProfilePanel
                         Action<AdvancedBodyScalingOverrides, float?> setter,
                         string helpText)
                     {
+                        if (!ShouldDrawRow(overrideValue.HasValue))
+                            return;
+
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -1587,6 +1726,9 @@ public class ProfilePanel
                 var globalChain = globalRetarget.GetChainSettings(chain);
                 overrides.FullIkRetargetingChainOverrides.TryGetValue(chain, out var chainOverride);
 
+                if (_showAdvancedBodyScalingOverridesOnly && (chainOverride == null || chainOverride.IsEmpty))
+                    continue;
+
                 if (!ImGui.TreeNode($"{label}##ProfileFullIkRetargetingChain{chain}"))
                     continue;
 
@@ -1600,11 +1742,13 @@ public class ProfilePanel
                     if (chainTable)
                     {
                         ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-                        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                        ImGui.TableSetupColumn("Inherited / profile value", ImGuiTableColumnFlags.WidthStretch);
                         ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
                         ImGui.TableSetupScrollFreeze(0, 1);
                         ImGui.TableHeadersRow();
 
+                        if (ShouldDrawRow(chainOverride?.Enabled.HasValue == true))
+                        {
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -1627,7 +1771,10 @@ public class ProfilePanel
                         var enabledOverride = chainOverride?.Enabled.HasValue == true;
                         if (ImGui.Checkbox($"##ProfileFullIkRetargetingChainEnabledOverride{chain}", ref enabledOverride))
                             UpdateFullIkRetargetingChainOverride(chain, o => o.Enabled = enabledOverride ? globalChain.Enabled : null);
+                        }
 
+                        if (ShouldDrawRow(chainOverride?.Strength.HasValue == true))
+                        {
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -1654,6 +1801,7 @@ public class ProfilePanel
                         var strengthOverride = chainOverride?.Strength.HasValue == true;
                         if (ImGui.Checkbox($"##ProfileFullIkRetargetingChainStrengthOverride{chain}", ref strengthOverride))
                             UpdateFullIkRetargetingChainOverride(chain, o => o.Strength = strengthOverride ? globalChain.Strength : null);
+                        }
                     }
                 }
 
@@ -1663,11 +1811,21 @@ public class ProfilePanel
         }
 
         ImGui.Spacing();
-        if (ImGui.CollapsingHeader("Motion Warping Overrides"))
+        if (ShouldDrawSection(AdvancedBodyScalingOverrideSection.MotionWarping) &&
+            ImGui.CollapsingHeader(SectionLabel("Motion Warping Overrides", AdvancedBodyScalingOverrideSection.MotionWarping, "ProfileMotionWarpingOverrides")))
         {
             ImGui.TextDisabled("Override the locomotion-warping baseline for this profile. Disabled fields inherit the global motion-warping settings. This build supports locomotion warping only, not target-based motion warping.");
             var globalMotionWarping = globalSettings.MotionWarping;
 
+            if (ShouldDrawRow(
+                    overrides.MotionWarpingEnabled.HasValue ||
+                    overrides.MotionWarpingStrength.HasValue ||
+                    overrides.MotionWarpingStrideStrength.HasValue ||
+                    overrides.MotionWarpingOrientationStrength.HasValue ||
+                    overrides.MotionWarpingPostureStrength.HasValue ||
+                    overrides.MotionWarpingMotionSafetyBias.HasValue ||
+                    overrides.MotionWarpingBlendBias.HasValue ||
+                    overrides.MotionWarpingMaxCorrectionClamp.HasValue))
             using (var motionTable = ImRaii.Table(
                        "ProfileMotionWarping",
                        3,
@@ -1677,7 +1835,7 @@ public class ProfilePanel
                 if (motionTable)
                 {
                     ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn("Inherited / profile value", ImGuiTableColumnFlags.WidthStretch);
                     ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
                     ImGui.TableSetupScrollFreeze(0, 1);
                     ImGui.TableHeadersRow();
@@ -1690,6 +1848,9 @@ public class ProfilePanel
                         Action<AdvancedBodyScalingOverrides, bool?> setter,
                         string helpText)
                     {
+                        if (!ShouldDrawRow(overrideValue.HasValue))
+                            return;
+
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -1725,6 +1886,9 @@ public class ProfilePanel
                         Action<AdvancedBodyScalingOverrides, float?> setter,
                         string helpText)
                     {
+                        if (!ShouldDrawRow(overrideValue.HasValue))
+                            return;
+
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -1842,6 +2006,9 @@ public class ProfilePanel
                 var globalChain = globalMotionWarping.GetChainSettings(chain);
                 overrides.MotionWarpingChainOverrides.TryGetValue(chain, out var chainOverride);
 
+                if (_showAdvancedBodyScalingOverridesOnly && (chainOverride == null || chainOverride.IsEmpty))
+                    continue;
+
                 if (!ImGui.TreeNode($"{label}##ProfileMotionWarpingChain{chain}"))
                     continue;
 
@@ -1855,11 +2022,13 @@ public class ProfilePanel
                     if (chainTable)
                     {
                         ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-                        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                        ImGui.TableSetupColumn("Inherited / profile value", ImGuiTableColumnFlags.WidthStretch);
                         ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
                         ImGui.TableSetupScrollFreeze(0, 1);
                         ImGui.TableHeadersRow();
 
+                        if (ShouldDrawRow(chainOverride?.Enabled.HasValue == true))
+                        {
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -1882,7 +2051,10 @@ public class ProfilePanel
                         var enabledOverride = chainOverride?.Enabled.HasValue == true;
                         if (ImGui.Checkbox($"##ProfileMotionWarpingChainEnabledOverride{chain}", ref enabledOverride))
                             UpdateMotionWarpingChainOverride(chain, o => o.Enabled = enabledOverride ? globalChain.Enabled : null);
+                        }
 
+                        if (ShouldDrawRow(chainOverride?.Strength.HasValue == true))
+                        {
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -1909,6 +2081,7 @@ public class ProfilePanel
                         var strengthOverride = chainOverride?.Strength.HasValue == true;
                         if (ImGui.Checkbox($"##ProfileMotionWarpingChainStrengthOverride{chain}", ref strengthOverride))
                             UpdateMotionWarpingChainOverride(chain, o => o.Strength = strengthOverride ? globalChain.Strength : null);
+                        }
                     }
                 }
 
@@ -1918,11 +2091,25 @@ public class ProfilePanel
         }
 
         ImGui.Spacing();
-        if (ImGui.CollapsingHeader("Full-Body IK Overrides"))
+        if (ShouldDrawSection(AdvancedBodyScalingOverrideSection.FullBodyIk) &&
+            ImGui.CollapsingHeader(SectionLabel("Full-Body IK Overrides", AdvancedBodyScalingOverrideSection.FullBodyIk, "ProfileFullBodyIkOverrides")))
         {
             ImGui.TextDisabled("Override the final Full-Body IK baseline for this profile. Disabled fields inherit the global IK settings.");
             var globalFullBodyIk = globalSettings.FullBodyIk;
 
+            if (ShouldDrawRow(
+                    overrides.FullBodyIkEnabled.HasValue ||
+                    overrides.FullBodyIkStrength.HasValue ||
+                    overrides.FullBodyIkIterationCount.HasValue ||
+                    overrides.FullBodyIkConvergenceTolerance.HasValue ||
+                    overrides.FullBodyIkPelvisCompensationStrength.HasValue ||
+                    overrides.FullBodyIkSpineRedistributionStrength.HasValue ||
+                    overrides.FullBodyIkLegStrength.HasValue ||
+                    overrides.FullBodyIkArmStrength.HasValue ||
+                    overrides.FullBodyIkHeadAlignmentStrength.HasValue ||
+                    overrides.FullBodyIkGroundingBias.HasValue ||
+                    overrides.FullBodyIkMotionSafetyBias.HasValue ||
+                    overrides.FullBodyIkMaxCorrectionClamp.HasValue))
             using (var ikTable = ImRaii.Table(
                        "ProfileFullBodyIk",
                        3,
@@ -1932,7 +2119,7 @@ public class ProfilePanel
                 if (ikTable)
                 {
                     ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn("Inherited / profile value", ImGuiTableColumnFlags.WidthStretch);
                     ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
                     ImGui.TableSetupScrollFreeze(0, 1);
                     ImGui.TableHeadersRow();
@@ -1945,6 +2132,9 @@ public class ProfilePanel
                         Action<AdvancedBodyScalingOverrides, bool?> setter,
                         string helpText)
                     {
+                        if (!ShouldDrawRow(overrideValue.HasValue))
+                            return;
+
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -1980,6 +2170,9 @@ public class ProfilePanel
                         Action<AdvancedBodyScalingOverrides, float?> setter,
                         string helpText)
                     {
+                        if (!ShouldDrawRow(overrideValue.HasValue))
+                            return;
+
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -2018,6 +2211,9 @@ public class ProfilePanel
                         Action<AdvancedBodyScalingOverrides, int?> setter,
                         string helpText)
                     {
+                        if (!ShouldDrawRow(overrideValue.HasValue))
+                            return;
+
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -2174,6 +2370,9 @@ public class ProfilePanel
                 var globalChain = globalFullBodyIk.GetChainSettings(chain);
                 overrides.FullBodyIkChainOverrides.TryGetValue(chain, out var chainOverride);
 
+                if (_showAdvancedBodyScalingOverridesOnly && (chainOverride == null || chainOverride.IsEmpty))
+                    continue;
+
                 if (!ImGui.TreeNode($"{label}##ProfileFullBodyIkChain{chain}"))
                     continue;
 
@@ -2187,11 +2386,13 @@ public class ProfilePanel
                     if (chainTable)
                     {
                         ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-                        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                        ImGui.TableSetupColumn("Inherited / profile value", ImGuiTableColumnFlags.WidthStretch);
                         ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
                         ImGui.TableSetupScrollFreeze(0, 1);
                         ImGui.TableHeadersRow();
 
+                        if (ShouldDrawRow(chainOverride?.Enabled.HasValue == true))
+                        {
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -2214,7 +2415,10 @@ public class ProfilePanel
                         var enabledOverride = chainOverride?.Enabled.HasValue == true;
                         if (ImGui.Checkbox($"##ProfileFullBodyIkChainEnabledOverride{chain}", ref enabledOverride))
                             UpdateFullBodyIkChainOverride(chain, o => o.Enabled = enabledOverride ? globalChain.Enabled : null);
+                        }
 
+                        if (ShouldDrawRow(chainOverride?.Strength.HasValue == true))
+                        {
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -2241,6 +2445,7 @@ public class ProfilePanel
                         var strengthOverride = chainOverride?.Strength.HasValue == true;
                         if (ImGui.Checkbox($"##ProfileFullBodyIkChainStrengthOverride{chain}", ref strengthOverride))
                             UpdateFullBodyIkChainOverride(chain, o => o.Strength = strengthOverride ? globalChain.Strength : null);
+                        }
                     }
                 }
 
@@ -2250,7 +2455,8 @@ public class ProfilePanel
         }
 
         ImGui.Spacing();
-        if (!ImGui.CollapsingHeader("Region Tuning Overrides"))
+        if (!ShouldDrawSection(AdvancedBodyScalingOverrideSection.RegionTuning) ||
+            !ImGui.CollapsingHeader(SectionLabel("Region Tuning Overrides", AdvancedBodyScalingOverrideSection.RegionTuning, "ProfileRegionTuningOverrides")))
             return;
 
         ImGui.TextDisabled("Override per-region tuning settings. Disabled fields inherit the global region tuning.");
@@ -2259,6 +2465,9 @@ public class ProfilePanel
         {
             var globalProfile = globalSettings.GetRegionProfile(region);
             overrides.RegionOverrides.TryGetValue(region, out var regionOverride);
+
+            if (_showAdvancedBodyScalingOverridesOnly && (regionOverride == null || regionOverride.IsEmpty))
+                continue;
 
             if (!ImGui.TreeNode($"{region}##ProfileRegion{region}"))
                 continue;
@@ -2272,7 +2481,7 @@ public class ProfilePanel
                 if (regionTable)
                 {
                     ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, settingColumnWidth);
-                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn("Inherited / profile value", ImGuiTableColumnFlags.WidthStretch);
                     ImGui.TableSetupColumn("Override", ImGuiTableColumnFlags.WidthFixed, overrideColumnWidth);
                     ImGui.TableSetupScrollFreeze(0, 1);
                     ImGui.TableHeadersRow();
@@ -2284,6 +2493,9 @@ public class ProfilePanel
                         float? overrideValue,
                         Action<AdvancedBodyScalingRegionProfileOverrides, float?> setter)
                     {
+                        if (!ShouldDrawRow(overrideValue.HasValue))
+                            return;
+
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -2320,6 +2532,9 @@ public class ProfilePanel
                         bool? overrideValue,
                         Action<AdvancedBodyScalingRegionProfileOverrides, bool?> setter)
                     {
+                        if (!ShouldDrawRow(overrideValue.HasValue))
+                            return;
+
                         ImGui.TableNextRow();
                         ImGui.TableNextColumn();
                         ImGui.AlignTextToFramePadding();
@@ -2414,14 +2629,19 @@ public class ProfilePanel
     private void DrawRaceSpecificNeckPresetOverrides(
         Profile profile,
         AdvancedBodyScalingSettings globalSettings,
-        AdvancedBodyScalingOverrides overrides)
+        AdvancedBodyScalingOverrides overrides,
+        bool showOverridesOnly)
     {
-        if (!ImGui.CollapsingHeader("Race-specific neck preset overrides"))
+        var groupOverrideEnabled = overrides.HasRaceSpecificNeckOverrides;
+        if (showOverridesOnly && !groupOverrideEnabled)
+            return;
+
+        var count = groupOverrideEnabled ? 1 : 0;
+        if (!ImGui.CollapsingHeader($"Race-specific neck preset overrides ({count} {(count == 1 ? "override" : "overrides")})###ProfileRaceNeckPresetOverrides"))
             return;
 
         ImGui.TextDisabled("Profile-local race presets replace the global race-preset group for this profile only. They do not change global settings.");
 
-        var groupOverrideEnabled = overrides.HasRaceSpecificNeckOverrides;
         if (ImGui.Checkbox("Override race-specific neck settings", ref groupOverrideEnabled))
         {
             _manager.UpdateAdvancedBodyScalingOverrides(profile, settings =>
