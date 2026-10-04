@@ -161,6 +161,9 @@ internal static class TemplateAuthoringState
 
     public static bool IsStale(long sourceRevision, long currentRevision, bool editorActive)
         => editorActive && sourceRevision != currentRevision;
+
+    public static bool IsStale(long sourceRevision, Guid sourceSessionId, long currentRevision, Guid currentSessionId, bool editorActive)
+        => sourceSessionId != currentSessionId || IsStale(sourceRevision, currentRevision, editorActive);
 }
 
 internal enum TemplateDiffKind
@@ -203,12 +206,15 @@ internal sealed record TemplateDiffReport(
 internal static class TemplateDiffService
 {
     public static TemplateDiffReport Compare(Template left, Template right)
+        => Compare(left.Bones, right.Bones);
+
+    public static TemplateDiffReport Compare(IReadOnlyDictionary<string, BoneTransform> left, IReadOnlyDictionary<string, BoneTransform> right)
     {
         var rows = new List<TemplateDiffRow>();
-        foreach (var bone in left.Bones.Keys.Union(right.Bones.Keys, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal))
+        foreach (var bone in left.Keys.Union(right.Keys, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal))
         {
-            left.Bones.TryGetValue(bone, out var a);
-            right.Bones.TryGetValue(bone, out var b);
+            left.TryGetValue(bone, out var a);
+            right.TryGetValue(bone, out var b);
             var kind = a == null ? TemplateDiffKind.OnlyRight
                 : b == null ? TemplateDiffKind.OnlyLeft
                 : AuthoringTooling.TransformEquals(a, b) ? TemplateDiffKind.Shared
@@ -620,4 +626,50 @@ internal sealed class TemplateEditHistory
     private static bool SameState(IReadOnlyDictionary<string, BoneTransform> left, IReadOnlyDictionary<string, BoneTransform> right)
         => left.Count == right.Count
             && left.All(pair => right.TryGetValue(pair.Key, out var other) && AuthoringTooling.TransformEquals(pair.Value, other));
+}
+
+/// <summary>Named, editor-session-only snapshots. All transform access remains deep-copied.</summary>
+internal sealed record TemplateEditorCheckpoint(Guid Id, string Name, int BoneCount);
+
+internal sealed class TemplateEditorCheckpointStore
+{
+    private sealed record Entry(TemplateEditorCheckpoint Summary, Dictionary<string, BoneTransform> State);
+
+    private readonly List<Entry> _entries = new();
+
+    public IReadOnlyList<TemplateEditorCheckpoint> Items
+        => _entries.Select(static entry => entry.Summary).ToArray();
+
+    public TemplateEditorCheckpoint Capture(string name, IReadOnlyDictionary<string, BoneTransform> state)
+    {
+        var summary = new TemplateEditorCheckpoint(Guid.NewGuid(), name, state.Count);
+        _entries.Add(new Entry(summary, AuthoringTooling.CloneTransforms(state)));
+        return summary;
+    }
+
+    public bool TryGetState(Guid id, out IReadOnlyDictionary<string, BoneTransform> state)
+    {
+        var entry = _entries.FirstOrDefault(entry => entry.Summary.Id == id);
+        if (entry == null)
+        {
+            state = new Dictionary<string, BoneTransform>(StringComparer.Ordinal);
+            return false;
+        }
+
+        state = AuthoringTooling.CloneTransforms(entry.State);
+        return true;
+    }
+
+    public bool Remove(Guid id)
+    {
+        var index = _entries.FindIndex(entry => entry.Summary.Id == id);
+        if (index < 0)
+            return false;
+
+        _entries.RemoveAt(index);
+        return true;
+    }
+
+    public void Clear()
+        => _entries.Clear();
 }

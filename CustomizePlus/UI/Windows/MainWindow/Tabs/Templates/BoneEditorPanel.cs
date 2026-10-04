@@ -109,10 +109,15 @@ public class BoneEditorPanel
     private Guid _compareTemplateId;
     private Guid _compareProfileId;
     private TemplateDiffReport? _templateDiffReport;
+    private TemplateDiffReport? _checkpointDiffReport;
     private ProfileDiffReport? _profileDiffReport;
     private SolverPreviewResult? _solverPreview;
     private int _selectedAuthoringRegion;
     private AuthoringRegionScope _selectedAuthoringScope = AuthoringRegionScope.Primary;
+    private string _checkpointName = string.Empty;
+    private string? _checkpointStatus;
+    private Guid _selectedCheckpointId;
+    private Guid _checkpointSessionId;
     public bool HasChanges => _editorManager.HasChanges;
     public bool IsEditorActive => _editorManager.IsEditorActive;
     public bool IsEditorPaused => _editorManager.IsEditorPaused;
@@ -264,6 +269,7 @@ public class BoneEditorPanel
             DrawActorHealth();
             DrawBoneExplainabilityInspector();
             DrawCompareAndCompatibilityTools();
+            DrawTemplateEditorCheckpoints();
             DrawSolverAbPreview();
             DrawRegionBatchTools();
             DrawTemplateHealth();
@@ -1215,6 +1221,95 @@ public class BoneEditorPanel
             }
             ImGui.TreePop();
         }
+    }
+
+    private void DrawTemplateEditorCheckpoints()
+    {
+        if (!ImGui.CollapsingHeader("Checkpoints / A-B Comparison"))
+            return;
+
+        if (_checkpointSessionId != _editorManager.EditorSessionId)
+        {
+            _checkpointSessionId = _editorManager.EditorSessionId;
+            _checkpointName = string.Empty;
+            _checkpointStatus = null;
+            _selectedCheckpointId = Guid.Empty;
+            _checkpointDiffReport = null;
+        }
+
+        ImGuiUtil.TextWrapped("Temporary to this Bone Editing session. Checkpoints do not save templates, change profiles, or write native bones until you use the existing Save action.");
+        ImGui.SetNextItemWidth(MathF.Min(280 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
+        ImGui.InputText("Checkpoint name", ref _checkpointName, 80);
+        ImGui.SameLine();
+        if (ImGui.Button("Create checkpoint") && _editorManager.TryCreateCheckpoint(_checkpointName, out var created) && created != null)
+        {
+            _selectedCheckpointId = created.Id;
+            _checkpointName = string.Empty;
+            _checkpointStatus = $"Created '{created.Name}' from the current working copy.";
+        }
+        CtrlHelper.AddHoverText("Captures the current temporary editor state only. Checkpoints are cleared when Bone Editing closes.");
+
+        var checkpoints = _editorManager.Checkpoints;
+        if (checkpoints.Count == 0)
+        {
+            ImGui.TextDisabled("No checkpoints yet.");
+            return;
+        }
+
+        var selected = checkpoints.FirstOrDefault(checkpoint => checkpoint.Id == _selectedCheckpointId) ?? checkpoints[0];
+        _selectedCheckpointId = selected.Id;
+        ImGui.SetNextItemWidth(MathF.Min(360 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
+        if (ImGui.BeginCombo("Checkpoint", $"{selected.Name} ({selected.BoneCount} rows)"))
+        {
+            foreach (var checkpoint in checkpoints)
+            {
+                if (ImGui.Selectable($"{checkpoint.Name} ({checkpoint.BoneCount} rows)", checkpoint.Id == _selectedCheckpointId))
+                {
+                    _selectedCheckpointId = checkpoint.Id;
+                    _checkpointDiffReport = null;
+                }
+            }
+            ImGui.EndCombo();
+        }
+
+        if (ImGui.Button("Compare selected to Current") && _editorManager.TryCompareCheckpoint(selected.Id, out var report))
+        {
+            _checkpointDiffReport = report;
+            _checkpointStatus = $"Compared '{selected.Name}' with the current working copy.";
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Restore selected"))
+        {
+            var restored = _editorManager.TryRestoreCheckpoint(selected.Id);
+            _checkpointDiffReport = null;
+            _checkpointStatus = restored
+                ? $"Restored '{selected.Name}'. Undo returns to the pre-restore working copy."
+                : $"'{selected.Name}' already matches the current working copy.";
+        }
+        CtrlHelper.AddHoverText("Restores only the temporary editor state through one normal undoable transaction. The saved template is unchanged until Save.");
+        ImGui.SameLine();
+        if (ImGui.Button("Delete selected"))
+        {
+            _editorManager.DeleteCheckpoint(selected.Id);
+            _selectedCheckpointId = Guid.Empty;
+            _checkpointDiffReport = null;
+            _checkpointStatus = $"Deleted '{selected.Name}'.";
+        }
+        CtrlHelper.AddHoverText("Deletes this temporary checkpoint only. It does not change the current working copy or saved template.");
+
+        if (!string.IsNullOrEmpty(_checkpointStatus))
+            ImGui.TextDisabled(_checkpointStatus);
+
+        if (_checkpointDiffReport == null)
+            return;
+
+        var changedRows = _checkpointDiffReport.Rows.Where(static row => row.Kind != TemplateDiffKind.Shared).ToArray();
+        var positionChanges = changedRows.Count(static row => row.TranslationDelta != Vector3.Zero);
+        var rotationChanges = changedRows.Count(static row => row.RotationDelta != Vector3.Zero);
+        var scaleChanges = changedRows.Count(static row => row.ScalingDelta != Vector3.Zero);
+        var lockChanges = changedRows.Count(static row => row.LockChanged);
+        var pinChanges = changedRows.Count(static row => row.PinsChanged);
+        ImGui.TextDisabled($"Checkpoint -> Current: {changedRows.Length} changed bones; position {positionChanges}; rotation {rotationChanges}; scale {scaleChanges}; locks {lockChanges}; pins {pinChanges}.");
     }
 
     private void DrawSolverAbPreview()

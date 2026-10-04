@@ -95,6 +95,8 @@ public class TemplateEditorManager : IDisposable
 
     /// <summary>Session-only bounded authoring history for the temporary editor template.</summary>
     internal TemplateEditHistory EditHistory { get; } = new();
+    private readonly TemplateEditorCheckpointStore _checkpoints = new();
+    internal IReadOnlyList<TemplateEditorCheckpoint> Checkpoints => _checkpoints.Items;
 
     public TemplateEditorManager(
         TemplateChanged @event,
@@ -158,6 +160,7 @@ public class TemplateEditorManager : IDisposable
         EditorRevision = 0;
         EditorSessionId = Guid.NewGuid();
         EditHistory.Clear();
+        _checkpoints.Clear();
         _transactionBefore = null;
         _transactionLabel = null;
         IsEditorActive = true;
@@ -197,6 +200,7 @@ public class TemplateEditorManager : IDisposable
         EditorRevision = 0;
         EditorSessionId = Guid.Empty;
         EditHistory.Clear();
+        _checkpoints.Clear();
         _transactionBefore = null;
         _transactionLabel = null;
 
@@ -518,6 +522,47 @@ public class TemplateEditorManager : IDisposable
         => CurrentlyEditedTemplate == null
             ? new Dictionary<string, BoneTransform>(StringComparer.Ordinal)
             : AuthoringTooling.CloneTransforms(CurrentlyEditedTemplate.Bones);
+
+    internal bool TryCreateCheckpoint(string requestedName, out TemplateEditorCheckpoint? checkpoint)
+    {
+        checkpoint = null;
+        if (!IsEditorActive || IsEditorPaused || CurrentlyEditedTemplate == null)
+            return false;
+
+        var name = string.IsNullOrWhiteSpace(requestedName)
+            ? $"Checkpoint {Checkpoints.Count + 1}"
+            : requestedName.Trim();
+        checkpoint = _checkpoints.Capture(name, CaptureCurrentTemplateState());
+        return true;
+    }
+
+    internal bool TryCompareCheckpoint(Guid checkpointId, out TemplateDiffReport? report)
+    {
+        report = null;
+        if (!IsEditorActive || IsEditorPaused || !_checkpoints.TryGetState(checkpointId, out var checkpointState))
+            return false;
+
+        report = TemplateDiffService.Compare(checkpointState, CaptureCurrentTemplateState());
+        return true;
+    }
+
+    internal bool TryRestoreCheckpoint(Guid checkpointId)
+    {
+        if (!IsEditorActive || IsEditorPaused || !_checkpoints.TryGetState(checkpointId, out var checkpointState))
+            return false;
+
+        var checkpoint = Checkpoints.FirstOrDefault(entry => entry.Id == checkpointId);
+        BeginEditTransaction(checkpoint == null ? "Restore checkpoint" : $"Restore checkpoint '{checkpoint.Name}'");
+        var changed = ReplaceEditedTemplateState(checkpointState);
+        if (changed)
+            CommitEditTransaction();
+        else
+            CancelEditTransaction();
+        return changed;
+    }
+
+    internal bool DeleteCheckpoint(Guid checkpointId)
+        => _checkpoints.Remove(checkpointId);
 
     /// <summary>
     /// Restores an ordinary editor-template state using the normal TemplateManager mutation/event path.

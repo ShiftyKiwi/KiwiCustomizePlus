@@ -55,6 +55,8 @@ public class TemplatePanel : IDisposable
     private IReadOnlyDictionary<string, BoneTransform>? _advancedPreview;
     private AdvancedBodyScalingDebugReport? _advancedDebug;
     private AdvancedBodyScalingStressTestReport? _stressTestReport;
+    private long _stressTestSourceRevision;
+    private Guid _stressTestSourceSessionId;
     private bool _showAdvancedPreview;
     private bool _showAdvancedDebug;
 
@@ -486,14 +488,19 @@ public class TemplatePanel : IDisposable
 
     private void DrawPoseStressTest()
     {
-        if (_selector.Selected == null)
+        var sourceTemplate = GetAuthoringTemplate();
+        if (sourceTemplate == null)
             return;
 
         if (!ImGui.CollapsingHeader("Pose Stress Test"))
             return;
 
+        ImGui.TextDisabled(_editorManager.IsEditorActive
+            ? "Source: current unsaved Bone Editing working copy."
+            : "Source: saved template.");
+
         if (ImGui.Button("Run Stress Test"))
-            BuildPoseStressTest(_selector.Selected);
+            BuildPoseStressTest(sourceTemplate);
 
         ImGui.SameLine();
         using (ImRaii.Disabled(_stressTestReport == null))
@@ -505,6 +512,12 @@ public class TemplatePanel : IDisposable
         if (_stressTestReport == null)
         {
             ImGui.TextDisabled("Runs lightweight pose-risk checks against the current template, current automation output, or the active preview result.");
+            return;
+        }
+
+        if (IsPoseStressTestStale())
+        {
+            ImGui.TextDisabled("Stress test is stale. Run it again to evaluate the current source state.");
             return;
         }
 
@@ -650,11 +663,13 @@ public class TemplatePanel : IDisposable
     {
         var input = BuildStressTestInput(template, out var sourceLabel);
         _stressTestReport = AdvancedBodyScalingStressTestHarness.Run(input, _configuration.AdvancedBodyScalingSettings, sourceLabel);
+        _stressTestSourceRevision = _editorManager.EditorRevision;
+        _stressTestSourceSessionId = _editorManager.EditorSessionId;
     }
 
     private IReadOnlyDictionary<string, BoneTransform> BuildStressTestInput(Template template, out string sourceLabel)
     {
-        if (_advancedPreview != null && _advancedPreview.Count > 0)
+        if (_advancedPreview != null && _advancedPreview.Count > 0 && !IsSessionBoundResultStale(_advancedPreviewSourceRevision, _advancedPreviewSourceSessionId))
         {
             var merged = template.Bones.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DeepCopy(), StringComparer.Ordinal);
             foreach (var kvp in _advancedPreview)
@@ -685,7 +700,11 @@ public class TemplatePanel : IDisposable
     }
 
     private void ClearPoseStressTest()
-        => _stressTestReport = null;
+    {
+        _stressTestReport = null;
+        _stressTestSourceRevision = 0;
+        _stressTestSourceSessionId = Guid.Empty;
+    }
 
     private void BuildAdvancedScalingPreview(Template template)
     {
@@ -1211,6 +1230,12 @@ public class TemplatePanel : IDisposable
     private bool IsEditorResultStale(long sourceRevision, Guid sourceSessionId)
         => TemplateAuthoringState.IsStale(sourceRevision, _editorManager.EditorRevision, _editorManager.IsEditorActive)
             || (_editorManager.IsEditorActive && sourceSessionId != _editorManager.EditorSessionId);
+
+    private bool IsSessionBoundResultStale(long sourceRevision, Guid sourceSessionId)
+        => TemplateAuthoringState.IsStale(sourceRevision, sourceSessionId, _editorManager.EditorRevision, _editorManager.EditorSessionId, _editorManager.IsEditorActive);
+
+    private bool IsPoseStressTestStale()
+        => _stressTestReport != null && IsSessionBoundResultStale(_stressTestSourceRevision, _stressTestSourceSessionId);
 
     private static float GetUniformScale(Vector3 scale)
     {

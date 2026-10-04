@@ -143,6 +143,83 @@ public class AuthoringToolingTests
         Assert.Equal(50, history.UndoCount);
     }
 
+    [Fact]
+    public void Checkpoints_DeepCopyEveryMutableTransformFieldAndRemainIndependent()
+    {
+        var source = new Dictionary<string, BoneTransform>(StringComparer.Ordinal)
+        {
+            ["j_kosi"] = new BoneTransform
+            {
+                Translation = new Vector3(0.1f, -0.2f, 0.3f),
+                Rotation = new Vector3(0.4f, -0.5f, 0.6f),
+                Scaling = new Vector3(1.1f, 0.9f, 1.2f),
+                ChildScaling = new Vector3(0.8f, 1.3f, 0.7f),
+                ChildScalingIndependent = true,
+                PropagateTranslation = true,
+                PropagateRotation = true,
+                PropagateScale = true,
+                PropagationFalloff = 0.37f,
+                LockState = BoneLockState.Priority,
+                PinX = true,
+                PinY = false,
+                PinZ = true,
+            },
+            ["j_hara"] = new BoneTransform { LockState = BoneLockState.Locked, PinY = true },
+        };
+        var expected = AuthoringTooling.CloneTransforms(source);
+        var checkpoints = new TemplateEditorCheckpointStore();
+
+        var checkpoint = checkpoints.Capture("A", source);
+        source["j_kosi"].Scaling = new Vector3(1.7f);
+        source["j_hara"].PinY = false;
+
+        Assert.True(checkpoints.TryGetState(checkpoint.Id, out var firstRestore));
+        Assert.True(AuthoringTooling.TransformEquals(expected["j_kosi"], firstRestore["j_kosi"]));
+        Assert.True(AuthoringTooling.TransformEquals(expected["j_hara"], firstRestore["j_hara"]));
+        Assert.False(ReferenceEquals(expected["j_kosi"], firstRestore["j_kosi"]));
+
+        firstRestore["j_kosi"].PropagationFalloff = 0.91f;
+        Assert.True(checkpoints.TryGetState(checkpoint.Id, out var secondRestore));
+        Assert.True(AuthoringTooling.TransformEquals(expected["j_kosi"], secondRestore["j_kosi"]));
+    }
+
+    [Fact]
+    public void Checkpoints_CompareRestoreHistoryAndDeletionUseIndependentStates()
+    {
+        var checkpoints = new TemplateEditorCheckpointStore();
+        var checkpointAState = new Dictionary<string, BoneTransform>(StringComparer.Ordinal)
+        {
+            ["j_kosi"] = new BoneTransform { Scaling = new Vector3(1.1f), LockState = BoneLockState.Locked, PinX = true },
+            ["j_hara"] = new BoneTransform { ChildScaling = new Vector3(0.9f), ChildScalingIndependent = true, PropagateScale = true, PropagationFalloff = 0.6f },
+        };
+        var checkpointA = checkpoints.Capture("A", checkpointAState);
+        var current = AuthoringTooling.CloneTransforms(checkpointAState);
+        current["j_kosi"].Scaling = new Vector3(1.3f, 0.8f, 1.15f);
+        current["j_kosi"].PinX = false;
+        current["j_hara"].PropagationFalloff = 0.2f;
+        var checkpointB = checkpoints.Capture("B", current);
+        current["j_hara"].LockState = BoneLockState.Priority;
+
+        Assert.True(checkpoints.TryGetState(checkpointA.Id, out var restoreA));
+        var diff = TemplateDiffService.Compare(restoreA, current);
+        Assert.Equal(2, diff.ChangedCount);
+        Assert.Contains(diff.Rows, static row => row.LockChanged || row.PinsChanged);
+        Assert.Contains(diff.Rows, static row => row.ScalingDelta != Vector3.Zero);
+
+        var history = new TemplateEditHistory();
+        history.Record("Restore checkpoint 'A'", current, restoreA);
+        Assert.True(history.TryUndo(out var undone));
+        Assert.True(AuthoringTooling.TransformEquals(current["j_kosi"], undone["j_kosi"]));
+        Assert.True(history.TryRedo(out var redone));
+        Assert.True(AuthoringTooling.TransformEquals(restoreA["j_hara"], redone["j_hara"]));
+
+        Assert.True(checkpoints.Remove(checkpointA.Id));
+        Assert.Single(checkpoints.Items);
+        Assert.Equal(checkpointB.Id, checkpoints.Items[0].Id);
+        checkpoints.Clear();
+        Assert.Empty(checkpoints.Items);
+    }
+
     private static Template TemplateWith(params (string Bone, float Scale)[] transforms)
     {
         var template = new Template();

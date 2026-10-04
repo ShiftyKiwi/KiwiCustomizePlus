@@ -20,6 +20,47 @@ public class TemplateAuthoringOperationTests
     }
 
     [Fact]
+    public void PoseStressSource_UsesTheWorkingCopyWithoutMutatingTheSavedTemplate()
+    {
+        var saved = State(("j_kosi", 1.0f), ("j_sako_l", 1.0f), ("j_sako_r", 1.0f));
+        var savedBefore = Clone(saved);
+        var working = Clone(saved);
+        working["j_kosi"].Scaling = new Vector3(1.35f, 0.90f, 1.10f);
+        working["j_kosi"].LockState = BoneLockState.Locked;
+        working["j_kosi"].PinY = true;
+
+        var savedSource = TemplateAuthoringState.SelectBones(saved, working, false);
+        var workingSource = TemplateAuthoringState.SelectBones(saved, working, true);
+        var report = AdvancedBodyScalingStressTestHarness.Run(workingSource, new AdvancedBodyScalingSettings(), "working copy");
+
+        Assert.Same(saved, savedSource);
+        Assert.Same(working, workingSource);
+        Assert.Equal(working["j_kosi"].Scaling, workingSource["j_kosi"].Scaling);
+        Assert.Equal(BoneLockState.Locked, workingSource["j_kosi"].LockState);
+        Assert.True(workingSource["j_kosi"].PinY);
+        Assert.NotEmpty(report.Poses);
+        Assert.True(AuthoringTooling.TransformEquals(savedBefore["j_kosi"], saved["j_kosi"]));
+    }
+
+    [Fact]
+    public void PoseStressResult_BecomesStaleForEditorEditsAndSessionChanges()
+    {
+        var session = Guid.NewGuid();
+
+        Assert.False(TemplateAuthoringState.IsStale(0, Guid.Empty, 0, Guid.Empty, false));
+        Assert.False(TemplateAuthoringState.IsStale(4, session, 4, session, true));
+
+        // Transform, lock/pin, checkpoint restore, Undo, and Redo each advance the editor revision.
+        Assert.True(TemplateAuthoringState.IsStale(4, session, 5, session, true));
+        Assert.True(TemplateAuthoringState.IsStale(4, session, 6, session, true));
+        Assert.True(TemplateAuthoringState.IsStale(4, session, 7, session, true));
+        Assert.True(TemplateAuthoringState.IsStale(4, session, 8, session, true));
+        Assert.True(TemplateAuthoringState.IsStale(4, session, 9, session, true));
+
+        Assert.True(TemplateAuthoringState.IsStale(4, session, 0, Guid.Empty, false));
+    }
+
+    [Fact]
     public void ToolRevert_PreservesAnUnrelatedLaterEdit()
     {
         var before = State(("j_kosi", 1.0f), ("j_ude_a_l", 1.0f));
