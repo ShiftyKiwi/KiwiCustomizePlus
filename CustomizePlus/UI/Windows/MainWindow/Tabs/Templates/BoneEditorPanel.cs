@@ -108,7 +108,7 @@ public class BoneEditorPanel
     private string _inspectedBoneName = string.Empty;
     private Guid _compareTemplateId;
     private Guid _compareProfileId;
-    private TemplateDiffReport? _templateDiffReport;
+    private readonly TemplateCompareDiffState _templateCompareDiff = new();
     private readonly LiveCheckpointDiffFilterState _checkpointDiffFilter = new();
     private ProfileDiffReport? _profileDiffReport;
     private SolverPreviewResult? _solverPreview;
@@ -1153,6 +1153,7 @@ public class BoneEditorPanel
         if (!ImGui.CollapsingHeader("Compare / Compatibility Preview"))
             return;
 
+        _templateCompareDiff.BeginSession(_editorManager.EditorSessionId);
         var edited = _editorManager.CurrentlyEditedTemplate;
         if (edited == null)
         {
@@ -1171,31 +1172,44 @@ public class BoneEditorPanel
                 foreach (var template in candidates)
                 {
                     if (ImGui.Selectable(template.Name.Text, template.UniqueId == _compareTemplateId))
+                    {
                         _compareTemplateId = template.UniqueId;
+                        selected = template;
+                    }
                 }
                 ImGui.EndCombo();
             }
+            _templateCompareDiff.Synchronize(_editorManager.EditorSessionId, _editorManager.EditorRevision, selected);
             if (ImGui.Button("Build template diff"))
-                _templateDiffReport = TemplateDiffService.Compare(selected, edited);
+                _templateCompareDiff.Build(_editorManager.EditorSessionId, _editorManager.EditorRevision, selected, edited, TemplateDiffService.Compare);
             ImGui.SameLine();
-            if (ImGui.Button("Copy changed source -> edited") && _templateDiffReport != null)
+            using (ImRaii.Disabled(_templateCompareDiff.CurrentReport == null))
             {
-                var state = TemplateDiffService.CopyFrom(_editorManager.CaptureCurrentTemplateState(),
-                    _templateDiffReport.Rows.Where(static row => row.Kind is TemplateDiffKind.Changed or TemplateDiffKind.OnlyLeft), true, true, true, true, true);
-                _editorManager.BeginEditTransaction("Apply template diff selection");
-                _editorManager.ReplaceEditedTemplateState(state);
-                _editorManager.CommitEditTransaction();
+                if (ImGui.Button("Copy changed source -> edited") && _templateCompareDiff.CurrentReport is { } report)
+                {
+                    var state = TemplateDiffService.CopyFrom(_editorManager.CaptureCurrentTemplateState(),
+                        report.Rows.Where(static row => row.Kind is TemplateDiffKind.Changed or TemplateDiffKind.OnlyLeft), true, true, true, true, true);
+                    _editorManager.BeginEditTransaction("Apply template diff selection");
+                    if (_editorManager.ReplaceEditedTemplateState(state))
+                        _templateCompareDiff.Invalidate();
+                    _editorManager.CommitEditTransaction();
+                }
             }
             CtrlHelper.AddHoverText("Copies changed source rows into the currently edited temporary template. The change is undoable and does not modify the source template.");
-            if (_templateDiffReport != null)
+            if (_templateCompareDiff.IsStale)
+                ImGui.TextDisabled("Template comparison is no longer current. Build template diff again.");
+            if (_templateCompareDiff.CurrentReport is { } currentReport)
             {
-                ImGui.TextDisabled($"Shared {_templateDiffReport.SharedCount}; changed {_templateDiffReport.ChangedCount}; source-only {_templateDiffReport.OnlyLeftCount}; edited-only {_templateDiffReport.OnlyRightCount}.");
-                foreach (var (family, delta) in _templateDiffReport.RegionScaleDeltas.OrderBy(static item => item.Key.ToString(), StringComparer.Ordinal))
+                ImGui.TextDisabled($"Shared {currentReport.SharedCount}; changed {currentReport.ChangedCount}; source-only {currentReport.OnlyLeftCount}; edited-only {currentReport.OnlyRightCount}.");
+                foreach (var (family, delta) in currentReport.RegionScaleDeltas.OrderBy(static item => item.Key.ToString(), StringComparer.Ordinal))
                     ImGui.TextDisabled($"{family}: transform scale delta {delta.X:0.000}, {delta.Y:0.000}, {delta.Z:0.000}");
             }
         }
         else
+        {
+            _templateCompareDiff.Clear();
             ImGui.TextDisabled("Create another saved template to enable template-to-template comparison.");
+        }
 
         var armature = GetPrimaryEditorArmature();
         if (armature != null && ImGui.TreeNode("Compatibility preview"))
