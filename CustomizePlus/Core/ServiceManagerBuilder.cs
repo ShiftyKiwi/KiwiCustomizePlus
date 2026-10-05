@@ -120,6 +120,7 @@ public static class ServiceManagerBuilder
             .AddSingleton<ProfilesTab>()
             .AddSingleton<ProfileFileSystemSelector>()
             .AddSingleton<ProfilePanel>()
+            .AddSingleton<ActorEffectiveStateInspectorPanel>()
             // /profile
             // messages
             .AddSingleton<MessageService>()
