@@ -3,7 +3,7 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
     <AssemblyTitle>CustomizePlus</AssemblyTitle>
-    <Version>4.2.1</Version>
+    <Version>4.3.0</Version>
     <Description>Customize+</Description>
     <Copyright></Copyright>
     <PackageProjectUrl>https://github.com/ShiftyKiwi/KiwiCustomizePlus</PackageProjectUrl>
@@ -41,11 +41,13 @@
     <ProjectReference Include="..\submodules\OtterGui\OtterGui.csproj" />
   </ItemGroup>
 
-  <!-- Keep the lock-file dependency stable while excluding the bridge from non-Debug assets. -->
-  <ItemGroup>
-    <PackageReference Include="Franthropy.AgentBridge" Version="0.1.0" PrivateAssets="all">
-      <ExcludeAssets Condition="'$(Configuration)'!='Debug'">all</ExcludeAssets>
-    </PackageReference>
+  <!-- The bridge is compiled only by DEBUG code and must never enter Release assets. -->
+  <ItemGroup Condition="'$(Configuration)' == 'Debug'">
+    <PackageReference Include="Franthropy.AgentBridge" Version="0.1.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(Configuration)' != 'Debug'">
+    <PackageReference Include="Franthropy.AgentBridge" Version="0.1.0" PrivateAssets="all" ExcludeAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

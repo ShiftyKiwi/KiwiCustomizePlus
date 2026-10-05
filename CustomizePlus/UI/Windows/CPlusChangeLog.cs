@@ -59,6 +59,7 @@ public class CPlusChangeLog
         Add4_1_1(Changelog);
         Add4_2_0(Changelog);
         Add4_2_1(Changelog);
+        Add4_3_0(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -128,6 +129,16 @@ public class CPlusChangeLog
         .RegisterEntry("Fixed assigned player profiles failing to apply when supported quest cutscenes use a separate character representation.")
         .RegisterEntry("Fixed profile application on Character Select after actor-selection hardening.")
         .RegisterImportant("Actor representation selection remains validated and fails closed when no unique bindable representation is available.");
+
+    private static void Add4_3_0(Changelog log)
+        => log.NextVersion("Version 4.3.0")
+        .RegisterHighlight("Added session-local Template Editor Checkpoints and A/B Comparison while Bone Editing.")
+        .RegisterEntry("Restore checkpoint states through the normal Undo/Redo-aware editor working-copy path, then filter rows changed since a selected checkpoint.", 1)
+        .RegisterHighlight("Improved authoring diagnostics so they stay truthful while the editor state changes.")
+        .RegisterEntry("Pose Stress now analyzes the active editor working copy, and Template Compare hides stale reports until rebuilt.", 1)
+        .RegisterHighlight("Clarified Advanced Body Scaling profile overrides and added a read-only Actor / Effective-State Inspector.")
+        .RegisterEntry("Show overridden settings, understand inherited values, and inspect currently published actor/profile, binding, capability, and safety state without mutating it.", 1)
+        .RegisterImportant("Checkpoints and changed-row filtering are session-local. This release adds no new solver or runtime/native deformation behavior.");
 
     private static void Add3_0_2(Changelog log)
         => log.NextVersion("Version 3.0.2")
