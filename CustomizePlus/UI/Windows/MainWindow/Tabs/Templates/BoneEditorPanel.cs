@@ -109,14 +109,13 @@ public class BoneEditorPanel
     private Guid _compareTemplateId;
     private Guid _compareProfileId;
     private TemplateDiffReport? _templateDiffReport;
-    private TemplateDiffReport? _checkpointDiffReport;
+    private readonly LiveCheckpointDiffFilterState _checkpointDiffFilter = new();
     private ProfileDiffReport? _profileDiffReport;
     private SolverPreviewResult? _solverPreview;
     private int _selectedAuthoringRegion;
     private AuthoringRegionScope _selectedAuthoringScope = AuthoringRegionScope.Primary;
     private string _checkpointName = string.Empty;
     private string? _checkpointStatus;
-    private Guid _selectedCheckpointId;
     private Guid _checkpointSessionId;
     public bool HasChanges => _editorManager.HasChanges;
     public bool IsEditorActive => _editorManager.IsEditorActive;
@@ -336,6 +335,10 @@ public class BoneEditorPanel
                                     _boneMetadataService.MatchesSearch(x.BoneCodeName, _boneSearch));
                 }
 
+                var checkpointDiff = SynchronizeCheckpointDiff();
+                if (_checkpointDiffFilter.IsFilterEnabled && checkpointDiff != null)
+                    relevantModelBones = relevantModelBones.Where(x => _checkpointDiffFilter.IncludesBone(x.BoneCodeName));
+
                 var favoriteRows = relevantModelBones
                     .Where(b => _favoriteBones.Contains(b.BoneCodeName))
                     .OrderBy(b => BoneData.GetBoneRanking(b.BoneCodeName))
@@ -347,6 +350,16 @@ public class BoneEditorPanel
 
                 var groupedBones = nonFavoriteRows
                     .GroupBy(x => BoneData.GetBoneFamily(x.BoneCodeName));
+
+                if (_checkpointDiffFilter.IsFilterEnabled && _checkpointDiffFilter.ChangedBoneCount == 0)
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.TextDisabled("No bones differ from this checkpoint.");
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Clear filter##CheckpointDiffEmpty"))
+                        _checkpointDiffFilter.SetFilterEnabled(false);
+                }
 
                 if (favoriteRows.Count > 0)
                 {
@@ -700,6 +713,14 @@ public class BoneEditorPanel
         ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
         ImGui.InputTextWithHint("##BoneSearch", "Search bones...", ref _boneSearch, 64);
         CtrlHelper.AddHoverText("Search by bone name, code name, family, or body terms like shoulders, waist, hips, chest, thigh, calf, wrist, or glute.");
+        SynchronizeCheckpointDiff();
+        if (_checkpointDiffFilter.IsFilterEnabled)
+        {
+            ImGui.TextDisabled($"Checkpoint: {_checkpointDiffFilter.ChangedBoneCount} changed");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Clear##CheckpointDiffToolbar"))
+                _checkpointDiffFilter.SetFilterEnabled(false);
+        }
 
         ImGui.TableNextColumn();
         ImGui.AlignTextToFramePadding();
@@ -1225,17 +1246,16 @@ public class BoneEditorPanel
 
     private void DrawTemplateEditorCheckpoints()
     {
-        if (!ImGui.CollapsingHeader("Checkpoints / A-B Comparison"))
-            return;
-
         if (_checkpointSessionId != _editorManager.EditorSessionId)
         {
             _checkpointSessionId = _editorManager.EditorSessionId;
+            _checkpointDiffFilter.BeginSession(_checkpointSessionId);
             _checkpointName = string.Empty;
             _checkpointStatus = null;
-            _selectedCheckpointId = Guid.Empty;
-            _checkpointDiffReport = null;
         }
+
+        if (!ImGui.CollapsingHeader("Checkpoints / A-B Comparison"))
+            return;
 
         ImGuiUtil.TextWrapped("Temporary to this Bone Editing session. Checkpoints do not save templates, change profiles, or write native bones until you use the existing Save action.");
         ImGui.SetNextItemWidth(MathF.Min(280 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
@@ -1243,7 +1263,7 @@ public class BoneEditorPanel
         ImGui.SameLine();
         if (ImGui.Button("Create checkpoint") && _editorManager.TryCreateCheckpoint(_checkpointName, out var created) && created != null)
         {
-            _selectedCheckpointId = created.Id;
+            _checkpointDiffFilter.SelectCheckpoint(created.Id);
             _checkpointName = string.Empty;
             _checkpointStatus = $"Created '{created.Name}' from the current working copy.";
         }
@@ -1252,36 +1272,53 @@ public class BoneEditorPanel
         var checkpoints = _editorManager.Checkpoints;
         if (checkpoints.Count == 0)
         {
+            _checkpointDiffFilter.Clear();
             ImGui.TextDisabled("No checkpoints yet.");
             return;
         }
 
-        var selected = checkpoints.FirstOrDefault(checkpoint => checkpoint.Id == _selectedCheckpointId) ?? checkpoints[0];
-        _selectedCheckpointId = selected.Id;
+        if (_checkpointDiffFilter.ClearIfSelectedCheckpointIsMissing(checkpoints))
+            _checkpointStatus = "The selected checkpoint is no longer available. Cleared the changed-row filter.";
+
+        var selected = checkpoints.FirstOrDefault(checkpoint => checkpoint.Id == _checkpointDiffFilter.SelectedCheckpointId) ?? checkpoints[0];
+        _checkpointDiffFilter.SelectCheckpoint(selected.Id);
         ImGui.SetNextItemWidth(MathF.Min(360 * ImGuiHelpers.GlobalScale, ImGui.GetContentRegionAvail().X));
         if (ImGui.BeginCombo("Checkpoint", $"{selected.Name} ({selected.BoneCount} rows)"))
         {
             foreach (var checkpoint in checkpoints)
             {
-                if (ImGui.Selectable($"{checkpoint.Name} ({checkpoint.BoneCount} rows)", checkpoint.Id == _selectedCheckpointId))
-                {
-                    _selectedCheckpointId = checkpoint.Id;
-                    _checkpointDiffReport = null;
-                }
+                if (ImGui.Selectable($"{checkpoint.Name} ({checkpoint.BoneCount} rows)", checkpoint.Id == _checkpointDiffFilter.SelectedCheckpointId))
+                    _checkpointDiffFilter.SelectCheckpoint(checkpoint.Id);
             }
             ImGui.EndCombo();
         }
 
-        if (ImGui.Button("Compare selected to Current") && _editorManager.TryCompareCheckpoint(selected.Id, out var report))
+        var changedOnly = _checkpointDiffFilter.IsFilterEnabled;
+        if (ImGui.Checkbox("Show changed rows only", ref changedOnly))
+            _checkpointDiffFilter.SetFilterEnabled(changedOnly);
+        CtrlHelper.AddHoverText("Filters the existing Bone Editor table to rows that currently differ from this checkpoint. It does not change the template, checkpoint, or saved data.");
+
+        if (_checkpointDiffFilter.IsFilterEnabled)
         {
-            _checkpointDiffReport = report;
+            SynchronizeCheckpointDiff();
+            ImGui.SameLine();
+            ImGui.TextDisabled($"{_checkpointDiffFilter.ChangedBoneCount} changed");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Clear filter##CheckpointDiff"))
+                _checkpointDiffFilter.SetFilterEnabled(false);
+        }
+
+        if (ImGui.Button("Compare selected to Current"))
+        {
+            _checkpointDiffFilter.RequestComparison();
+            SynchronizeCheckpointDiff();
             _checkpointStatus = $"Compared '{selected.Name}' with the current working copy.";
         }
         ImGui.SameLine();
         if (ImGui.Button("Restore selected"))
         {
             var restored = _editorManager.TryRestoreCheckpoint(selected.Id);
-            _checkpointDiffReport = null;
+            _checkpointDiffFilter.RequestComparison();
             _checkpointStatus = restored
                 ? $"Restored '{selected.Name}'. Undo returns to the pre-restore working copy."
                 : $"'{selected.Name}' already matches the current working copy.";
@@ -1291,8 +1328,7 @@ public class BoneEditorPanel
         if (ImGui.Button("Delete selected"))
         {
             _editorManager.DeleteCheckpoint(selected.Id);
-            _selectedCheckpointId = Guid.Empty;
-            _checkpointDiffReport = null;
+            _checkpointDiffFilter.Clear();
             _checkpointStatus = $"Deleted '{selected.Name}'.";
         }
         CtrlHelper.AddHoverText("Deletes this temporary checkpoint only. It does not change the current working copy or saved template.");
@@ -1300,16 +1336,24 @@ public class BoneEditorPanel
         if (!string.IsNullOrEmpty(_checkpointStatus))
             ImGui.TextDisabled(_checkpointStatus);
 
-        if (_checkpointDiffReport == null)
+        var checkpointDiffReport = SynchronizeCheckpointDiff();
+        if (checkpointDiffReport == null)
             return;
 
-        var changedRows = _checkpointDiffReport.Rows.Where(static row => row.Kind != TemplateDiffKind.Shared).ToArray();
+        var changedRows = checkpointDiffReport.Rows.Where(static row => row.Kind != TemplateDiffKind.Shared).ToArray();
         var positionChanges = changedRows.Count(static row => row.TranslationDelta != Vector3.Zero);
         var rotationChanges = changedRows.Count(static row => row.RotationDelta != Vector3.Zero);
         var scaleChanges = changedRows.Count(static row => row.ScalingDelta != Vector3.Zero);
         var lockChanges = changedRows.Count(static row => row.LockChanged);
         var pinChanges = changedRows.Count(static row => row.PinsChanged);
         ImGui.TextDisabled($"Checkpoint -> Current: {changedRows.Length} changed bones; position {positionChanges}; rotation {rotationChanges}; scale {scaleChanges}; locks {lockChanges}; pins {pinChanges}.");
+    }
+
+    private TemplateDiffReport? SynchronizeCheckpointDiff()
+    {
+        _checkpointDiffFilter.Synchronize(_editorManager.EditorRevision, checkpointId =>
+            _editorManager.TryCompareCheckpoint(checkpointId, out var report) ? report : null);
+        return _checkpointDiffFilter.CurrentReport;
     }
 
     private void DrawSolverAbPreview()
