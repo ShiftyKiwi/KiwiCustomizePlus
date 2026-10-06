@@ -60,6 +60,7 @@ public class CPlusChangeLog
         Add4_2_0(Changelog);
         Add4_2_1(Changelog);
         Add4_3_0(Changelog);
+        Add4_3_1(Changelog);
     }
 
     private (int, ChangeLogDisplayType) ConfigData()
@@ -139,6 +140,12 @@ public class CPlusChangeLog
         .RegisterHighlight("Clarified Advanced Body Scaling profile overrides and added a read-only Actor / Effective-State Inspector.")
         .RegisterEntry("Show overridden settings, understand inherited values, and inspect currently published actor/profile, binding, capability, and safety state without mutating it.", 1)
         .RegisterImportant("Checkpoints and changed-row filtering are session-local. This release adds no new solver or runtime/native deformation behavior.");
+
+    private static void Add4_3_1(Changelog log)
+        => log.NextVersion("Version 4.3.1")
+        .RegisterEntry("Fixed Live Editing ignoring Advanced Body Scaling profile overrides and falling back to global settings.")
+        .RegisterEntry("Live Editing now preserves the winning profile's Advanced Body Scaling context for enabled assigned templates.")
+        .RegisterEntry("Profile Context Preview uses the same profile-context behavior, including inherited overrides.");
 
     private static void Add3_0_2(Changelog log)
         => log.NextVersion("Version 3.0.2")
