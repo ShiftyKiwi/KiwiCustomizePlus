@@ -902,29 +902,22 @@ public class BoneEditorPanel
             return null;
         }
 
-        var activeProfile = _profileManager.GetEnabledProfilesByActor(previewActor)
-            .FirstOrDefault(profile => profile.ProfileType != ProfileType.Editor);
+        var activeProfile = _profileManager.GetEditorProfileContext(
+            previewActor,
+            _editorManager.CurrentlyEditedTemplateId);
         if (activeProfile == null)
         {
-            unavailableReason = "no active profile for preview actor";
-            return null;
-        }
-
-        var assignedTemplate = activeProfile.Templates.FirstOrDefault(template => template.UniqueId == _editorManager.CurrentlyEditedTemplateId);
-        if (assignedTemplate == null)
-        {
-            unavailableReason = "selected template is not assigned to the preview actor's active profile";
-            return null;
-        }
-
-        if (activeProfile.DisabledTemplates.Contains(assignedTemplate.UniqueId))
-        {
-            unavailableReason = "selected template is disabled in the preview actor's active profile";
+            var winningProfile = _profileManager.GetWinningNonEditorProfileByActor(previewActor);
+            unavailableReason = winningProfile == null
+                ? "no active profile for preview actor"
+                : winningProfile.Templates.All(template => template.UniqueId != _editorManager.CurrentlyEditedTemplateId)
+                    ? "selected template is not assigned to the preview actor's active profile"
+                    : "selected template is disabled in the preview actor's active profile";
             return null;
         }
 
         var enabledContextTemplateCount = activeProfile.Templates.Count(template =>
-            template.UniqueId != assignedTemplate.UniqueId &&
+            template.UniqueId != _editorManager.CurrentlyEditedTemplateId &&
             !activeProfile.DisabledTemplates.Contains(template.UniqueId));
         if (enabledContextTemplateCount <= 0)
         {

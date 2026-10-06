@@ -32,6 +32,9 @@ public class TemplateChanged() : EventWrapper<TemplateChanged.Type, Template?, o
         TemplateCombo = -2,
         TemplateFileSystemSelector = -1,
         TemplateFileSystem,
+        // The temporary editor profile must inherit its source-profile ABS context
+        // before armatures respond to editor enable or preview-character changes.
+        EditorProfileContext,
         ArmatureManager,
         ProfileManager,
         CustomizePlusIpc,

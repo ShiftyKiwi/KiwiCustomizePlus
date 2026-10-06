@@ -85,6 +85,8 @@ public partial class ProfileManager : IDisposable
         _event = @event;
         _templateChangedEvent = templateChangedEvent;
         _templateChangedEvent.Subscribe(OnTemplateChange, TemplateChanged.Priority.ProfileManager);
+        _templateChangedEvent.Subscribe(OnTemplateEditorContextChanged, TemplateChanged.Priority.EditorProfileContext);
+        _event.Subscribe(OnProfileChanged, ProfileChanged.Priority.TemplateEditorContext);
         _reloadEvent = reloadEvent;
         _reloadEvent.Subscribe(OnReload, ReloadEvent.Priority.ProfileManager);
         _armatureChangedEvent = armatureChangedEvent;
@@ -98,6 +100,8 @@ public partial class ProfileManager : IDisposable
     public void Dispose()
     {
         _templateChangedEvent.Unsubscribe(OnTemplateChange);
+        _templateChangedEvent.Unsubscribe(OnTemplateEditorContextChanged);
+        _event.Unsubscribe(OnProfileChanged);
     }
 
     /// <summary>
@@ -569,6 +573,35 @@ public partial class ProfileManager : IDisposable
             ?? GetResolvedProfile(actorIdentifier, includeTemporary: true);
     }
 
+    /// <summary>
+    /// Return the first non-editor profile in the same priority order used by runtime binding.
+    /// </summary>
+    public Profile? GetWinningNonEditorProfileByActor(ActorIdentifier actorIdentifier)
+        => GetEnabledProfilesByActor(actorIdentifier).FirstOrDefault(profile => profile.ProfileType != ProfileType.Editor);
+
+    /// <summary>
+    /// Return the current winning non-editor profile only when it owns the edited template as an enabled assignment.
+    /// A lower-priority profile is intentionally never substituted here.
+    /// </summary>
+    public Profile? GetEditorProfileContext(ActorIdentifier actorIdentifier, Guid editedTemplateId)
+        => ResolveEditorProfileContext(GetEnabledProfilesByActor(actorIdentifier), editedTemplateId);
+
+    /// <summary>
+    /// Resolve editor context from profiles already ordered by the production runtime selector.
+    /// </summary>
+    public static Profile? ResolveEditorProfileContext(IEnumerable<Profile> profilesInRuntimePriorityOrder, Guid editedTemplateId)
+    {
+        if (editedTemplateId == Guid.Empty)
+            return null;
+
+        var profile = profilesInRuntimePriorityOrder.FirstOrDefault(candidate => candidate.ProfileType != ProfileType.Editor);
+        return profile != null &&
+               !profile.DisabledTemplates.Contains(editedTemplateId) &&
+               profile.Templates.Any(template => template.UniqueId == editedTemplateId)
+            ? profile
+            : null;
+    }
+
     private Profile? GetResolvedProfile(ActorIdentifier actorIdentifier, bool includeTemporary)
     {
         foreach (var profile in GetEnabledProfilesByActor(actorIdentifier))
@@ -694,6 +727,46 @@ public partial class ProfileManager : IDisposable
         }
 
         return;
+    }
+
+    private void OnTemplateEditorContextChanged(TemplateChanged.Type type, Template? template, object? arg3)
+    {
+        if (type is TemplateChanged.Type.EditorEnabled or TemplateChanged.Type.EditorCharacterChanged)
+            RefreshTemplateEditorProfileContext();
+    }
+
+    private void OnProfileChanged(ProfileChanged.Type type, Profile? profile, object? arg3)
+    {
+        if (type is not ProfileChanged.Type.Toggled and
+            not ProfileChanged.Type.PriorityChanged and
+            not ProfileChanged.Type.AddedCharacter and
+            not ProfileChanged.Type.RemovedCharacter and
+            not ProfileChanged.Type.AddedTemplate and
+            not ProfileChanged.Type.RemovedTemplate and
+            not ProfileChanged.Type.EnabledTemplate and
+            not ProfileChanged.Type.DisabledTemplate and
+            not ProfileChanged.Type.ChangedTemplate and
+            not ProfileChanged.Type.AdvancedBodyScalingSettingsChanged and
+            not ProfileChanged.Type.ChangedDefaultProfile and
+            not ProfileChanged.Type.ChangedDefaultLocalPlayerProfile and
+            not ProfileChanged.Type.TemporaryProfileAdded and
+            not ProfileChanged.Type.TemporaryProfileDeleted and
+            not ProfileChanged.Type.ReloadedAll and
+            not ProfileChanged.Type.Deleted)
+            return;
+
+        RefreshTemplateEditorProfileContext();
+    }
+
+    private void RefreshTemplateEditorProfileContext()
+    {
+        if (!_templateEditorManager.IsEditorActive)
+            return;
+
+        var contextProfile = GetEditorProfileContext(
+            _templateEditorManager.Character,
+            _templateEditorManager.CurrentlyEditedTemplateId);
+        _templateEditorManager.RefreshAdvancedBodyScalingProfileContext(contextProfile);
     }
 
     private void OnReload(ReloadEvent.Type type)

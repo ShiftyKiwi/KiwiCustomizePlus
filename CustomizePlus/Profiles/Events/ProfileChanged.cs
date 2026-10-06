@@ -42,6 +42,8 @@ public sealed class ProfileChanged() : EventWrapper<ProfileChanged.Type, Profile
         ProfileFileSystemSelector = -2,
         TemplateFileSystemSelector = -1,
         ProfileFileSystem,
+        // Refresh the transient editor profile before armatures process profile changes.
+        TemplateEditorContext,
         ArmatureManager,
         TemplateManager,
         CustomizePlusLegacyIpc,

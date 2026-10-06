@@ -10,6 +10,7 @@ using CustomizePlus.Profiles.Enums;
 using CustomizePlus.Templates.Data;
 using CustomizePlus.Templates.Events;
 using Dalamud.Plugin.Services;
+using Newtonsoft.Json.Linq;
 using OtterGui.Log;
 using Penumbra.GameData.Actors;
 using System;
@@ -90,6 +91,7 @@ public class TemplateEditorManager : IDisposable
     internal Guid EditorSessionId { get; private set; }
     private int _editorTemplateStackSignature;
     private int _requestedEditorContextSignature;
+    private Guid _advancedBodyScalingContextProfileId;
     private Dictionary<string, BoneTransform>? _transactionBefore;
     private string? _transactionLabel;
 
@@ -154,6 +156,8 @@ public class TemplateEditorManager : IDisposable
         if (!Character.IsValid) //safeguard
             ChangeEditorCharacterInternal(_gameObjectService.GetCurrentPlayerActorIdentifier().CreatePermanent()); //will set EditorProfile.Character
 
+        EditorProfile.AdvancedBodyScalingOverrides = new();
+        _advancedBodyScalingContextProfileId = Guid.Empty;
         RebuildEditorProfileTemplateStack(false, null, "Off", notify: false);
         EditorProfile.Enabled = true;
         HasChanges = false;
@@ -190,11 +194,13 @@ public class TemplateEditorManager : IDisposable
         EditorProfile.Templates.Clear();
         EditorProfile.DisabledTemplates.Clear();
         EditorProfile.TemplateWeights.Clear();
+        EditorProfile.AdvancedBodyScalingOverrides = new();
         ProfileContextPreviewActive = false;
         ProfileContextPreviewStatus = "Off";
         ProfileContextTemplateCount = 0;
         _editorTemplateStackSignature = 0;
         _requestedEditorContextSignature = 0;
+        _advancedBodyScalingContextProfileId = Guid.Empty;
         IsEditorActive = false;
         HasChanges = false;
         EditorRevision = 0;
@@ -269,6 +275,29 @@ public class TemplateEditorManager : IDisposable
 
         _requestedEditorContextSignature = requestedSignature;
         RebuildEditorProfileTemplateStack(enabled, contextProfile, unavailableReason, notify: true);
+    }
+
+    /// <summary>
+    /// Copy the current winning profile's Advanced Body Scaling override state into the transient editor profile.
+    /// This is session-only and deliberately never writes to the source profile or edited template.
+    /// </summary>
+    internal bool RefreshAdvancedBodyScalingProfileContext(Profile? contextProfile)
+    {
+        if (!IsEditorActive || CurrentlyEditedTemplate == null)
+            return false;
+
+        var nextProfileId = contextProfile?.UniqueId ?? Guid.Empty;
+        var nextSettings = contextProfile?.AdvancedBodyScalingOverrides.DeepCopy() ?? new AdvancedBodyScalingProfileSettings();
+        if (_advancedBodyScalingContextProfileId == nextProfileId &&
+            JToken.DeepEquals(
+                JToken.FromObject(EditorProfile.AdvancedBodyScalingOverrides),
+                JToken.FromObject(nextSettings)))
+            return false;
+
+        _advancedBodyScalingContextProfileId = nextProfileId;
+        EditorProfile.AdvancedBodyScalingOverrides = nextSettings;
+        _event.Invoke(TemplateChanged.Type.EditorContextChanged, CurrentlyEditedTemplate, (Character, EditorProfile));
+        return true;
     }
 
     private void RebuildEditorProfileTemplateStack(bool enabled, Profile? contextProfile, string unavailableReason, bool notify)
