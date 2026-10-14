@@ -206,13 +206,15 @@ public sealed class AdvancedBodyScalingBoneImportanceService
 
         var resolutionAttempts = new List<string>();
         var referencesByPart = new Dictionary<BodyModelPart, ResolvedModelReference>();
+        var resourcePaths = CreateResourcePathSnapshot(actor);
         foreach (var request in partRequests)
         {
-            var references = ResolveModelReferences(actor, request.Candidates, resolutionAttempts);
-            if (references.Count == 0)
+            var references = ResolveModelReferences(actor, request.Candidates, resolutionAttempts, resourcePaths);
+            var reference = SelectProbedModelReference(references);
+            if (reference == null)
                 continue;
 
-            referencesByPart[request.Part] = references[0];
+            referencesByPart[request.Part] = reference.Value;
         }
 
         var resolvedModelSignature = BuildReferenceSignature(partRequests, referencesByPart);
@@ -296,7 +298,7 @@ public sealed class AdvancedBodyScalingBoneImportanceService
                 missingPartDetails: missingPartDetails);
         }
 
-        var aggregateCacheKey = BuildAggregateCacheKey(resolvedModelSignature);
+        var aggregateCacheKey = BuildAggregateCacheKey(resolvedModelSignature, contributions);
         CachedAggregateImportance aggregate;
         var cacheHit = false;
         lock (_cacheLock)
@@ -420,6 +422,7 @@ public sealed class AdvancedBodyScalingBoneImportanceService
         List<string> missingPartDetails)
     {
         var contributions = new List<ModelContribution>();
+        var resourcePaths = CreateResourcePathSnapshot(actor);
 
         foreach (var request in partRequests)
         {
@@ -429,7 +432,7 @@ public sealed class AdvancedBodyScalingBoneImportanceService
                 continue;
             }
 
-            var references = ResolveModelReferences(actor, request.Candidates, resolutionAttempts);
+            var references = ResolveModelReferences(actor, request.Candidates, resolutionAttempts, resourcePaths);
             if (references.Count == 0)
             {
                 missingPartDetails.Add($"{request.Label}: no usable resolved model path was available, so this slot was skipped.");
@@ -484,21 +487,29 @@ public sealed class AdvancedBodyScalingBoneImportanceService
         return (cached, cacheHit);
     }
 
+    private ResolvedModelReference? SelectProbedModelReference(IReadOnlyList<ResolvedModelReference> references)
+    {
+        foreach (var reference in references)
+        {
+            lock (_cacheLock)
+            {
+                // Match the full resolver's fallback order after it has established that an
+                // earlier candidate is unusable. Unknown candidates still request normal parsing.
+                if (_modelCache.TryGetValue(reference.CacheKey, out var cached) &&
+                    !cached.Stage1Available && !cached.Stage2Available)
+                    continue;
+            }
+            return reference;
+        }
+        return null;
+    }
+
     private static string BuildResolvedModelSignature(
         IReadOnlyList<ModelPartRequest> requests,
         IReadOnlyList<ModelContribution> contributions)
-    {
-        var contributionsByPart = contributions.ToDictionary(static contribution => contribution.Part);
-        return string.Join("||", requests
-            .OrderBy(static request => request.Part)
-            .Select(request =>
-            {
-                if (!contributionsByPart.TryGetValue(request.Part, out var contribution))
-                    return $"{request.Part}:missing";
-
-                return $"{request.Part}:{contribution.Reference.ResolutionSource}:{contribution.Reference.CacheKey}:{contribution.Cached.Stage1Available}:{contribution.Cached.Stage2Available}";
-              }));
-    }
+        => BuildReferenceSignature(requests, contributions.ToDictionary(
+            static contribution => contribution.Part,
+            static contribution => contribution.Reference));
 
     private static string BuildReferenceSignature(
         IReadOnlyList<ModelPartRequest> requests,
@@ -513,8 +524,12 @@ public sealed class AdvancedBodyScalingBoneImportanceService
                 return $"{request.Part}:{reference.ResolutionSource}:{reference.CacheKey}";
             }));
 
-    private static string BuildAggregateCacheKey(string resolvedModelSignature)
-        => resolvedModelSignature;
+    // Reference identity must match the cheap probe. Parsed quality still distinguishes aggregate
+    // cache entries, but is not part of model identity and cannot imply an appearance change.
+    private static string BuildAggregateCacheKey(string resolvedModelSignature, IReadOnlyList<ModelContribution> contributions)
+        => resolvedModelSignature + "|quality:" + string.Join("||", contributions
+            .OrderBy(static contribution => contribution.Part)
+            .Select(static contribution => $"{contribution.Part}:{contribution.Cached.Stage1Available}:{contribution.Cached.Stage2Available}"));
 
     private static string BuildRefreshStatus(
         string previousModelSignature,
@@ -1441,27 +1456,27 @@ public sealed class AdvancedBodyScalingBoneImportanceService
     private List<ResolvedModelReference> ResolveModelReferences(
         Actor actor,
         IReadOnlyList<ModelPathCandidate> candidates,
-        List<string> resolutionAttempts)
+        List<string> resolutionAttempts,
+        BoneImportanceResourcePaths resourcePaths)
     {
         var references = new List<ResolvedModelReference>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        TryAppendTrackedResourceReferences(actor, candidates, resolutionAttempts, references, seen);
+        TryAppendTrackedResourceReferences(resourcePaths.Paths, candidates, resolutionAttempts, references, seen);
         TryAppendPenumbraResolvedReferences(actor, candidates, resolutionAttempts, references, seen);
         TryAppendVanillaReferences(candidates, resolutionAttempts, references, seen);
 
         return references;
     }
 
-    private void TryAppendTrackedResourceReferences(
-        Actor actor,
+    private static void TryAppendTrackedResourceReferences(
+        IReadOnlyDictionary<string, HashSet<string>> resourcePaths,
         IReadOnlyList<ModelPathCandidate> candidates,
         List<string> resolutionAttempts,
         ICollection<ResolvedModelReference> references,
         ISet<string> seen)
     {
-        if (!_penumbraIpc.TryGetGameObjectResourcePaths(actor.Index.Index, out var resourcePaths) ||
-            resourcePaths.Count == 0)
+        if (resourcePaths.Count == 0)
         {
             resolutionAttempts.Add("Active actor resource-path lookup was unavailable, so no live Penumbra resource path could be used.");
             return;
@@ -1486,6 +1501,15 @@ public sealed class AdvancedBodyScalingBoneImportanceService
                     PartLabel: candidate.PartLabel,
                     AggregateWeight: candidate.AggregateWeight));
         }
+    }
+
+    private BoneImportanceResourcePaths CreateResourcePathSnapshot(Actor actor)
+    {
+        var objectIndex = actor.Index.Index;
+        return new BoneImportanceResourcePaths(() =>
+            _penumbraIpc.TryGetGameObjectResourcePaths(objectIndex, out var paths)
+                ? paths
+                : new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase));
     }
 
     private void TryAppendPenumbraResolvedReferences(
